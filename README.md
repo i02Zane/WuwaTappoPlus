@@ -8,12 +8,12 @@ Wuwa Tappo 的第三方本地增强工具，提供自动开箱、余额提醒、
 
 | 功能 | 说明 |
 | --- | --- |
-| 自动开箱 | 宝箱到期、开启按钮出现且余额达到阈值时，点击真实按钮 |
+| 自动开箱 | 宝箱到期、开启按钮出现且余额达到阈值时，点击真实按钮；到期后约 2 秒再点，避开应用自己的冷却判定 |
 | 余额提醒 | 余额偏低时显示气泡，补充宝箱倒计时或已刷新提示 |
 | 气泡动画 | 可切换跳动提醒与静态显示；气泡随桌宠移动并避让屏幕边缘 |
 | 主窗口保持打开 | 点击其他窗口时不自动收起背包／设置面板，仍可手动关闭 |
 | 每日键鼠统计 | 按桌宠原生计数口径统计键盘与鼠标输入合计，展示昨日数据和最近 7 天柱状图 |
-| 房间历史 | 联机页记录进过的房间号和房主，点一下即可回到该房间 |
+| 房间历史 | 联机页记录进过的房间号和房主，点一下即可回到该房间；可收藏置顶 |
 
 自动开箱调用页面里的按钮，不构造奖励接口请求，不修改应用二进制文件或宝箱冷却时间。房间历史同样只填入真实输入框并点击「加入房间」按钮。
 
@@ -73,8 +73,9 @@ Wuwa Tappo 的第三方本地增强工具，提供自动开箱、余额提醒、
 
 - 列表按最近访问排序，显示房间号、房主、进入次数与相对时间；同一房间只留一条记录。
 - 未加入房间时，点一行会填入房间号，等待输入同步后点击原生「加入房间」按钮。在房间中时隐藏历史列表。
+- 行首的 `☆` 收藏该房间：收藏后变 `★`、置顶显示，并且不在数量上限内被挤掉，只有取消收藏或点 `×` 删除才会消失。
 - 行尾的 `×` 删除一条记录，只删除本机记录，不影响应用内的任何数据。
-- 默认保留最近 20 条，由 `config.toml` 的 `[rooms] history` 控制。
+- 默认保留最近 20 条未收藏的房间，由 `config.toml` 的 `[rooms] history` 控制；收藏的房间不计入这个上限。
 
 记录的是房间号和房主昵称，不保存密码或房间内成员列表。刚进房时房主名字可能比房间号晚一秒渲染，记录会先写房间号，名字出现后补上，不会重复计一次进入。
 
@@ -108,6 +109,8 @@ EXE 由 Python 直接显示终端面板：`1` 安装／修复、`2` 卸载（保
 
 `config.toml` 首次运行时生成，本机安装路径等设置不纳入 Git。常用配置如下，完整默认值见 [config.py](src/wuwa_tappo_plus/config.py)：
 
+> 编辑 `config.toml` 时请保存为 **UTF-8 无 BOM**。程序读取时会忽略可能存在的 BOM，所以带 BOM 的文件也能加载；但 PowerShell 的 `Set-Content -Encoding utf8` 会写入 BOM，遇到 `Invalid statement` 提示时按此检查。
+
 ```toml
 [app]
 exe = ""                  # 留空自动寻找 WuwaTappo.exe
@@ -116,11 +119,10 @@ port = 9222
 
 [inject]
 enabled = true             # 自动开箱
-min_balance = 1000          # 低于此余额不点击
+min_balance = 1000          # 低于此余额不点击；提醒阈值由它推导
 
 [alerts]
-low = 2000                 # 余额偏低阈值
-critical = 1000            # 余额告急阈值
+# 偏低 = min_balance + 1000，告急 = min_balance，不再单独配置
 bubble = true
 animation = true
 
@@ -128,13 +130,15 @@ animation = true
 keep_open = true
 
 [rooms]
-history = 20               # 房间历史保留条数
+history = 20               # 未收藏房间的保留条数
 
 [daemon]
 watchdog_min = 1            # 看门狗检查间隔，单位分钟；0 为关闭
 ```
 
 四个功能开关手动修改后也会自动加载。修改端口、阈值、轮询间隔或看门狗配置后，执行 `install` 重新安装／修复。
+
+`config.toml` 会自动与默认模板对齐：仍在用的字段保留原值和注释；已不再提供的字段（如 `poll_ms`、`verify_ms`、`stale_ms`、`lock_ms`、`alerts.low`、`alerts.critical`）会被删除；模板新增的字段会自动补上。未知的段落原样保留。对齐发生在后台启动或任意命令读取配置时，只有内容变化才会写回。轮询间隔、点击判定、失效判定和点击锁现在都是程序内的常量。
 
 更换调试端口时，旧策略可能产生冲突：先执行 `uninstall` 清理本项目的旧策略，再执行 `install`。安装遇到冲突会中止，不会覆盖未知配置；其他策略条目默认只报告，需要明确执行清理命令才会删除。
 
@@ -144,6 +148,7 @@ watchdog_min = 1            # 看门狗检查间隔，单位分钟；0 为关闭
 | --- | --- |
 | 设置页没有 Plus 分组，或提示后台未连接 | 运行 `doctor`，必要时重新安装／修复；原应用升级后可能需要适配 |
 | 宝箱到期但不自动开启 | 检查自动开箱开关、字符余额和 `min_balance`，再查看日志 |
+| 气泡提示「自动开箱失败」 | 连续 5 次点击都没有打开宝箱，已暂停这个宝箱；日志里有 `not clicking: give-up`，手动开箱后自动恢复 |
 | 气泡没有出现 | 检查气泡开关；仅在余额低于提醒阈值时显示 |
 | 昨日统计显示 `—` | 昨天没有输入计数采样，不能从累计值倒推出每日次数 |
 | 调试端口未响应 | 重新安装／修复，让桌宠在策略写入后重新启动 |
@@ -151,6 +156,10 @@ watchdog_min = 1            # 看门狗检查间隔，单位分钟；0 为关闭
 | 后台被结束后再次出现 | 看门狗会恢复意外退出的后台；要完整移除请执行卸载 |
 
 日志位于 `logs/auto.log`，按大小轮转。连接中断后会重试；设置页和主桌宠页面重建后会重新注入。
+
+日志里的 `TOAST at=… text="…"` 是桌宠气泡的原文，`(N.Ns after our click)` 表示这条气泡紧跟在一次自动点击之后，通常就是开箱被拒。要核对现场，可看桌宠自己的日志 `%LOCALAPPDATA%\com.kuro.wuwatappo.cn\logs\Wuwa Tappo.log`（它用 **UTC**，比本地时间早 8 小时）：其中的 `POST api/frontend/chests/open code=70006` 表示这次开箱被判为冷却中。
+
+`not clicking: …` 表示宝箱已经到期但没有点击，括号里是槽位、余额、已超时秒数和补充说明；原因包括 `paused`、`no-button`、`no-wallet`、`low-balance`、`button-disabled`、`button-hidden`、`give-up`。判定按“槽位 + 宝箱时间戳 + 原因”去重：两个宝箱先后到期会各写一行，同一个宝箱不会重复；同一状态持续存在时每 10 分钟提醒一次。
 
 注意：**直接结束 Plus 后台不保证页面里的自动点击停止**，心跳超时仅用于诊断。暂停点击请使用桌宠设置开关；完整清理请使用卸载。
 
@@ -164,7 +173,7 @@ Python 后台通过本机 CDP 连接桌宠的 WebView2，注入自动点击与�
 | --- | --- |
 | `config.toml` | 本机配置与功能开关 |
 | `reports/input.sqlite3` | 每日键鼠输入统计及累计值基线 |
-| `reports/rooms.sqlite3` | 房间历史：房间号、房主、进入次数 |
+| `reports/rooms.sqlite3` | 房间历史：房间号、房主、进入次数、是否收藏 |
 | `logs/` | 轮转日志 |
 | `.state.json` | 后台发布的运行状态 |
 | `.daemon.lock`、`.disabled` | 单实例锁和停用标记 |
@@ -186,8 +195,8 @@ src/wuwa_tappo_plus/  Python 包
   cdp.py / ws.py     本机 CDP 与 WebSocket
   win.py             策略、自启动、计划任务和进程管理
   config.py          配置加载和原子保存
-  settings.py / rooms.py / reports.py  设置桥接、房间历史、输入统计
-  scripts/           三个注入的 JavaScript 模板
+  settings.py / rooms.py / reports.py / toasts.py  设置桥接、房间历史、输入统计、气泡日志
+  scripts/           四个注入的 JavaScript 模板
 tests/               Python 与 JavaScript 回归测试
 packaging/           PyInstaller 配置与 Windows manifest
 tools/               测试、构建与发布包验证脚本
@@ -201,7 +210,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[build]"
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m compileall -q src tests tools launch.py
-node --test tests/test_bubble.js tests/test_panel.js tests/test_rooms.js
+node --test tests/test_bubble.js tests/test_panel.js tests/test_rooms.js tests/test_toast.js
 ```
 
 不安装开发依赖也可运行 `python tools/run_tests.py`。运行项目本身仅依赖 Python 标准库；构建 EXE 才需要 PyInstaller。
@@ -214,6 +223,8 @@ node --test tests/test_bubble.js tests/test_panel.js tests/test_rooms.js
 ```
 
 构建会检查解释器架构，并自动验证生成的 EXE 能启动、资源和版本完整，再生成校验文件。`dist/` 仅输出单文件 `WuwaTappoPlus.exe` 和只包含该 EXE 哈希的 `SHA256SUMS.txt`，不再额外生成源码包。Release 上传这两个文件，对应源码使用 GitHub 根据版本标签自动提供的 ZIP / TAR.GZ；发布时确保标签源码与 EXE 对应，并保留构建文件和许可证。不要上传个人配置、数据库、日志或开发运行时。Python、PyInstaller 和项目的许可证均内嵌在 EXE 中。GitHub Actions 支持测试和手动构建。
+
+每次打标签发布时，使用 `python tools/build_release.py --notes <发布说明.md>` 构建并归档。EXE、校验文件和发布说明会保存到 `dist/history/v<版本号>/`，同版本归档不会覆盖；普通构建不生成历史副本。`dist/` 已整体被 Git 忽略，无需额外的归档忽略规则。
 
 测试使用模拟对象和临时目录，避免真实安装、注册表修改或桌宠点击。发布包冒烟测试使用隔离数据目录与未连接的本机端口；安装／卸载的真实系统修改仍应在 Windows 测试环境验证。贡献约定见 [AGENTS.md](AGENTS.md)。
 

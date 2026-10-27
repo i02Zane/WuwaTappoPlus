@@ -47,6 +47,20 @@
     '#wut-rooms .wut-room:hover{background:#fef6dd;}',
     '#wut-rooms .wut-room:focus-visible{outline:2px solid #e7b77c;outline-offset:1px;}',
     '#wut-rooms .wut-room[data-busy="true"]{opacity:.55;cursor:progress;}',
+    // Pinned rows sort first and are exempt from the history limit; the inset
+    // accent marks them without fighting the hover colour above.
+    '#wut-rooms .wut-room[data-pinned="true"]{box-shadow:inset 3px 0 0 #e7b77c;}',
+
+    // The star sits before the room number, so a favourite reads as a badge.
+    // Its slot is reserved even when hidden: hovering must not shift the id.
+    '#wut-rooms .wut-room-pin{flex:0 0 18px;width:18px;height:18px;padding:0;',
+    'border:0;border-radius:4px;background:none;color:#c08a4a;font-family:inherit;',
+    'font-size:15px;line-height:18px;cursor:pointer;opacity:0;visibility:hidden;',
+    'transition:opacity .15s ease,visibility .15s ease;}',
+    '#wut-rooms .wut-room-pin:hover{color:#a86a24;}',
+    '#wut-rooms .wut-room:hover .wut-room-pin,',
+    '#wut-rooms .wut-room:focus-within .wut-room-pin,',
+    '#wut-rooms .wut-room[data-pinned="true"] .wut-room-pin{opacity:1;visibility:visible;}',
 
     // The room number keeps its weight; the host sits right behind it as the
     // same secondary line the settings page uses for a value, so the row reads
@@ -160,6 +174,38 @@
     return result;
   }
 
+  // Pinned rooms first, newest stay first inside each group. The daemon returns
+  // the same order, so this only matters while a pin is still queued, and it
+  // keeps the optimistic row in place instead of letting it jump back.
+  function sortRooms() {
+    R.rooms.sort(function (a, b) {
+      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+      var left = String(a.last_seen || '');
+      var right = String(b.last_seen || '');
+      return left === right ? 0 : (left < right ? 1 : -1);
+    });
+  }
+
+  // Pin or unpin a row. The star flips immediately and the request travels with
+  // the next heartbeat; the daemon's list stays authoritative, so the ack is
+  // what makes the change durable.
+  function togglePin(roomId) {
+    roomId = String(roomId == null ? '' : roomId).trim();
+    if (!/^[0-9A-Za-z]{4,16}$/.test(roomId)) return 'invalid';
+    var target = null;
+    for (var i = 0; i < R.rooms.length; i++) {
+      if (R.rooms[i].room_id === roomId) { target = R.rooms[i]; break; }
+    }
+    var want = !(target && target.pinned);
+    R.requests.push({ id: instance + '-' + (++serial), action: 'pin',
+                      room_id: roomId, pinned: want });
+    if (target) target.pinned = want;
+    sortRooms();
+    painted = '';
+    render();
+    return want ? 'pinned' : 'unpinned';
+  }
+
   function detect() {
     var module = document.querySelector('.room-module');
     if (!module) return;                    // other tab: keep the last reading
@@ -205,10 +251,15 @@
       + '<ul class="wut-rooms-list"></ul>';
     host.addEventListener('click', function (event) {
       var forget = event.target.closest('.wut-room-forget');
+      var star = event.target.closest('.wut-room-pin');
       var row = event.target.closest('.wut-room');
       if (!row) return;
       event.preventDefault();
       event.stopPropagation();
+      if (star) {
+        togglePin(row.dataset.room);
+        return;
+      }
       if (forget) {
         R.requests.push({ id: instance + '-' + (++serial), action: 'forget',
                           room_id: row.dataset.room });
@@ -221,7 +272,9 @@
     host.addEventListener('keydown', function (event) {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       var row = event.target.closest('.wut-room');
-      if (!row || event.target.closest('.wut-room-forget')) return;
+      // The row itself joins; its two buttons keep their native key handling.
+      if (!row || event.target.closest('.wut-room-forget')
+          || event.target.closest('.wut-room-pin')) return;
       event.preventDefault();
       join(row.dataset.room);
     });
@@ -259,7 +312,7 @@
     if (R.pending) return '正在进入 ' + R.pending + '…';
     if (R.error) return R.error;
     if (Date.now() - R.beat > 5000) return 'Plus 后台未连接，记录不会保存';
-    return R.rooms.length ? '点一下回到该房间' : '';
+    return R.rooms.length ? '点一下回到该房间，点 ☆ 收藏并置顶' : '';
   }
 
   function render() {
@@ -308,8 +361,23 @@
       row.className = 'wut-room';
       row.dataset.room = room.room_id;
       row.dataset.busy = R.pending === room.room_id ? 'true' : 'false';
+      row.dataset.pinned = room.pinned ? 'true' : 'false';
       row.tabIndex = 0;
       row.setAttribute('role', 'button');
+      // Created before the number so the star reads as a badge; the reserved
+      // slot keeps the id from jumping when an unpinned row is hovered.
+      var pin = row.querySelector('.wut-room-pin');
+      if (!pin) {
+        pin = document.createElement('button');
+        pin.type = 'button';
+        pin.className = 'wut-room-pin';
+        row.insertBefore(pin, row.firstChild || null);
+      }
+      pin.title = room.pinned ? '取消收藏' : '收藏并置顶';
+      pin.setAttribute('aria-label',
+        (room.pinned ? '取消收藏 ' : '收藏 ') + room.room_id);
+      pin.setAttribute('aria-pressed', room.pinned ? 'true' : 'false');
+      setText(pin, room.pinned ? '★' : '☆');
       var id = part(row, 'wut-room-id');
       setText(id, room.room_id);
 
@@ -334,6 +402,7 @@
       forget.setAttribute('aria-label', '删除 ' + room.room_id + ' 的记录');
 
       row.setAttribute('aria-label', '回到房间 ' + room.room_id
+        + (room.pinned ? '，已收藏' : '')
         + (room.owner ? '，房主 ' + room.owner : ''));
       if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
     });
@@ -362,9 +431,21 @@
     R.beat = Date.now();
     R.rooms = (state && state.rooms) || [];
     var ack = (state && state.ack) || [];
+    var answered = {};
+    ack.forEach(function (item) { answered[item.id] = true; });
+    // A pin the daemon has not answered yet must not flicker back on the next
+    // heartbeat: keep the queued intent on top of the authoritative list. An
+    // answered request is finished, including when the acknowledgement failed.
+    R.requests.forEach(function (request) {
+      if (request.action !== 'pin' || answered[request.id]) return;
+      R.rooms.forEach(function (room) {
+        if (room.room_id === request.room_id) room.pinned = request.pinned;
+      });
+    });
+    sortRooms();
     if (ack.length) {
       R.requests = R.requests.filter(function (request) {
-        return !ack.some(function (item) { return item.id === request.id; });
+        return !answered[request.id];
       });
       ack.forEach(function (item) { if (item.error) R.error = '记录未能保存'; });
     }
@@ -372,6 +453,7 @@
     render();
   };
   R.join = join;
+  R.togglePin = togglePin;
   R.parseRoomNumber = parseRoomNumber;
   R.tick = tick;
 

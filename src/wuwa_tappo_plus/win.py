@@ -500,8 +500,9 @@ def disable_autostart():
 # A scheduled task is the only thing that can revive a killed process: once the
 # process is gone nothing of ours is running any more. The task lives in the
 # registry of the system scheduler, so killing the daemon never touches it. It
-# must run in the user's own session - a service in session 0 has no access to
-# the taskbar button, and the blink would silently do nothing.
+# must run as the same user, in the same session: it reads that user's data
+# directory, so a task running as somebody else would start a second daemon
+# against a different profile.
 TASK_FOLDER = "\\WuwaTappo"
 # The ScheduledTasks cmdlets only match a folder when the path ends in a
 # backslash; schtasks wants the joined form instead.

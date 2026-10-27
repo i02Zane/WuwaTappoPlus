@@ -316,3 +316,47 @@ test('reordering and deleting history retain the surviving room nodes', () => {
   assert.equal(view.list.children.length, 1);
   assert.equal(view.list.children[0].dataset.room, a.room_id);
 });
+
+test('a pinned room sorts first and the star queues the change', () => {
+  const view = historyView();
+  const older = { room_id: 'Room1234', owner: '', visits: 1, last_seen: '2026-10-27T09:00:00' };
+  const newer = { room_id: 'Room5678', owner: '', visits: 1, last_seen: '2026-10-27T10:00:00' };
+  view.rooms.update({ rooms: [newer, older] });
+  assert.deepEqual(view.list.children.map(node => node.dataset.room),
+    ['Room5678', 'Room1234']);
+
+  assert.equal(view.rooms.togglePin('Room1234'), 'pinned');
+  const request = view.rooms.requests.at(-1);
+  assert.equal(request.action, 'pin');
+  assert.equal(request.room_id, 'Room1234');
+  assert.equal(request.pinned, true);
+  assert.equal(view.rooms.rooms[0].room_id, 'Room1234');
+  assert.equal(view.list.children[0].dataset.pinned, 'true');
+  assert.equal(view.list.children[0].querySelector('.wut-room-pin').textContent, '★');
+});
+
+test('a pin that has not been stored yet is not reverted by the next heartbeat', () => {
+  const view = historyView();
+  const room = { room_id: 'Room1234', owner: '', visits: 1, last_seen: '2026-10-27T09:00:00' };
+  view.rooms.update({ rooms: [room] });
+  view.rooms.togglePin('Room1234');
+
+  // The daemon has not seen the request yet and still reports the old row.
+  view.rooms.update({ rooms: [{ ...room, pinned: false }] });
+  assert.equal(view.rooms.rooms[0].pinned, true);
+
+  // Its acknowledgement ends the optimistic phase without undoing the star.
+  const id = view.rooms.requests[0].id;
+  view.rooms.update({ rooms: [{ ...room, pinned: true }], ack: [{ id }] });
+  assert.equal(view.rooms.requests.length, 0);
+  assert.equal(view.rooms.rooms[0].pinned, true);
+});
+
+test('unpinning drops the star and still records the intent', () => {
+  const view = historyView();
+  view.rooms.update({ rooms: [{ room_id: 'Room1234', visits: 1,
+    last_seen: '2026-10-27T09:00:00', pinned: true }] });
+  assert.equal(view.rooms.togglePin('Room1234'), 'unpinned');
+  assert.equal(view.rooms.requests.at(-1).pinned, false);
+  assert.equal(view.list.children[0].dataset.pinned, 'false');
+});

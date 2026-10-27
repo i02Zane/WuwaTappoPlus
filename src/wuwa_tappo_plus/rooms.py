@@ -47,11 +47,21 @@ class RoomHistory:
                     owner TEXT NOT NULL DEFAULT '',
                     visits INTEGER NOT NULL DEFAULT 0,
                     first_seen TEXT NOT NULL,
-                    last_seen TEXT NOT NULL
+                    last_seen TEXT NOT NULL,
+                    pinned INTEGER NOT NULL DEFAULT 0
                 );
             """)
+            self._migrate()
         except (OSError, sqlite3.Error) as exc:
             self._fail(exc)
+
+    def _migrate(self):
+        """Add columns that databases written by an earlier release do not have."""
+        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(rooms)")}
+        if "pinned" not in columns:
+            with self.connection:
+                self.connection.execute(
+                    "ALTER TABLE rooms ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
 
     def _fail(self, exc):
         self.error = str(exc)
@@ -85,8 +95,10 @@ class RoomHistory:
                 ).fetchone()
                 if row is None:
                     # Unknown room: it was still a stay, just an unwatched one.
+                    # A new row is never pinned; pinning is an explicit act.
                     self.connection.execute(
-                        "INSERT INTO rooms VALUES (?, ?, 1, ?, ?)",
+                        "INSERT INTO rooms (room_id, owner, visits, first_seen, last_seen)"
+                        " VALUES (?, ?, 1, ?, ?)",
                         (room_id, owner, stamp, stamp),
                     )
                 else:
@@ -96,9 +108,13 @@ class RoomHistory:
                         "UPDATE rooms SET visits=visits+?, last_seen=?, owner=? WHERE room_id=?",
                         (1 if again else 0, stamp, owner or row[0], room_id),
                     )
+                # Pinned rooms are exempt: they stay until the user unpins or
+                # deletes them. The configured limit only bounds the unpinned
+                # tail, so a favourite is never the row that falls out.
                 self.connection.execute(
-                    "DELETE FROM rooms WHERE room_id NOT IN "
-                    "(SELECT room_id FROM rooms ORDER BY last_seen DESC, rowid DESC LIMIT ?)",
+                    "DELETE FROM rooms WHERE pinned=0 AND room_id NOT IN "
+                    "(SELECT room_id FROM rooms WHERE pinned=0 "
+                    "ORDER BY last_seen DESC, rowid DESC LIMIT ?)",
                     (self.limit,),
                 )
         except (OSError, sqlite3.Error) as exc:
@@ -120,6 +136,26 @@ class RoomHistory:
             self._fail(exc)
             return False
         return True
+
+    def set_pinned(self, room_id, pinned):
+        """Pin a room so it sorts first and outlives the history limit.
+
+        Returns False when nothing changed, including for a room that is not in
+        the history yet: pinning is something the list does to a row it shows.
+        """
+        room_id = clean_room_id(room_id)
+        if not self.connection or self.error or not room_id or type(pinned) is not bool:
+            return False
+        try:
+            with self.connection:
+                cursor = self.connection.execute(
+                    "UPDATE rooms SET pinned=? WHERE room_id=?",
+                    (1 if pinned else 0, room_id),
+                )
+        except (OSError, sqlite3.Error) as exc:
+            self._fail(exc)
+            return False
+        return cursor.rowcount > 0
 
     def touch(self, room_id):
         """Refresh last_seen without counting another visit."""
@@ -152,15 +188,18 @@ class RoomHistory:
         if not self.connection or self.error:
             return []
         try:
+            # Pinned rows first, then the most recent stays. No LIMIT here: the
+            # delete in _store already bounds the unpinned tail, and a LIMIT
+            # would cut pinned rows off once enough of them exist.
             rows = self.connection.execute(
-                "SELECT room_id, owner, visits, last_seen FROM rooms "
-                "ORDER BY last_seen DESC, rowid DESC LIMIT ?",
-                (self.limit,),
+                "SELECT room_id, owner, visits, last_seen, pinned FROM rooms "
+                "ORDER BY pinned DESC, last_seen DESC, rowid DESC"
             ).fetchall()
         except (OSError, sqlite3.Error) as exc:
             self._fail(exc)
             return []
-        return [{"room_id": row[0], "owner": row[1], "visits": row[2], "last_seen": row[3]}
+        return [{"room_id": row[0], "owner": row[1], "visits": row[2],
+                 "last_seen": row[3], "pinned": bool(row[4])}
                 for row in rows]
 
     def close(self):
@@ -255,7 +294,14 @@ class RoomBridge:
             if not isinstance(request, dict) or not isinstance(request.get("id"), str):
                 continue
             result = {"id": request["id"]}
-            if request.get("action") != "forget" or not history.forget(request.get("room_id")):
+            action = request.get("action")
+            if action == "forget":
+                stored = history.forget(request.get("room_id"))
+            elif action == "pin":
+                stored = history.set_pinned(request.get("room_id"), request.get("pinned"))
+            else:
+                stored = False
+            if not stored:
                 result["error"] = True
             ack.append(result)
         return ack

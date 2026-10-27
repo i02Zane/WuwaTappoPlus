@@ -1,5 +1,6 @@
 """Release builds must reject wrong architectures and incomplete executables."""
 
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -51,3 +52,52 @@ class ReleaseBuildTests(unittest.TestCase):
             with patch.object(builder.subprocess, "run", side_effect=wrong_version):
                 with self.assertRaises(RuntimeError):
                     builder.validate_executable(build / "program.exe", build)
+
+
+class ReleaseArchiveTests(unittest.TestCase):
+    def prepare(self, root):
+        dist = root / "dist"
+        dist.mkdir()
+        executable = dist / "WuwaTappoPlus.exe"
+        executable.write_bytes(b"release fixture")
+        digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+        (dist / "SHA256SUMS.txt").write_text(digest + "  WuwaTappoPlus.exe\n", encoding="utf-8")
+        notes = root / "notes.md"
+        notes.write_text("# Release notes\n", encoding="utf-8")
+        return notes
+
+    def test_archive_contains_exe_checksum_and_release_notes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            notes = self.prepare(root)
+            with patch.object(builder, "ROOT", root):
+                archived = builder.archive_release(notes)
+            self.assertEqual(archived, root / "dist/history" / ("v" + builder.__version__))
+            self.assertEqual({p.name for p in archived.iterdir()},
+                             {"WuwaTappoPlus.exe", "SHA256SUMS.txt", "release-notes.md"})
+            self.assertEqual((archived / "WuwaTappoPlus.exe").read_bytes(), b"release fixture")
+            self.assertEqual((archived / "release-notes.md").read_text(encoding="utf-8"),
+                             notes.read_text(encoding="utf-8"))
+            self.assertEqual(list((root / "dist/history").iterdir()), [archived])
+
+    def test_existing_history_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            notes = self.prepare(root)
+            with patch.object(builder, "ROOT", root):
+                archived = builder.archive_release(notes)
+                notes.write_text("changed", encoding="utf-8")
+                with self.assertRaises(FileExistsError):
+                    builder.archive_release(notes)
+            self.assertEqual((archived / "release-notes.md").read_text(encoding="utf-8"),
+                             "# Release notes\n")
+
+    def test_checksum_mismatch_prevents_archiving(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            notes = self.prepare(root)
+            (root / "dist/WuwaTappoPlus.exe").write_bytes(b"tampered")
+            with patch.object(builder, "ROOT", root):
+                with self.assertRaises(ValueError):
+                    builder.archive_release(notes)
+            self.assertFalse((root / "dist/history").exists())

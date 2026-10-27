@@ -524,6 +524,8 @@ def cmd_status(argv):
         version = win.read_policy().get(win.TARGET_EXE, "")
         out("target     %s" % (url or "-"))
         click_state = "paused" if live.get("auto_open") is False else "running"
+        if live.get("block") and live.get("auto_open") is not False:
+            click_state = "waiting: %s" % live["block"]
         out("click      %s" % (click_state if live.get("inject") else "not ready"))
         out("")
         now = live.get("now") or 0

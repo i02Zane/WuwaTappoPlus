@@ -1,6 +1,7 @@
 """Room history storage and the panel bridge protocol."""
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime
@@ -148,6 +149,73 @@ class RoomHistoryTests(unittest.TestCase):
         self.assertEqual(store.note("房间号", "白柳"), "")
         self.assertEqual(store.recent(), [])
 
+    def test_pinned_rooms_sort_first_whatever_their_age(self):
+        store = self.history()
+        store.note("OLDROOM1", "旧主人")
+        self.clock[0] = datetime(2026, 10, 27, 10, 0, 0)
+        store.note("NEWROOM2", "新主人")
+        self.assertTrue(store.set_pinned("OLDROOM1", True))
+        rows = store.recent()
+        self.assertEqual([row["room_id"] for row in rows], ["OLDROOM1", "NEWROOM2"])
+        self.assertTrue(rows[0]["pinned"])
+        self.assertFalse(rows[1]["pinned"])
+
+    def test_pinned_rooms_survive_the_history_limit(self):
+        store = self.history(limit=2)
+        store.note("PINNED01", "房主")
+        self.assertTrue(store.set_pinned("PINNED01", True))
+        for index in range(4):
+            self.clock[0] = self.clock[0].replace(minute=index + 1)
+            store.note("ROOM%04d" % index, "host%d" % index)
+        rows = [row["room_id"] for row in store.recent()]
+        # The favourite stays first; only the unpinned tail is trimmed.
+        self.assertEqual(rows, ["PINNED01", "ROOM0003", "ROOM0002"])
+
+    def test_unpinning_returns_a_room_to_the_normal_order(self):
+        store = self.history()
+        store.note("OLDROOM1", "旧主人")
+        self.clock[0] = datetime(2026, 10, 27, 10, 0, 0)
+        store.note("NEWROOM2", "新主人")
+        store.set_pinned("OLDROOM1", True)
+        self.assertTrue(store.set_pinned("OLDROOM1", False))
+        self.assertEqual([row["room_id"] for row in store.recent()],
+                         ["NEWROOM2", "OLDROOM1"])
+
+    def test_pinning_a_room_that_is_not_stored_changes_nothing(self):
+        store = self.history()
+        self.assertFalse(store.set_pinned("NOPE1234", True))
+        self.assertEqual(store.recent(), [])
+
+    def test_pin_state_must_be_a_real_boolean(self):
+        store = self.history()
+        store.note("32RH4VrDT", "白柳")
+        self.assertFalse(store.set_pinned("32RH4VrDT", "yes"))
+        self.assertFalse(store.recent()[0]["pinned"])
+
+    def test_database_from_an_earlier_release_gains_the_pin_column(self):
+        connection = sqlite3.connect(self.path)
+        connection.executescript("""
+            CREATE TABLE rooms (
+                room_id TEXT PRIMARY KEY,
+                owner TEXT NOT NULL DEFAULT '',
+                visits INTEGER NOT NULL DEFAULT 0,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL
+            );
+        """)
+        connection.execute(
+            "INSERT INTO rooms VALUES ('OLDROOM1','旧主人',3,"
+            "'2026-01-01T00:00:00','2026-01-02T00:00:00')")
+        connection.commit()
+        connection.close()
+
+        store = self.history()
+        row = store.recent()[0]
+        self.assertEqual((row["room_id"], row["visits"], row["pinned"]),
+                         ("OLDROOM1", 3, False))
+        self.assertTrue(store.set_pinned("OLDROOM1", True))
+        self.assertTrue(store.recent()[0]["pinned"])
+
 
 class RoomBridgeTests(unittest.TestCase):
     def setUp(self):
@@ -202,6 +270,22 @@ class RoomBridgeTests(unittest.TestCase):
     def test_unknown_action_is_reported_as_a_failure(self):
         request = {"id": "r-2", "action": "launch", "room_id": "32RH4VrDT"}
         session = self.sync([state(requests=[request]), "1"])
+        self.assertIn('"error": true', session.sent[-1])
+
+    def test_pin_request_is_applied_and_acknowledged(self):
+        self.history.note("32RH4VrDT", "白柳")
+        request = {"id": "p-1", "action": "pin", "room_id": "32RH4VrDT", "pinned": True}
+        session = self.sync([state(requests=[request]), "1"])
+        self.assertTrue(self.history.recent()[0]["pinned"])
+        payload = session.sent[-1].split("window.__WUT_ROOMS__")[1]
+        self.assertIn('"pinned": true', payload)
+        self.assertNotIn('"error"', payload)
+
+    def test_pin_request_must_carry_a_boolean(self):
+        self.history.note("32RH4VrDT", "白柳")
+        request = {"id": "p-2", "action": "pin", "room_id": "32RH4VrDT", "pinned": "true"}
+        session = self.sync([state(requests=[request]), "1"])
+        self.assertFalse(self.history.recent()[0]["pinned"])
         self.assertIn('"error": true', session.sent[-1])
 
     def test_missing_or_outdated_injection_is_reinstalled(self):

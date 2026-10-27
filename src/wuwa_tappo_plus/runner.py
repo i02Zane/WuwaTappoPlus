@@ -14,6 +14,7 @@ from .logs import Log
 from .settings import SettingsBridge
 from .reports import DailyReport
 from .rooms import RoomBridge, RoomHistory
+from .toasts import ToastBridge
 
 POLL_JS = r"""
 (function(){
@@ -29,6 +30,9 @@ POLL_JS = r"""
     alert: A.alert || 0,
     retries: A.retries || 0,
     disabledHits: A.disabledHits || 0,
+    block: A.block ? { slot: A.block.slot, reason: A.block.reason,
+                       ts: A.block.ts, since: A.block.since,
+                       balance: A.block.balance, attempts: A.block.attempts } : null,
     errors: (A.errors || []).slice(-5),
     clicks: (A.clicks || []).slice(-12),
     state: s
@@ -50,6 +54,15 @@ def _local_stamp(iso):
         return str(iso)
 
 
+def _stamp_ms(milliseconds):
+    """Epoch milliseconds to a local clock reading, to line up with app logs."""
+    try:
+        return datetime.fromtimestamp(float(milliseconds) / 1000.0).strftime(
+            "%H:%M:%S.%f")[:-3]
+    except (ValueError, TypeError, OSError, OverflowError):
+        return "-"
+
+
 class Runner:
     def __init__(self, cfg=None, log=None):
         self.cfg = cfg or load()
@@ -59,11 +72,22 @@ class Runner:
         self.reports = DailyReport(self.log)
         self.rooms = RoomBridge(self.cfg.port, self.cfg.host, self.log)
         self.history = RoomHistory(self.log, limit=self.cfg.room_history)
+        self.toasts = ToastBridge(self.cfg.port, self.cfg.host, self.log)
         self.pending = deque(maxlen=400)
+        # The page keeps its last 20 notes and hands back the last five on every
+        # poll, so without this ledger one error would be written to the log once
+        # per second for as long as it stays in that window.
+        self.page_errors = deque(maxlen=400)
+        self.block_reason = None
+        self.block_key = (None, None, None)
+        self.block_logged_at = 0.0
         self.click_count = 0
         self.started = datetime.now()
+        # Toasts buffered in the page before this daemon started are history,
+        # not news; the small slack covers the start-up window.
+        self.toast_floor_ms = int(self.started.timestamp() * 1000) - 2000
+        self.last_click_ms = 0
         self.last_beat = 0.0
-        self.low_balance_warned_at = 0.0
         self.alert_level = None
         self._lock_handle = None
         self._stop = False
@@ -177,6 +201,8 @@ class Runner:
             if (rec.get("t") or 0) < floor_ms:
                 continue
             self.click_count += 1
+            if (rec.get("t") or 0) > self.last_click_ms:
+                self.last_click_ms = rec.get("t") or 0
             stamp = _local_stamp(rec.get("iso"))
             if rec.get("ok") is False:
                 self.log.error(
@@ -186,7 +212,7 @@ class Runner:
                 continue
             self.log.info(
                 "CLICK at=%s xy=(%s,%s) readyL=%s readyR=%s balance=%s "
-                "overdue=%sms renderLag=%sms disabled=%s"
+                "overdue=%sms renderLag=%sms disabled=%s btns=%s label=%s"
                 % (
                     stamp,
                     rec.get("x"),
@@ -197,40 +223,118 @@ class Runner:
                     rec.get("overdueMs"),
                     rec.get("renderLagMs"),
                     rec.get("disabled"),
+                    rec.get("buttons"),
+                    rec.get("label") or "-",
                 )
             )
 
-    def check_balance(self, snapshot, low_balance):
-        """Record why the page is refusing to click, at most every ten minutes.
+    def drain_page_errors(self, errors):
+        """Write each page note once, not once per poll.
 
-        The gate lives in the page: only it can see whether the chest button
-        exists at all and what the wallet renders. This side just notes that the
-        refusal happened instead of recomputing the same comparison.
-
-        The page reports the shortfall when it refused and 0 when the balance was
-        fine, so a falsey value is not a low balance - reading only `is None`
-        logged the nonsense line "balance 0 < 1000".
+        The page reports a rolling window, so the same dict comes back on every
+        heartbeat until twenty newer notes push it out. The tuple of timestamp
+        and text is stable, which makes it a usable identity.
         """
-        if not snapshot or not low_balance:
+        for err in errors or []:
+            if not isinstance(err, dict):
+                continue
+            key = (err.get("t"), err.get("m"))
+            if key in self.page_errors:
+                continue
+            self.page_errors.append(key)
+            self.log.warn("page: %s" % err.get("m"))
+
+    def log_toast(self, when_ms, text):
+        """Write one app toast, pointing at our last click when it follows one.
+
+        A toast that arrives seconds after a click is usually the app refusing
+        it ("宝箱冷却中"), so those are warnings; everything else is ordinary
+        feedback and stays at info level.
+        """
+        after = ""
+        if self.last_click_ms and 0 <= when_ms - self.last_click_ms <= 10000:
+            after = " (%.1fs after our click)" % ((when_ms - self.last_click_ms) / 1000.0)
+        line = 'TOAST at=%s text="%s"%s' % (_stamp_ms(when_ms), text, after)
+        if after:
+            self.log.warn(line)
+        else:
+            self.log.info(line)
+
+    # Why a due chest is not being clicked, in the words the log will use.
+    BLOCK_TEXT = {
+        "paused": "auto open is paused",
+        "no-button": "the page draws no reward button",
+        "no-wallet": "the balance is not rendered yet",
+        "button-disabled": "the reward button is disabled",
+        "button-hidden": "the reward button has no size",
+        "low-balance": "balance below min_balance",
+        "give-up": "clicked repeatedly, the chest never opened",
+    }
+
+    def note_block(self, block, snapshot):
+        """Log why a due chest is not being clicked, once per chest and reason.
+
+        A chest that is visibly ready but never opens is the question every
+        report starts with. The page names the gate; this side writes one line
+        when the answer changes, plus a reminder every ten minutes while the
+        same chest stays blocked.
+
+        The identity includes the pair of chest timestamps, not just the reason:
+        two chests land a few seconds apart, and keying on the reason alone let
+        the first one's warning swallow the second's.
+        """
+        reason = block.get("reason") if isinstance(block, dict) else None
+        slot = block.get("slot") if isinstance(block, dict) else None
+        ts = block.get("ts") if isinstance(block, dict) else None
+        # The UI is in flux for a moment after our own click: the button is
+        # disabled while the open is in flight, then the next chest redraws.
+        # That is not a stall, so give the click five seconds to settle.
+        if self.last_click_ms and time.time() * 1000 - self.last_click_ms < 5000:
             return
         now = time.time()
-        due = min(snapshot.get("left") or 0, snapshot.get("right") or 0)
-        overdue = due and (due / 1000.0) <= (snapshot.get("now") or 0) / 1000.0
-        if overdue and now - self.low_balance_warned_at > 600:
-            self.low_balance_warned_at = now
-            self.log.warn(
-                "a chest is ready but balance %s < %s - type on the keyboard to earn "
-                "characters, no click attempted"
-                % (low_balance, self.cfg.inject_cfg["min_balance"])
-            )
+        key = (slot, reason, ts)
+        if key == self.block_key:
+            if reason and now - self.block_logged_at >= 600:
+                self.block_logged_at = now
+                self._log_block("still waiting: ", reason, block, snapshot)
+            return
+        previous = self.block_key[1]
+        self.block_key = key
+        self.block_reason = reason
+        self.block_logged_at = now
+        if reason:
+            self._log_block("", reason, block, snapshot)
+        elif previous:
+            self.log.info("click gate open again (was %s)" % previous)
+
+    def _log_block(self, prefix, reason, block, snapshot):
+        detail = []
+        if block.get("slot"):
+            detail.append("slot=%s" % block["slot"])
+        balance = block.get("balance")
+        detail.append("balance=%s" % ("-" if balance is None else balance))
+        left = (snapshot or {}).get("left") or 0
+        now = (snapshot or {}).get("now") or 0
+        if left and now:
+            seconds = int((now - left) / 1000.0)
+            if seconds >= 0:
+                detail.append("chest %ds overdue" % seconds)
+        if reason == "give-up":
+            detail.append("after %s attempts" % block.get("attempts"))
+        if reason == "low-balance":
+            detail.append("typing earns characters")
+        message = "not clicking: %s (%s)" % (
+            reason, ", ".join(detail))
+        writer = self.log.info if reason == "paused" else self.log.warn
+        writer(prefix + message)
 
     def alert_balance(self, snapshot, alert):
-        """Blink and log when the page reports a tier change.
+        """Log when the page reports a tier change.
 
         The tier is decided in the page, right next to the number it comes from,
-        so the bubble and the taskbar can never disagree. This side only owns
-        the two things the page cannot reach: Win32 and the log file. The very
-        first reading just sets the baseline.
+        so the bubble and the log can never disagree. The page owns everything
+        the user sees; this side only formats the line and tracks the
+        transition. The very first reading just sets the baseline.
 
         The balance only falls when a chest is opened and rises when you type,
         so a level change is a real event rather than noise.
@@ -288,13 +392,12 @@ class Runner:
             STOP_FILE.unlink()
 
         self.log.info(
-            "daemon start version=%s pid=%d port=%d poll=%dms lock=%dms min_balance=%d"
+            "daemon start version=%s pid=%d port=%d poll=%dms min_balance=%d"
             % (
                 __version__,
                 os.getpid(),
                 self.cfg.port,
                 self.cfg.inject_cfg["poll_ms"],
-                self.cfg.inject_cfg["lock_ms"],
                 self.cfg.inject_cfg["min_balance"],
             )
         )
@@ -323,12 +426,14 @@ class Runner:
                     self.reports.observe(snapshot)
 
                     self.drain_clicks(payload.get("clicks"))
-                    self.check_balance(snapshot, payload.get("lowBalance"))
+                    self.note_block(payload.get("block"), snapshot)
                     self.alert_balance(snapshot, payload.get("alert"))
                     self.rooms.sync(self.history)
 
-                    for err in payload.get("errors") or []:
-                        self.log.warn("page: %s" % err.get("m"))
+                    for when, text in self.toasts.poll(self.toast_floor_ms):
+                        self.log_toast(when, text)
+
+                    self.drain_page_errors(payload.get("errors"))
 
                     backoff = 2.0
                     failures = 0
@@ -351,6 +456,7 @@ class Runner:
                         "low_balance": payload.get("lowBalance"),
                         "retries": payload.get("retries") or 0,
                         "disabled_hits": payload.get("disabledHits") or 0,
+                        "block": self.block_reason,
                     })
 
                 except (cdp.CDPError, OSError) as exc:
@@ -377,6 +483,7 @@ class Runner:
             self.reports.close()
             self.rooms.close()
             self.history.close()
+            self.toasts.close()
             self.session.close()
             self.release_lock()
             try:

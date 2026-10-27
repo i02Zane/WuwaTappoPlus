@@ -1,11 +1,13 @@
 """Build a standalone Windows EXE and its SHA-256 checksum."""
 
+import argparse
 import hashlib
 import platform
 import shutil
 import subprocess
 import struct
 import sys
+import tempfile
 from importlib.metadata import distribution
 from pathlib import Path
 
@@ -38,13 +40,44 @@ def validate_executable(executable, build):
         raise RuntimeError("Packaged EXE failed startup verification; see %s" % report)
     payload = json.loads(report.read_text(encoding="utf-8"))
     if (not payload.get("frozen") or payload.get("version") != __version__
-            or payload.get("scripts") != dict.fromkeys(("pet", "settings", "rooms"), __version__)
+            or payload.get("scripts") != dict.fromkeys(
+                ("pet", "settings", "rooms", "toast"), __version__)
             or len(payload.get("licenses", [])) != 6):
         raise RuntimeError("Packaged EXE returned inconsistent release metadata; see %s" % report)
 
 
-def main():
+def archive_release(notes_path):
+    """Snapshot published files without overwriting an existing version."""
+    notes = Path(notes_path)
+    executable = ROOT / "dist/WuwaTappoPlus.exe"
+    checksum = ROOT / "dist/SHA256SUMS.txt"
+    if not notes.is_file():
+        raise FileNotFoundError("Release notes not found: %s" % notes)
+    expected = "%s  %s" % (hashlib.sha256(executable.read_bytes()).hexdigest(), executable.name)
+    if checksum.read_text(encoding="utf-8").strip() != expected:
+        raise ValueError("EXE checksum mismatch; release was not archived")
+    history = ROOT / "dist/history"
+    destination = history / ("v" + __version__)
+    if destination.exists():
+        raise FileExistsError("Release history already exists: %s" % destination)
+    history.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".archive-", dir=history) as temporary:
+        staged = Path(temporary)
+        shutil.copy2(executable, staged / executable.name)
+        shutil.copy2(checksum, staged / checksum.name)
+        shutil.copy2(notes, staged / "release-notes.md")
+        staged.rename(destination)
+    return destination
+
+
+def main(argv=None):
     validate_build_environment()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--notes", type=Path,
+                        help="archive this release with its notes under dist/history/vVERSION")
+    args = parser.parse_args(argv)
+    if args.notes is not None and not args.notes.is_file():
+        parser.error("release notes file does not exist: %s" % args.notes)
     build = ROOT / "build"
     licenses = build / "licenses"
     licenses.mkdir(parents=True, exist_ok=True)
@@ -85,6 +118,8 @@ def main():
                         (hashlib.sha256(executable.read_bytes()).hexdigest(), executable.name),
                         encoding="utf-8")
     print("\nBuilt:", executable, "\nChecksum:", checksum)
+    if args.notes is not None:
+        print("History:", archive_release(args.notes))
 
 
 if __name__ == "__main__":

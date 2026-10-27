@@ -2,6 +2,30 @@
   var CFG = __CFG__;
   var V = CFG.version;
 
+  // The chest timestamp reaches the page roughly one to two seconds before the
+  // server accepts the open. Clicking the moment it turns due is answered with
+  // "宝箱冷却中" (the app logs it as POST api/frontend/chests/open code=70006),
+  // which is exactly the popup users see next to an automatic open. Wait a
+  // fixed moment past due instead. Deliberately a constant, not a preference:
+  // it describes the app, not the user.
+  var READY_GRACE_MS = 2000;
+  // The page needs a moment to draw the reward button after the countdown turns
+  // due. Only call the button missing once that beat has clearly passed.
+  var DRAW_GRACE_MS = 3000;
+  // After a click, wait this long before touching the same chest again. Not a
+  // setting: it is a property of how the app answers, and five attempts at this
+  // spacing is about a minute of trying before the chest is parked.
+  var LOCK_MS = 10000;
+  // A chest that keeps refusing clicks is not going to open by retrying. Stop
+  // and tell the user instead of clicking forever.
+  var MAX_ATTEMPTS = 5;
+  // How long the failure bubble stays up before normal reminders return.
+  var NOTICE_MS = 15000;
+
+  function newSlot() {
+    return { ts: 0, attempts: 0, gaveUp: false, lastClickAt: 0 };
+  }
+
   var old = window.__WUT__;
   if (old && old.v === V) return 'exists v' + V;
 
@@ -19,17 +43,24 @@
     v: V,
     clicks: [],
     errors: [],
-    seen: {},
     btn: null,
     retries: 0,
     disabledHits: 0,
     lowBalance: null,
-    // The daemon only records and blinks; it does not gate the clicking. These
+    // The daemon only records and logs; it does not gate the clicking. These
     // three describe the current state so the bubble and the payload can carry
     // it without the daemon recomputing anything.
     bal: null,
     alert: 0,
     orphan: false,
+    // One independent record per chest. Opening one must never touch the
+    // other's attempt count, lock or reported stall.
+    slots: { left: newSlot(), right: newSlot() },
+    // Why a due chest is not being clicked right now, or null: the blocking
+    // state of the earliest due chest, shaped for the daemon's log line.
+    block: null,
+    // A failure the user must see: shown as a bubble for NOTICE_MS.
+    notice: null,
     beat: Date.now(),
     installedAt: Date.now(),
     cfg: CFG
@@ -138,6 +169,13 @@
     'wut-alert-bob 1s ease-in-out .34s infinite;}',
     '#wut-alert-host .wut-alert--critical:after{background:#fdf1e4;',
     'border-color:rgba(180,84,60,.28);}',
+    // A stalled auto-open, not a balance tier: same shape, different message.
+    '#wut-alert-host .wut-alert--warn{background:#fdf3e3;color:#a86524;',
+    'border-color:rgba(168,101,36,.3);',
+    'animation:wut-alert-pop .34s cubic-bezier(.2,1.7,.45,1) both,',
+    'wut-alert-bob 2s ease-in-out .34s infinite;}',
+    '#wut-alert-host .wut-alert--warn:after{background:#fdf3e3;',
+    'border-color:rgba(168,101,36,.3);}',
     '#wut-alert-host.wut-below .wut-alert:after{bottom:auto;top:-7px;',
     'transform:rotate(225deg);}',
 
@@ -409,6 +447,28 @@
   // pet; every consumer (bubble, click gate, payload, CLI) reads this one value
   // instead of recomputing it from the click counters, which track only what the
   // auto clicker did and therefore drift from the real wallet.
+  // A failure the user has to hear about: reuses the reminder bubble so the
+  // native hit region and the pet tracking keep working unchanged.
+  function showNotice(notice) {
+    if (!bubble) buildBubble();
+    if (level !== -1) {
+      bubble.box.className = 'wut-alert wut-alert--warn';
+      bubble.box.style.animation = 'none';
+      void bubble.box.offsetWidth;
+      bubble.box.style.animation = CFG.animation === false ? 'none' : '';
+      level = -1;                       // notices sit outside the balance tiers
+    }
+    var key = 'notice|' + notice.text + '|' + notice.sub;
+    if (shownFor !== key) {
+      shownFor = key;
+      bubble.msg.textContent = notice.text;
+      bubble.cd.textContent = notice.sub || '';
+    }
+    bubble.host.style.display = placeBubble() ? 'block' : 'none';
+    regionBridge.refresh();
+    startFollow();
+  }
+
   function updateAlert(balance, snap) {
     var low = CFG.alert_low || 0;
     var crit = CFG.alert_critical || 0;
@@ -418,9 +478,18 @@
       else if (low && balance < low) want = 1;
     }
 
+    if (A.notice && Date.now() >= A.notice.until) A.notice = null;
+
     if (CFG.bubble === false) {
       if (bubble || level) dropBubble();
       A.alert = want;
+      return;
+    }
+    // A failure notice outranks the balance tiers until it expires; the switch
+    // above still wins, so turning bubbles off also turns these off.
+    if (A.notice) {
+      showNotice(A.notice);
+      A.alert = 0;
       return;
     }
     if (!want) {
@@ -474,10 +543,27 @@
     }
   }
 
-  function tick() {
+  // Record why a chest that is already due is not being clicked. The identity
+  // is the slot plus its timestamp, so a stall is one line per chest and the
+  // other chest's events cannot rewrite it.
+  function setBlock(slot, reason, ts, balance, attempts) {
+    var b = A.block;
+    if (b && b.slot === slot && b.reason === reason && b.ts === ts) {
+      b.balance = balance;
+      return;
+    }
+    A.block = { slot: slot, reason: reason, ts: ts, since: Date.now(),
+                balance: balance, attempts: attempts || 0 };
+  }
+
+  function clearBlock() {
+    if (A.block) A.block = null;
+  }
+
+  function step() {
     // The daemon stamps A.beat on every poll. Losing it does not stop the
     // clicking: every decision is made in this page, the daemon only records
-    // and reaches Win32. The flag stays as a diagnostic bit; nothing renders it.
+    // and logs. The flag stays as a diagnostic bit; nothing renders it.
     A.orphan = CFG.stale_ms > 0 && Date.now() - A.beat > CFG.stale_ms;
 
     var s = (A.snapshot || snapshot)();
@@ -489,55 +575,128 @@
     // chest happens to exist. Gating this on a slot used to freeze the bubble
     // on its last text when both slots were empty.
     updateAlert(balance, s);
-    if (CFG.enabled === false) { A.lowBalance = null; return; }
+
+    // Each chest is its own record: its timestamp moving means the app opened
+    // it, which resets that slot and nothing else.
+    var now = Date.now();
+    var pairs = [{ name: 'left', ts: s.left > 0 ? s.left : 0 },
+                 { name: 'right', ts: s.right > 0 ? s.right : 0 }];
+    for (var i = 0; i < pairs.length; i++) {
+      var record = A.slots[pairs[i].name];
+      if (record.ts === pairs[i].ts) continue;
+      record.ts = pairs[i].ts;
+      record.attempts = 0;
+      record.gaveUp = false;
+      record.lastClickAt = 0;
+    }
+
+    var due = [];
+    for (var i = 0; i < pairs.length; i++) {
+      if (pairs[i].ts > 0 && pairs[i].ts <= now) due.push(pairs[i]);
+    }
+    due.sort(function (a, b) { return a.ts - b.ts; });
+
+    if (CFG.enabled === false) {
+      A.lowBalance = null;
+      if (due.length) setBlock(due[0].name, 'paused', due[0].ts, balance);
+      else clearBlock();
+      return;
+    }
+
     var btn = document.querySelector('.reward-btn');
 
-    if (btn && !A.btn) A.btn = { t: Date.now(), key: s.left + '|' + s.right };
+    if (btn && !A.btn) A.btn = { t: now };
     if (!btn && A.btn) A.btn = null;
 
-    var dueL = s.left > 0 && s.left - s.now <= 0;
-    var dueR = s.right > 0 && s.right - s.now <= 0;
-    if (!dueL && !dueR) return;
-    if (!btn) return;
+    if (!due.length) { clearBlock(); return; }
+
+    // The earliest due chest that has not burned its attempts. The other chest
+    // keeps its own state; it is neither blocked nor retried by this one.
+    var target = null;
+    for (var i = 0; i < due.length; i++) {
+      if (!A.slots[due[i].name].gaveUp) { target = due[i]; break; }
+    }
+    if (!target) {
+      setBlock(due[0].name, 'give-up', due[0].ts, balance,
+               A.slots[due[0].name].attempts);
+      return;
+    }
+
+    var slot = A.slots[target.name];
+    var overdue = now - target.ts;
+
+    if (!btn) {
+      // The page draws the button a beat after the countdown turns due; only
+      // call it missing once that beat has clearly passed.
+      if (overdue < DRAW_GRACE_MS) { clearBlock(); return; }
+      if (balance !== null && balance < CFG.min_balance) {
+        A.lowBalance = balance;
+        setBlock(target.name, 'low-balance', target.ts, balance);
+      } else {
+        A.lowBalance = 0;
+        setBlock(target.name, 'no-button', target.ts, balance);
+      }
+      return;
+    }
 
     // No wallet on screen yet: the pet dock has not painted its number, so do
     // not guess from the click counters. Wait for the real value.
-    if (balance === null) return;
+    if (balance === null) {
+      A.lowBalance = 0;
+      setBlock(target.name, 'no-wallet', target.ts, balance);
+      return;
+    }
 
     if (balance < CFG.min_balance) {
       A.lowBalance = balance;
+      setBlock(target.name, 'low-balance', target.ts, balance);
       return;
     }
     A.lowBalance = 0;
 
     if (btn.disabled) {
       A.disabledHits++;
+      setBlock(target.name, 'button-disabled', target.ts, balance);
       return;
     }
 
     var rect = btn.getBoundingClientRect();
-    if (rect.width < 4 || rect.height < 4) return;
+    if (rect.width < 4 || rect.height < 4) {
+      setBlock(target.name, 'button-hidden', target.ts, balance);
+      return;
+    }
 
-    var key = s.left + '|' + s.right;
-    var now = Date.now();
-    if (now - (A.seen[key] || 0) < CFG.lock_ms) return;
+    // Expected wait, not a stall: the countdown is a little ahead of the
+    // server, so the click is held back instead of being refused.
+    if (overdue < READY_GRACE_MS) { clearBlock(); return; }
+    // One click per chest per lock window; a refused click waits for the lock
+    // instead of firing again on the next verify interval.
+    if (now - slot.lastClickAt < LOCK_MS) { clearBlock(); return; }
 
-    var due = dueL && dueR ? Math.min(s.left, s.right) : (dueL ? s.left : s.right);
+    clearBlock();
 
     var rec = {
       t: s.now,
       iso: new Date(s.now).toISOString(),
+      slot: target.name,
       x: Math.round(rect.x),
       y: Math.round(rect.y),
-      readyL: dueL,
-      readyR: dueR,
+      readyL: target.name === 'left',
+      readyR: target.name === 'right',
       balance: balance,
-      overdueMs: now - due,
+      overdueMs: overdue,
       renderLagMs: A.btn ? now - A.btn.t : -1,
-      disabled: !!btn.disabled
+      disabled: !!btn.disabled,
+      // How many reward buttons the page drew, and the page's own words on the
+      // one about to be clicked: a count above one means the other chest was on
+      // screen too, a label such as "冷却中" means the app still refuses it.
+      buttons: document.querySelectorAll('.reward-btn').length,
+      label: String(btn.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 24),
+      attempt: slot.attempts + 1
     };
 
-    A.seen[key] = now;
+    slot.lastClickAt = now;
+    slot.attempts += 1;
     try {
       btn.click();
       rec.ok = true;
@@ -550,15 +709,52 @@
     A.clicks.push(rec);
     if (A.clicks.length > 50) A.clicks.shift();
 
+    // Only this chest's timestamp decides the outcome. A click that changes
+    // nothing is retried after the lock, up to MAX_ATTEMPTS; then the chest is
+    // parked until the app opens it or the page reloads.
     setTimeout(function () {
-      var after = snapshot();
+      var after = (A.snapshot || snapshot)();
       if (!after) return;
-      if (after.left === s.left && after.right === s.right) {
-        delete A.seen[key];
-        A.retries++;
-        note('click produced no state change, unlocked');
+      var moved = target.name === 'left' ? after.left : after.right;
+      if (moved !== target.ts) return;
+      A.retries++;
+      if (slot.attempts >= MAX_ATTEMPTS) {
+        slot.gaveUp = true;
+        A.notice = {
+          text: '自动开箱失败',
+          sub: '连续 ' + slot.attempts + ' 次点击没生效，已暂停这个宝箱',
+          until: Date.now() + NOTICE_MS
+        };
+        note('gave up on ' + target.name + ' after ' + slot.attempts + ' attempts');
+        return;
       }
+      note('click on ' + target.name + ' produced no state change ('
+           + slot.attempts + '/' + MAX_ATTEMPTS + ')');
     }, CFG.verify_ms);
+  }
+
+  // Always re-arm the grace wake-up, whichever path the step took.
+  function tick() {
+    step();
+    planGrace();
+  }
+
+  // Wake exactly when the earliest due chest clears its grace window, so the
+  // base poll can stay slow without delaying the click.
+  var graceTimer = 0;
+  function planGrace() {
+    var now = Date.now();
+    var next = Infinity;
+    for (var name in A.slots) {
+      var record = A.slots[name];
+      if (!record.ts || record.gaveUp) continue;
+      var readyAt = record.ts + READY_GRACE_MS;
+      if (readyAt > now && readyAt < next) next = readyAt;
+    }
+    if (graceTimer) { clearTimeout(graceTimer); graceTimer = 0; }
+    if (next !== Infinity) {
+      graceTimer = setTimeout(tick, Math.max(0, next - now));
+    }
   }
 
   var lastRun = 0;
@@ -569,7 +765,10 @@
     tick();
   }
 
-  A.timer = setInterval(tick, CFG.poll_ms);
+  // 1 Hz keeps countdowns and the balance fresh; the observer wakes the loop the
+  // moment the chest UI changes, and planGrace() wakes it exactly at the grace
+  // boundary. CFG.poll_ms can only raise the floor for slower machines.
+  A.timer = setInterval(tick, Math.max(1000, CFG.poll_ms || 1000));
   A.obs = new MutationObserver(throttled);
   A.obs.observe(document.body, {
     childList: true,
@@ -593,6 +792,7 @@
   A.dropBubble = dropBubble;
   A.uninstall = function () {
     clearInterval(A.timer);
+    if (graceTimer) clearTimeout(graceTimer);
     A.obs.disconnect();
     try { dropBubble(); } catch (e) {}
     delete window.__WUT__;

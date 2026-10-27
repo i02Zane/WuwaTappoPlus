@@ -11,8 +11,9 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 - `src/wuwa_tappo_plus/scripts/inject.js`：页面检查、按钮点击与提醒气泡。
 - `src/wuwa_tappo_plus/config.py`：默认配置与 TOML 加载；`config.toml`：本地配置。
 - `src/wuwa_tappo_plus/settings.py`、`src/wuwa_tappo_plus/scripts/settings.js`：独立设置窗口中的 Plus 开关、配置持久化与运行状态同步。
-- `src/wuwa_tappo_plus/rooms.py`、`src/wuwa_tappo_plus/scripts/rooms.js`：联机页的房间历史。页面自己解析房间号、渲染列表并完成回跳（填入真实输入框后点击「加入房间」），Python 只负责落库与回传列表；数据保存在 `reports/rooms.sqlite3`，默认保留 20 条。房间号必须匹配 `[0-9A-Za-z]{4,16}`，写入前做校验；房主名字晚于房间号渲染时只补名字，不计新的一次进入。
+- `src/wuwa_tappo_plus/rooms.py`、`src/wuwa_tappo_plus/scripts/rooms.js`：联机页的房间历史。页面自己解析房间号、渲染列表并完成回跳（填入真实输入框后点击「加入房间」），Python 只负责落库与回传列表；数据保存在 `reports/rooms.sqlite3`，默认保留 20 条未收藏房间。收藏（`pinned`）房间置顶显示、永不因数量上限被删除，上限同时由条数控制和 `config.toml` 的 `[rooms] history` 控制；旧库缺少该列时启动补列。房间号必须匹配 `[0-9A-Za-z]{4,16}`，写入前做校验；房主名字晚于房间号渲染时只补名字，不计新的一次进入。
 - `src/wuwa_tappo_plus/reports.py`：使用桌宠原生累计输入计数统计每日键鼠合计增量；数据保存在 `reports/input.sqlite3`。首次采样只建基线，开箱、消费和旧开箱日志不能计入；缺失日期与已采样的零次须区分。仅保存计数和账户标识的哈希，不记录按键内容。
+- `src/wuwa_tappo_plus/toasts.py`、`src/wuwa_tappo_plus/scripts/toast.js`：在独立的 toast 页面里缓存桌宠气泡的原文与时间，后台逐条写入日志（`TOAST at=… text="…"`），并标注是否紧跟一次自动点击。气泡页是单独 WebView，桌宠页面看不到这些文本。
 
 `runtime/` 包含内置 Python 3.13。`tests/` 存放隔离回归测试。日志、本地配置、状态文件、锁文件和运行时二进制文件均由 Git 忽略。
 
@@ -23,7 +24,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 - `.\runtime\python.exe launch.py help`：查看可用命令。
 - `.\runtime\python.exe -m compileall -q src tests tools launch.py`：检查 Python 语法。
 - `.\runtime\python.exe tools/run_tests.py`：运行隔离回归测试。
-- `node --test tests/test_bubble.js tests/test_panel.js tests/test_rooms.js`：验证气泡定位、原生裁切区域桥接与房间回跳；仅开发测试需要 Node.js。
+- `node --test tests/test_bubble.js tests/test_panel.js tests/test_rooms.js tests/test_toast.js`：验证气泡定位、原生裁切区域桥接、房间回跳与 toast 缓存；仅开发测试需要 Node.js。
 - `.\runtime\python.exe launch.py doctor`：检查解释器、应用、策略、连接与守护进程状态。
 - `.\runtime\python.exe launch.py status`、`.\runtime\python.exe launch.py logs 80`：查看当前状态与最近日志。
 - `.\runtime\python.exe launch.py install`、`.\runtime\python.exe launch.py uninstall`：安装 / 修复或卸载，保留个人配置与功能开关。
@@ -51,8 +52,23 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 
 调试连接保持绑定回环地址。保留策略冲突检查，注册表修改仅限本应用对应的值。安装和卸载会修改 Windows 配置，可能需要管理员权限。自动化仅点击真实按钮，不构造奖励接口请求，不修改应用二进制文件。提交补丁时排除个人路径与运行时生成的状态。
 
+`config.toml` 由程序写出的部分**始终是无 BOM 的 UTF-8**（`utf-8` 编码器不会写 BOM）；读取时使用 `utf-8-sig`，只是为了容忍外部编辑器或脚本写入的 BOM。改配置时仍应保存为无 BOM：PowerShell 5.1 的 `Set-Content -Encoding utf8` 会写入 BOM，`tomllib` 会把它判成语法错误，表现为后台日志里的 `settings: Invalid statement (at line 1, column 1)` 或启动失败；此时请用 `[IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($false)))`。
+
+`config.toml` 的结构由 `DEFAULT_TOML` 单一决定：读取配置时 `sync_config()` 会把文件对齐到模板——保留仍在用字段的值与注释，删除已退休的字段（连同其注释块），补齐模板里有而文件里缺的字段，未知段落原样保留；只有内容变化才原子写回。新增或删除配置项时只改 `DEFAULT_TOML` 与 `BUILTIN`，不要另写迁移代码，也不要手改用户的配置文件。
+
 ## 打包与发布
 
 `pyproject.toml` 定义 `src/` 包布局与 GPL-3.0-only 许可。`python tools/build_release.py` 仅生成单文件 EXE 和只包含该 EXE 哈希的 SHA-256 校验文件，不额外打包源码；`python tools/smoke_release.py` 验证冻结入口、资源、终端窗口、隔离后台拉起和校验值。Release 只上传 EXE 与校验文件，对应源码使用 GitHub 版本标签自动提供的 ZIP / TAR.GZ。发布时保持标签源码与二进制一致，保留构建文件和第三方许可证；不得打入配置、统计、日志或个人路径。
 
 EXE 数据存放在 `%LOCALAPPDATA%\WuwaTappoPlus`，源码数据保留在仓库根目录。`WUWA_TAPPO_PLUS_DATA_DIR` 仅允许绝对路径，用于隔离测试与显式数据定位。资源从包内 `scripts/` 读取，运行命令通过 `win.command_args` 生成；冻结程序不能再启动 `pythonw.exe` 或源码脚本。不要把用户数据写入临时解包目录；启动独立后台和提权进程时设置 `PYINSTALLER_RESET_ENVIRONMENT=1`，确保前台退出后后台资源仍然可用。这是首次公开发布，不引入历史入口、旧配置迁移和旧自启动名称的兼容代码。
+
+### Agent 的发布职责
+
+当用户要求打版本标签或发布版本时，由 Agent 主动完成以下流程，不要求用户手动运行打包或归档命令：
+
+1. 确认统一版本号、发布提交与版本标签对应，生成该版本的中文 Release Notes。
+2. 完成构建、测试和 EXE 启动验证，核对程序及页面脚本版本一致。
+3. 发布前必须将本次 EXE、SHA256SUMS.txt 和 release-notes.md 保存到 `dist/history/v<版本号>/`；可通过 `tools/build_release.py --notes <发布说明.md>` 完成。普通开发构建不必归档。
+4. 归档文件必须与实际交付或上传的文件一致，并核验 SHA-256；已有版本归档不得静默覆盖，遇到冲突先核对内容。
+5. `dist/` 已整体被 Git 忽略，不为历史归档增加单独规则，不提交二进制历史。GitHub Release 只附 EXE 和校验文件，源码使用标签自动归档。
+6. 用户自行发布或登录权限不足时，Agent 仍须准备并归档上述文件，再提供下载路径和可直接粘贴的 Release Notes。

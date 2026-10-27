@@ -19,4 +19,4 @@ jobs:
       - run: python -m pip install -e .
       - run: python -m unittest discover -s tests -v
       - run: python -m compileall -q src tests tools launch.py
-      - run: node --test tests/test_bubble.js tests/test_panel.js tests/test_rooms.js
+      - run: node --test tests/test_bubble.js tests/test_panel.js tests/test_rooms.js tests/test_toast.js

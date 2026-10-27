@@ -45,6 +45,7 @@ STATE_JS = r"""
       bal: (A.readBal ? A.readBal() : null),
       inject: A.v || 0,
       auto_open: A.cfg ? A.cfg.enabled !== false : null,
+      block: A.block ? A.block.reason : null,
       nickname: u.nickname || ''
     });
   }catch(e){ return JSON.stringify({ok:false, err:String(e)}); }

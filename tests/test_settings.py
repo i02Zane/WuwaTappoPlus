@@ -6,7 +6,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from wuwa_tappo_plus import __version__, cdp
-from wuwa_tappo_plus.config import BUILTIN, DEFAULT_TOML, Config, save_preferences, with_preferences
+from wuwa_tappo_plus.config import (BUILTIN, DEFAULT_TOML, Config, save_preferences,
+                                    sync_config, with_preferences)
 from wuwa_tappo_plus.settings import SettingsBridge
 from wuwa_tappo_plus.ws import WSError
 
@@ -38,6 +39,44 @@ class PreferenceTests(unittest.TestCase):
         self.assertEqual(saved.port, 9223)
         self.assertTrue(self.path.read_text(encoding="utf-8").startswith("# keep this"))
         self.assertEqual(list(self.path.parent.glob(".plus-config-*")), [])
+
+    def test_a_config_saved_with_a_bom_is_read_and_rewritten_without_one(self):
+        # PowerShell 5.1's `Set-Content -Encoding utf8` writes a BOM and tomllib
+        # rejects it as a syntax error, so every read goes through utf-8-sig.
+        self.path.write_bytes(b"\xef\xbb\xbf" + DEFAULT_TOML.encode("utf-8"))
+        saved = save_preferences({"auto_open": False}, self.path)
+        self.assertFalse(saved.auto_open)
+        self.assertFalse(self.path.read_bytes().startswith(b"\xef\xbb\xbf"))
+
+    def test_load_tolerates_a_bom(self):
+        from wuwa_tappo_plus import config
+
+        self.path.write_bytes(b"\xef\xbb\xbf" + DEFAULT_TOML.encode("utf-8"))
+        with patch.object(config, "CONFIG_PATH", self.path):
+            self.assertTrue(config.load().auto_open)
+
+    def test_alert_tiers_follow_the_click_threshold(self):
+        self.assertEqual(Config({}).alert_low, 2000)
+        self.assertEqual(Config({}).alert_critical, 1000)
+        cfg = Config({"inject": {"min_balance": 1500}})
+        self.assertEqual(cfg.alert_low, 2500)
+        self.assertEqual(cfg.alert_critical, 1500)
+        self.assertEqual(cfg.inject_cfg["alert_low"], 2500)
+        self.assertEqual(cfg.inject_cfg["alert_critical"], 1500)
+
+    def test_retired_and_unknown_keys_are_ignored(self):
+        # An old file still carries these; keeping them must not change
+        # behaviour, and saving the switches must not delete them either.
+        cfg = Config({"inject": {"poll_ms": 5, "verify_ms": 5, "stale_ms": 5,
+                                 "lock_ms": 5, "min_balance": 1200},
+                      "alerts": {"low": 1, "critical": 1},
+                      "mystery": {"x": 1}})
+        self.assertEqual(cfg.inject_cfg["poll_ms"], 1000)
+        self.assertEqual(cfg.inject_cfg["verify_ms"], 2000)
+        self.assertEqual(cfg.inject_cfg["stale_ms"], 30000)
+        self.assertNotIn("lock_ms", cfg.inject_cfg)
+        self.assertEqual((cfg.alert_low, cfg.alert_critical), (2200, 1200))
+        self.assertEqual(cfg.inject_cfg["min_balance"], 1200)
 
     def test_only_boolean_whitelisted_preferences_are_writable(self):
         original = self.path.read_bytes()
@@ -142,6 +181,79 @@ class BridgeTests(unittest.TestCase):
         session.ws.recv.side_effect = WSError("closed")
         with self.assertRaises(cdp.CDPError):
             session.js("1")
+
+
+class ConfigSyncTests(unittest.TestCase):
+    """The file follows DEFAULT_TOML without losing what the user still uses."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "config.toml"
+
+    def write(self, text):
+        self.path.write_text(text, encoding="utf-8")
+
+    def read(self):
+        return self.path.read_text(encoding="utf-8")
+
+    def test_retired_keys_go_and_missing_ones_come_back(self):
+        self.write(
+            "# my header\n"
+            "[app]\n"
+            "exe = 'D:\\Pets\\WuwaTappo.exe'  # keep this comment\n"
+            "port = 9333\n"
+            "\n"
+            "[inject]\n"
+            "enabled = false\n"
+            "poll_ms = 100\n"
+            "min_balance = 1500\n"
+            "\n"
+            "[alerts]\n"
+            "# old tier comment\n"
+            "low = 3000\n"
+            "critical = 2000\n"
+            "bubble = false\n"
+            "\n"
+            "[panel]\n"
+            "keep_open = true\n"
+        )
+        self.assertTrue(sync_config(self.path))
+        text = self.read()
+        self.assertIn("# my header", text)
+        self.assertIn("exe = 'D:\\Pets\\WuwaTappo.exe'  # keep this comment", text)
+        self.assertNotIn("poll_ms", text)
+        self.assertNotIn("low =", text)
+        self.assertNotIn("# old tier comment", text)
+
+        parsed = tomllib.loads(text)
+        self.assertEqual(parsed["app"]["port"], 9333)
+        self.assertEqual(parsed["inject"], {"enabled": False, "min_balance": 1500})
+        self.assertEqual(parsed["alerts"], {"bubble": False, "animation": True})
+        self.assertEqual(parsed["rooms"], {"history": 20})       # section appended
+        self.assertEqual(parsed["daemon"]["watchdog_min"], 1)    # missing key added
+
+    def test_sync_is_idempotent(self):
+        self.write("[inject]\nenabled = true\n")
+        self.assertTrue(sync_config(self.path))
+        once = self.path.read_bytes()
+        self.assertFalse(sync_config(self.path))
+        self.assertEqual(self.path.read_bytes(), once)
+
+    def test_a_clean_file_is_not_rewritten(self):
+        self.write(DEFAULT_TOML)
+        self.assertFalse(sync_config(self.path))
+
+    def test_unknown_sections_are_left_alone(self):
+        self.write(DEFAULT_TOML + "\n[mystery]\nx = 1\n")
+        sync_config(self.path)
+        self.assertEqual(tomllib.loads(self.read())["mystery"], {"x": 1})
+        self.assertIn("[mystery]", self.read())
+
+    def test_invalid_toml_raises_instead_of_being_mangled(self):
+        self.write("[app]\nport = 1\nport = 2\n")
+        with self.assertRaises(tomllib.TOMLDecodeError):
+            sync_config(self.path)
 
 
 class VersionTests(unittest.TestCase):

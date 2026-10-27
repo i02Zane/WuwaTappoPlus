@@ -10,6 +10,13 @@ from pathlib import Path
 from . import __version__
 from .paths import DATA_DIR, SCRIPTS_DIR
 
+# Page timings describe the app, not the user. They used to be config keys;
+# a leftover value in config.toml is ignored on purpose so an old file cannot
+# silently change how the page behaves.
+POLL_MS = 1000
+VERIFY_MS = 2000
+STALE_MS = 30000
+
 ROOT = DATA_DIR
 CONFIG_PATH = ROOT / "config.toml"
 LOG_DIR = ROOT / "logs"
@@ -34,23 +41,15 @@ host = "127.0.0.1"
 [inject]
 # Pause automatic clicking without stopping the daemon.
 enabled = true
-# How often the injected script checks the countdown (ms).
-poll_ms = 100
-# After a click, ignore the same slot for this long (ms).
-lock_ms = 7000
-# How long to wait before deciding a click had no effect (ms).
-verify_ms = 2000
-# How long without a daemon check-in before the page flags itself as orphaned.
-# Clicking continues either way; this is a status bit, not a stop switch.
-stale_ms = 30000
-# Do not attempt a click below this character balance.
+# Do not attempt a click below this character balance. The balance reminder
+# tiers are derived from it: low = min_balance + 1000, critical = min_balance.
 min_balance = 1000
 
 [alerts]
-# Balance reminders. Each tier fires once when the balance drops below it, and
-# re-arms after you type your way back above. Set a tier to 0 to disable it.
-low = 2000
-critical = 1000
+# The reminder tiers follow [inject] min_balance: low is min_balance + 1000 and
+# critical is min_balance itself, so "not enough to open" is the critical tier.
+# Each tier fires once when the balance drops below it and re-arms after you
+# type your way back above.
 # Show a bouncing speech bubble over the pet while the balance is below a tier.
 bubble = true
 # Animate the reminder bubble. False keeps a static reminder.
@@ -61,7 +60,8 @@ animation = true
 keep_open = true
 
 [rooms]
-# How many visited rooms the multiplayer tab remembers.
+# How many visited rooms the multiplayer tab remembers. Pinned rooms are kept
+# on top and do not count against this limit.
 history = 20
 
 [daemon]
@@ -91,15 +91,8 @@ def _merge(base, over):
 
 BUILTIN = {
     "app": {"exe": "", "port": 9222, "host": "127.0.0.1"},
-    "inject": {
-        "enabled": True,
-        "poll_ms": 100,
-        "lock_ms": 7000,
-        "verify_ms": 2000,
-        "stale_ms": 30000,
-        "min_balance": 1000,
-    },
-    "alerts": {"low": 2000, "critical": 1000, "bubble": True, "animation": True},
+    "inject": {"enabled": True, "min_balance": 1000},
+    "alerts": {"bubble": True, "animation": True},
     "panel": {"keep_open": True},
     "rooms": {"history": 20},
     "daemon": {"heartbeat": 300, "max_runtime": 0, "watchdog_min": 1},
@@ -128,17 +121,17 @@ class Config:
 
     @property
     def inject_cfg(self):
-        inj = dict(self.data.get("inject", {}))
         return {
             "version": __version__,
             "enabled": self.auto_open,
             "bubble": self.alert_bubble,
             "animation": self.alert_animation,
-            "poll_ms": int(inj.get("poll_ms", 100)),
-            "lock_ms": int(inj.get("lock_ms", 7000)),
-            "verify_ms": int(inj.get("verify_ms", 2000)),
-            "stale_ms": int(inj.get("stale_ms", 30000)),
-            "min_balance": int(inj.get("min_balance", 1000)),
+            # Timings are properties of the app, not preferences: they are
+            # constants now, and a leftover key in config.toml is ignored.
+            "poll_ms": POLL_MS,
+            "verify_ms": VERIFY_MS,
+            "stale_ms": STALE_MS,
+            "min_balance": self.min_balance,
             # The page draws the reminder bubble itself, so it needs the same
             # thresholds the daemon logs against.
             "alert_low": self.alert_low,
@@ -146,12 +139,17 @@ class Config:
         }
 
     @property
+    def min_balance(self):
+        """The one click-threshold left configurable; the reminder tiers follow it."""
+        return int(self.get("inject", "min_balance", 1000))
+
+    @property
     def alert_low(self):
-        return int(self.get("alerts", "low", 2000) or 0)
+        return self.min_balance + 1000
 
     @property
     def alert_critical(self):
-        return int(self.get("alerts", "critical", 1000) or 0)
+        return self.min_balance
 
     @property
     def alert_bubble(self):
@@ -209,14 +207,154 @@ def ensure_config():
     return True
 
 
+# ------------------------------------------------------------- reconcile
+
+_SECTION_HEADER = re.compile(r"^[ \t]*\[([A-Za-z0-9_]+)\][ \t]*(?:#[^\n]*)?$")
+_KEY_LINE = re.compile(r"^[ \t]*([A-Za-z0-9_]+)[ \t]*=")
+
+
+def _parse_config(text):
+    """Split TOML text into a preamble and sections that keep their raw lines."""
+    preamble = []
+    sections = []
+    current = None
+    for line in text.splitlines():
+        header = _SECTION_HEADER.match(line)
+        if header:
+            comments = []
+            holder = current["lines"] if current is not None else preamble
+            while holder and holder[-1].lstrip().startswith("#"):
+                comments.insert(0, holder.pop())
+            current = {"name": header.group(1), "comments": comments,
+                       "header": line, "lines": []}
+            sections.append(current)
+        elif current is None:
+            preamble.append(line)
+        else:
+            current["lines"].append(line)
+    return preamble, sections
+
+
+def _groups(lines):
+    """Attach the comment block above each key to that key."""
+    groups = []
+    pending = []
+    for line in lines:
+        key = _KEY_LINE.match(line)
+        if key:
+            groups.append((key.group(1), pending + [line]))
+            pending = []
+        else:
+            pending.append(line)
+    if pending:
+        groups.append((None, pending))
+    return groups
+
+
+def _clean_section(lines, allowed, template_groups):
+    """Keep live keys, drop retired ones with their comments, append new ones."""
+    kept = []
+    present = set()
+    tail = []
+    for key, block in _groups(lines):
+        if key is None:
+            tail = block
+        elif key in allowed:
+            kept.extend(block)
+            present.add(key)
+    for key, block in template_groups:
+        if key is not None and key not in present:
+            kept.extend(block)
+    return kept + tail
+
+
+def _reconcile(text):
+    template = tomllib.loads(DEFAULT_TOML)
+    current = tomllib.loads(text)
+    preamble, sections = _parse_config(text)
+    _, template_sections = _parse_config(DEFAULT_TOML)
+
+    # What the file must contain afterwards: template shape, current values.
+    expected = {}
+    for section in template_sections:
+        name = section["name"]
+        expected[name] = {key: current.get(name, {}).get(key, value)
+                          for key, value in template[name].items()}
+
+    output = list(preamble)
+    seen = set()
+    for section in sections:
+        name = section["name"]
+        output.extend(section["comments"])
+        output.append(section["header"])
+        if name not in template:
+            # A section this program does not know: leave it exactly as it is.
+            output.extend(section["lines"])
+            continue
+        seen.add(name)
+        groups = _groups(next(item["lines"] for item in template_sections
+                              if item["name"] == name))
+        output.extend(_clean_section(section["lines"], template[name], groups))
+
+    for section in template_sections:
+        if section["name"] in seen:
+            continue
+        if output and output[-1].strip():
+            output.append("")
+        output.extend(section["comments"])
+        output.append(section["header"])
+        output.extend(section["lines"])
+
+    new_text = "\n".join(output).rstrip("\n") + "\n"
+    parsed = tomllib.loads(new_text)
+    for name, values in expected.items():
+        if parsed.get(name) != values:
+            raise ValueError("configuration layout is not supported; not rewritten")
+    return new_text
+
+
+def sync_config(path=None):
+    """Bring config.toml in line with DEFAULT_TOML, keeping what is still used.
+
+    Values and comments of live keys are left untouched, retired keys are
+    removed with their comment block, and missing keys are appended with the
+    template's comment and default. Unknown sections are preserved. Returns
+    True when the file was rewritten.
+    """
+    path = Path(path) if path is not None else CONFIG_PATH
+    text = path.read_text(encoding="utf-8-sig")
+    updated = _reconcile(text)
+    if updated == text:
+        return False
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".plus-config-", suffix=".tmp",
+                                         delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(updated)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+    return True
+
+
 def load():
     ensure_config()
+    # utf-8-sig, not utf-8: Windows editors and PowerShell's Set-Content happily
+    # add a BOM, and tomllib rejects it as "Invalid statement (at line 1)".
     try:
-        with open(CONFIG_PATH, "rb") as f:
-            data = tomllib.load(f)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+        data = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise SystemExit("cannot read %s: %s" % (CONFIG_PATH, exc))
-    return Config(data)
+    cfg = Config(data)
+    # Best effort: a file this program cannot safely rewrite is left alone.
+    try:
+        sync_config()
+    except (OSError, ValueError):
+        pass
+    return cfg
 
 
 PREFERENCE_KEYS = {"auto_open": ("inject", "enabled"),
@@ -240,7 +378,8 @@ def save_preferences(preferences, path=None):
     """Atomically update whitelisted booleans, preserving other TOML values."""
     path = Path(path) if path is not None else CONFIG_PATH
     with_preferences(Config({}), preferences)  # validate before reading/writing
-    text = path.read_text(encoding="utf-8")
+    # Reading with utf-8-sig drops a BOM; writing below always produces none.
+    text = path.read_text(encoding="utf-8-sig")
     expected = tomllib.loads(text)
     sections = re.compile(r"(?m)^[ \t]*\[([a-zA-Z0-9_]+)\][ \t]*(?:#[^\n]*)?$")
     for name, value in preferences.items():

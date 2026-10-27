@@ -16,6 +16,7 @@ def probe():
     from .rooms import RoomBridge
     from .settings import SettingsBridge
     from .runner import Runner
+    from .toasts import ToastBridge
 
     class QuietLog:
         pass
@@ -24,7 +25,8 @@ def probe():
     runner.cfg = Config({})
     sources = {"pet": runner.inject_source(),
                "settings": SettingsBridge(9222, "127.0.0.1", QuietLog()).source,
-               "rooms": RoomBridge(9222, "127.0.0.1", QuietLog()).source}
+               "rooms": RoomBridge(9222, "127.0.0.1", QuietLog()).source,
+               "toast": ToastBridge(9222, "127.0.0.1", QuietLog()).source}
     if any("__VERSION__" in source or "__CFG__" in source for source in sources.values()):
         raise RuntimeError("unrendered script template")
     licenses = []

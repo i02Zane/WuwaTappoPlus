@@ -30,7 +30,9 @@ class SettingsBridge:
 
     def sync(self, cfg, report=None):
         try:
-            disk = Config(tomllib.loads(self.config_path.read_text(encoding="utf-8")))
+            # utf-8-sig: a BOM written by a Windows editor must not look like a
+            # broken config, or the switches silently stop applying.
+            disk = Config(tomllib.loads(self.config_path.read_text(encoding="utf-8-sig")))
             cfg = with_preferences(cfg, disk.preferences)
         except (OSError, ValueError) as exc:
             self._warn(exc)

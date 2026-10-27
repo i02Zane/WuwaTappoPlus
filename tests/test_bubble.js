@@ -10,6 +10,7 @@ function fixture() {
   const calls = [];
   const posts = [];
   const frames = [];
+  const timers = [];
   const pet = { left: 400, top: 300, width: 150, height: 150, bottom: 450 };
   const original = {
     regions: [{ left: 400, top: 300, width: 150, height: 160 }],
@@ -62,21 +63,23 @@ function fixture() {
       head: node(), body: node(),
       createElement: node,
       getElementById: id => elements.get(id),
+      querySelectorAll: () => [],
       querySelector: selector => selector.includes('.pet-dock') ?
         { getBoundingClientRect: () => pet } : null
     },
     MutationObserver: class { observe() {} disconnect() {} },
     setInterval: () => 1, clearInterval() {},
-    setTimeout: () => 1,
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout() {},
     requestAnimationFrame: fn => { frames.push(fn); return frames.length; },
     cancelAnimationFrame() {}
   };
-  const cfg = { version, poll_ms: 100, alert_low: 2000, alert_critical: 1000 };
+  const cfg = { version, poll_ms: 1000, alert_low: 2000, alert_critical: 1000 };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/wuwa_tappo_plus/scripts/inject.js'), 'utf8')
     .replace('__CFG__', JSON.stringify(cfg)), context);
   const a = window.__WUT__;
   a.updateAlert(500, { now: 1, left: 30000, right: 60000 });
-  return { a, window, calls, posts, frames, elements, pet, original, originalFetch, originalPost, context };
+  return { a, window, calls, posts, frames, elements, pet, original, originalFetch, originalPost, context, timers };
 }
 
 test('bubble stays above the pet with no gap', () => {
@@ -211,6 +214,135 @@ test('live pause blocks clicks while keeping state and reminders available', () 
   f.a.configure({ enabled: true, bubble: true, animation: true });
   f.a.tick();
   assert.equal(clicks, 1);
+});
+
+test('a chest that has just come due waits out the server grace', () => {
+  const f = fixture();
+  let clicks = 0;
+  const query = f.context.document.querySelector;
+  f.context.document.querySelector = selector => selector === '.reward-btn' ? {
+    disabled: false, click() { clicks++; },
+    getBoundingClientRect: () => ({ width: 20, height: 20, x: 1, y: 1 })
+  } : query(selector);
+  f.a.configure({ enabled: true, bubble: false, animation: false });
+  f.a.snapshot = () => ({ now: Date.now(), left: Date.now() - 800, right: 0, bal: 3000 });
+  f.a.tick();
+  assert.equal(clicks, 0);
+  // A short wait is expected behaviour, not a stalled gate.
+  assert.equal(f.a.block, null);
+  f.a.snapshot = () => ({ now: Date.now(), left: Date.now() - 3000, right: 0, bal: 3000 });
+  f.a.tick();
+  assert.equal(clicks, 1);
+});
+
+test('missing reward button is reported as a block instead of silence', () => {
+  const f = fixture();
+  f.a.configure({ enabled: true, bubble: false, animation: false });
+  f.a.snapshot = () => ({ now: Date.now(), left: Date.now() - 4000, right: 0, bal: 3000 });
+  f.a.tick();
+  assert.equal(f.a.block.reason, 'no-button');
+  assert.equal(f.a.block.slot, 'left');
+  assert.equal(f.a.block.balance, 3000);
+});
+
+test('the button gets a few seconds to be drawn before it counts as missing', () => {
+  const f = fixture();
+  f.a.configure({ enabled: true, bubble: false, animation: false });
+  let left = Date.now() - 800;
+  f.a.snapshot = () => ({ now: Date.now(), left: left, right: 0, bal: 3000 });
+  f.a.tick();
+  assert.equal(f.a.block, null);
+  left = Date.now() - 4000;
+  f.a.tick();
+  assert.equal(f.a.block.reason, 'no-button');
+});
+
+test('a new chest timestamp replaces the previous block even with the same reason', () => {
+  const f = fixture();
+  f.a.configure({ enabled: true, bubble: false, animation: false });
+  let left = Date.now() - 4000;
+  f.a.snapshot = () => ({ now: Date.now(), left: left, right: 0, bal: 500 });
+  f.a.tick();
+  const first = f.a.block;
+  assert.equal(first.reason, 'no-button');
+  left = Date.now() - 5000;
+  f.a.tick();
+  assert.notEqual(f.a.block, first);
+  assert.equal(f.a.block.ts, left);
+});
+
+test('a chest that refuses every click is parked and announced', () => {
+  const f = fixture();
+  let clicks = 0;
+  const query = f.context.document.querySelector;
+  f.context.document.querySelector = selector => selector === '.reward-btn' ? {
+    disabled: false, click() { clicks++; },
+    getBoundingClientRect: () => ({ width: 20, height: 20, x: 1, y: 1 })
+  } : query(selector);
+  f.a.configure({ enabled: true, bubble: true, animation: false });
+  const due = Date.now() - 6000;
+  f.a.snapshot = () => ({ now: Date.now(), left: due, right: 0, bal: 3000 });
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    f.a.slots.left.lastClickAt = 0;   // pretend the 10 s lock window elapsed
+    f.a.tick();
+    const verify = f.timers.find(timer => timer.ms === undefined);
+    assert.ok(verify, 'expected a verify timer after the click');
+    f.timers.length = 0;
+    verify.fn();
+  }
+
+  assert.equal(clicks, 5);
+  assert.equal(f.a.slots.left.attempts, 5);
+  assert.equal(f.a.slots.left.gaveUp, true);
+  assert.equal(f.a.notice.text, '自动开箱失败');
+
+  f.a.tick();
+  assert.equal(clicks, 5, 'no sixth click');
+  assert.equal(f.a.block.reason, 'give-up');
+  assert.equal(f.a.block.slot, 'left');
+});
+
+test('giving up on one chest does not stop the other', () => {
+  const f = fixture();
+  let clicks = 0;
+  const query = f.context.document.querySelector;
+  f.context.document.querySelector = selector => selector === '.reward-btn' ? {
+    disabled: false, click() { clicks++; },
+    getBoundingClientRect: () => ({ width: 20, height: 20, x: 1, y: 1 })
+  } : query(selector);
+  f.a.configure({ enabled: true, bubble: false, animation: false });
+  const leftDue = Date.now() - 6000;
+  let rightTs = 0;
+  f.a.snapshot = () => ({ now: Date.now(), left: leftDue, right: rightTs, bal: 3000 });
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    f.a.slots.left.lastClickAt = 0;   // pretend the lock window elapsed
+    f.a.tick();
+    const verify = f.timers.find(timer => timer.ms === undefined);
+    f.timers.length = 0;
+    verify.fn();
+  }
+  assert.equal(f.a.slots.left.gaveUp, true);
+
+  rightTs = Date.now() - 3000;
+  f.a.slots.right.lastClickAt = 0;
+  f.a.tick();
+  assert.equal(clicks, 6, 'the second chest is still clicked');
+  assert.equal(f.a.clicks.at(-1).slot, 'right');
+  assert.equal(f.a.block, null);
+});
+
+test('paused auto open reports its own reason', () => {
+  const f = fixture();
+  f.a.configure({ enabled: false, bubble: false, animation: false });
+  f.a.snapshot = () => ({ now: Date.now(), left: Date.now() - 3000, right: 0, bal: 3000 });
+  f.a.tick();
+  assert.equal(f.a.block.reason, 'paused');
+  // Nothing due: there is no stall to report.
+  f.a.snapshot = () => ({ now: Date.now(), left: Date.now() + 60000, right: 0, bal: 3000 });
+  f.a.tick();
+  assert.equal(f.a.block, null);
 });
 
 test('animation switch retains the bubble and toggles animation in place', () => {
