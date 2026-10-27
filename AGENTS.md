@@ -36,7 +36,9 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 
 ## 代码风格与命名约定
 
-沿用现有代码风格：Python 使用四空格缩进，函数和变量使用 `snake_case`，类名使用 `PascalCase`，常量使用全大写。JavaScript 使用两空格缩进和 `camelCase` 命名。目前未配置格式化或静态检查工具。保持现有模块职责，避免引入不必要的依赖。修改默认配置时，同步更新 `BUILTIN` 与 `DEFAULT_TOML`；项目版本唯一来源是 `src/wuwa_tappo_plus/__init__.py` 的 `__version__`，后台、主注入、设置面板与房间历史必须共用该版本；JavaScript 模板通过 Python 注入版本值，不手写独立脚本版本。修改任一页面脚本发布新版本时必须提升项目版本，重启 Plus 后台后自动替换旧脚本。版本由程序管理，不写入用户配置。
+沿用现有代码风格：Python 使用四空格缩进，函数和变量使用 `snake_case`，类名使用 `PascalCase`，常量使用全大写。JavaScript 使用两空格缩进和 `camelCase` 命名。目前未配置格式化或静态检查工具。保持现有模块职责，避免引入不必要的依赖。修改默认配置时，同步更新 `BUILTIN` 与 `DEFAULT_TOML`；项目版本唯一来源是 `src/wuwa_tappo_plus/__init__.py` 的 `__version__`，后台、主注入、设置面板与房间历史必须共用该版本；JavaScript 模板通过 Python 注入版本值，不手写独立脚本版本。版本由程序管理，不写入用户配置。
+
+版本号按**发布**提升，不随每次开发改动递增：同一批未发布的改动共用一个版本，发布时再确定。开发中需要让页面重新注入时，重启桌宠或重新执行 `install` 即可，不要用改版本号来触发替换。
 
 ## 测试规范
 
