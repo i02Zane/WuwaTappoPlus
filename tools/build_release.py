@@ -1,4 +1,4 @@
-"""Build a standalone Windows EXE, separate source archive, and SHA-256 checksums."""
+"""Build a standalone Windows EXE and its SHA-256 checksum."""
 
 import hashlib
 import platform
@@ -6,26 +6,12 @@ import shutil
 import subprocess
 import struct
 import sys
-import zipfile
 from importlib.metadata import distribution
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from wuwa_tappo_plus import __version__
-
-
-def source_files():
-    for name in ("src", "tests", "tools", "packaging", ".github"):
-        for path in (ROOT / name).rglob("*"):
-            generated = any(part.endswith((".egg-info", ".dist-info")) for part in path.parts)
-            if (path.is_file() and not generated and "__pycache__" not in path.parts
-                    and not path.name.endswith(".pyc")):
-                yield path
-    for name in ("pyproject.toml", "MANIFEST.in", "launch.py",
-                 "README.md", "AGENTS.md", "LICENSE", ".gitignore",
-                 "THIRD_PARTY_NOTICES.md"):
-        yield ROOT / name
 
 
 def validate_build_environment():
@@ -35,7 +21,7 @@ def validate_build_environment():
 
 
 def validate_executable(executable, build):
-    """Reject incomplete bundles before emitting source archives or checksums."""
+    """Reject incomplete bundles before emitting a checksum."""
     import json
     import os
 
@@ -94,15 +80,11 @@ def main():
                     str(ROOT / "packaging/WuwaTappoPlus.spec")], cwd=ROOT, check=True)
     executable = ROOT / "dist/WuwaTappoPlus.exe"
     validate_executable(executable, build)
-    source = ROOT / "dist" / ("WuwaTappoPlus-%s-source.zip" % __version__)
-    with zipfile.ZipFile(source, "w", zipfile.ZIP_DEFLATED) as z:
-        for path in source_files():
-            z.write(path, Path("WuwaTappoPlus-source") / path.relative_to(ROOT))
-    hashes = []
-    for path in (executable, source):
-        hashes.append("%s  %s" % (hashlib.sha256(path.read_bytes()).hexdigest(), path.name))
-    (ROOT / "dist/SHA256SUMS.txt").write_text("\n".join(hashes) + "\n", encoding="utf-8")
-    print("\nBuilt:", executable, "\nSource (separate):", source)
+    checksum = ROOT / "dist/SHA256SUMS.txt"
+    checksum.write_text("%s  %s\n" %
+                        (hashlib.sha256(executable.read_bytes()).hexdigest(), executable.name),
+                        encoding="utf-8")
+    print("\nBuilt:", executable, "\nChecksum:", checksum)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Exercise a built EXE without touching policies or the real desktop pet."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -8,7 +9,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,15 +91,10 @@ def main():
                     raise
                 time.sleep(0.1)
 
-    source = ROOT / "dist" / ("WuwaTappoPlus-%s-source.zip" % __version__)
-    with zipfile.ZipFile(source) as archive:
-        names = archive.namelist()
-        for excluded in ("/runtime/", "/reports/", "/logs/", "/.venv/", "/config.toml"):
-            assert not any(excluded in name for name in names), excluded
-        assert not any(".egg-info/" in name or "__pycache__/" in name for name in names)
-        assert any(name.endswith("/LICENSE") for name in names)
-        assert any(name.endswith("/packaging/WuwaTappoPlus.spec") for name in names)
-    print("Source archive excludes personal data and includes build sources.")
+    released = ROOT / "dist/WuwaTappoPlus.exe"
+    expected = "%s  %s\n" % (hashlib.sha256(released.read_bytes()).hexdigest(), released.name)
+    assert (ROOT / "dist/SHA256SUMS.txt").read_text(encoding="utf-8") == expected
+    print("Release checksum matches the EXE; no separate source archive is required.")
 
 
 if __name__ == "__main__":

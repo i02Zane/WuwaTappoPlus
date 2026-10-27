@@ -53,6 +53,6 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 
 ## 打包与发布
 
-`pyproject.toml` 定义 `src/` 包布局与 GPL-3.0-only 许可。`python tools/build_release.py` 生成单文件 EXE、单独的对应源码 ZIP 和 SHA-256 校验文件；`python tools/smoke_release.py` 验证冻结入口、资源、终端窗口和隔离后台拉起。发布时保持源码与二进制版本一致，保留第三方许可证；不得打入配置、统计、日志或个人路径。
+`pyproject.toml` 定义 `src/` 包布局与 GPL-3.0-only 许可。`python tools/build_release.py` 仅生成单文件 EXE 和只包含该 EXE 哈希的 SHA-256 校验文件，不额外打包源码；`python tools/smoke_release.py` 验证冻结入口、资源、终端窗口、隔离后台拉起和校验值。Release 只上传 EXE 与校验文件，对应源码使用 GitHub 版本标签自动提供的 ZIP / TAR.GZ。发布时保持标签源码与二进制一致，保留构建文件和第三方许可证；不得打入配置、统计、日志或个人路径。
 
 EXE 数据存放在 `%LOCALAPPDATA%\WuwaTappoPlus`，源码数据保留在仓库根目录。`WUWA_TAPPO_PLUS_DATA_DIR` 仅允许绝对路径，用于隔离测试与显式数据定位。资源从包内 `scripts/` 读取，运行命令通过 `win.command_args` 生成；冻结程序不能再启动 `pythonw.exe` 或源码脚本。不要把用户数据写入临时解包目录；启动独立后台和提权进程时设置 `PYINSTALLER_RESET_ENVIRONMENT=1`，确保前台退出后后台资源仍然可用。这是首次公开发布，不引入历史入口、旧配置迁移和旧自启动名称的兼容代码。
