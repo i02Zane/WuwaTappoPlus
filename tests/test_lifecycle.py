@@ -1,6 +1,7 @@
 """Lifecycle regressions without registry writes or real process operations."""
 
 import subprocess
+import os
 import io
 import tempfile
 import unittest
@@ -230,7 +231,8 @@ class PurgeDataTests(unittest.TestCase):
 
     def test_linked_data_directory_is_rejected_before_any_deletion(self):
         with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
+            # Match the canonical paths used by _purge_data, including CI temp aliases.
+            root = Path(folder).resolve()
             (root / "config.toml").write_text("keep", encoding="utf-8")
             with patch.object(cli, "DATA_DIR", root), \
                     patch.object(cli, "daemon_status", return_value=({}, None)), \
@@ -241,6 +243,39 @@ class PurgeDataTests(unittest.TestCase):
                     cli._purge_data()
             self.assertTrue((root / "config.toml").exists())
 
+
+    def test_real_junction_cannot_delete_external_data(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder).resolve()
+            root = base / "data"
+            outside = base / "outside"
+            root.mkdir()
+            outside.mkdir()
+            config = root / "config.toml"
+            config.write_text("keep", encoding="utf-8")
+            database = outside / "input.sqlite3"
+            database.write_text("external data", encoding="utf-8")
+            link = root / "reports"
+            try:
+                result = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                     "New-Item -ItemType Junction -Path $env:WTP_TEST_LINK "
+                     "-Target $env:WTP_TEST_TARGET -ErrorAction Stop | Out-Null"],
+                    env={**os.environ, "WTP_TEST_LINK": str(link),
+                         "WTP_TEST_TARGET": str(outside)},
+                    capture_output=True, timeout=15,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                with patch.object(cli, "DATA_DIR", root), \
+                        patch.object(cli, "daemon_status", return_value=({}, None)), \
+                        patch.object(cli, "_lock_held", return_value=False):
+                    with self.assertRaises(OSError):
+                        cli._purge_data()
+                self.assertEqual(config.read_text(encoding="utf-8"), "keep")
+                self.assertEqual(database.read_text(encoding="utf-8"), "external data")
+            finally:
+                if link.exists():
+                    link.rmdir()  # Remove only the junction, never its target.
 
 if __name__ == "__main__":
     unittest.main()
