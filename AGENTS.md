@@ -43,7 +43,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 
 ## 测试规范
 
-使用标准库 `unittest`，未设置覆盖率门槛。测试采用 `tests/test_*.py` 命名，模拟注册表、进程与 CDP 操作，避免真实副作用。提交前运行测试和语法检查。修改注入脚本时，在明确授权的 Windows 环境验证余额不足、重复注入和断线重连，注明未验证的场景。
+使用标准库 `unittest`，未设置覆盖率门槛。测试采用 `tests/test_*.py` 命名，模拟注册表、进程与 CDP 操作，避免真实副作用。提交前运行测试和语法检查。修改注入脚本时，在明确授权的 Windows 环境验证余额不足、重复注入和断线重连，注明未验证的场景。新增或删除页面脚本时，同步更新 `tools/smoke_release.py` 的脚本清单与资源检查，否则发布冒烟测试会失败。
 
 ## 提交与拉取请求规范
 
@@ -69,9 +69,22 @@ EXE 数据存放在 `%LOCALAPPDATA%\WuwaTappoPlus`，源码数据保留在仓库
 
 当用户要求打版本标签或发布版本时，由 Agent 主动完成以下流程，不要求用户手动运行打包或归档命令：
 
-1. 确认统一版本号、发布提交与版本标签对应，生成该版本的中文 Release Notes。
-2. 完成构建、测试和 EXE 启动验证，核对程序及页面脚本版本一致。
-3. 发布前必须将本次 EXE、SHA256SUMS.txt 和 release-notes.md 保存到 `dist/history/v<版本号>/`；可通过 `tools/build_release.py --notes <发布说明.md>` 完成。普通开发构建不必归档。
-4. 归档文件必须与实际交付或上传的文件一致，并核验 SHA-256；已有版本归档不得静默覆盖，遇到冲突先核对内容。
-5. `dist/` 已整体被 Git 忽略，不为历史归档增加单独规则，不提交二进制历史。GitHub Release 只附 EXE 和校验文件，源码使用标签自动归档。
-6. 用户自行发布或登录权限不足时，Agent 仍须准备并归档上述文件，再提供下载路径和可直接粘贴的 Release Notes。
+1. 确认统一版本号、发布提交与版本标签对应，生成该版本的中文 Release Notes（写成 `dist/release-notes.md`，构建时归档）。
+2. 完成构建、测试和 EXE 启动验证，核对程序及页面脚本版本一致：`build_release.py --notes` 会跑 `--probe`；再跑 `tools/smoke_release.py` 验证冻结入口、资源、终端菜单、看门狗拉起与超时退出。
+3. 发布前必须将本次 EXE、SHA256SUMS.txt 和 release-notes.md 保存到 `dist/history/v<版本号>/`；通过 `python tools/build_release.py --notes dist/release-notes.md` 完成。普通开发构建不必归档；已有版本归档不得静默覆盖。
+4. 推代码和标签：`git push origin main`，`git tag -a v<版本号> -m "..."`，`git push origin v<版本号>`。标签必须指向发布提交，不要在 Release 页面新建标签。
+5. 创建 Release 用 GitHub CLI（`winget install --id GitHub.cli -e`，默认路径 `C:\Program Files\GitHub CLI\gh.exe`）。首次使用先授权：`gh auth login --hostname github.com --git-protocol ssh --web`，在浏览器打开 https://github.com/login/device 输入终端显示的一次性代码，`gh auth status` 显示已登录即可。然后执行：
+
+   ```powershell
+   gh release create v<版本号> `
+     "dist/history/v<版本号>/WuwaTappoPlus.exe" `
+     "dist/history/v<版本号>/SHA256SUMS.txt" `
+     --title "Wuwa Tappo Plus <版本号>" `
+     --notes-file "dist/history/v<版本号>/release-notes.md" `
+     --verify-tag
+   ```
+
+   `--verify-tag` 强制使用已推送的标签，标签不存在时直接失败，避免 Release 与标签指向不一致。
+6. 发布后回读验证：`gh release view v<版本号> --json tagName,name,isDraft,isPrerelease,assets` 检查状态和附件；再用 `gh release download v<版本号> --dir <临时目录>` 重新下载 EXE，核对 SHA-256 与归档中的 `SHA256SUMS.txt` 一致。
+7. `dist/` 已整体被 Git 忽略，不为历史归档增加单独规则，不提交二进制历史。GitHub Release 只附 EXE 和校验文件，源码使用标签自动归档。
+8. 用户自行发布或登录权限不足时，Agent 仍须准备并归档上述文件，再提供下载路径和可直接粘贴的 Release Notes。
