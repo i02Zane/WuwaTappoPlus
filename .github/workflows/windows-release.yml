@@ -1,0 +1,31 @@
+name: Build Windows release
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -e '.[build]'
+      - run: python -m unittest discover -s tests -v
+      - run: node --test tests/test_bubble.js tests/test_panel.js tests/test_rooms.js
+      - run: python tools/build_release.py
+      - run: python tools/smoke_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WuwaTappoPlus-windows-x64
+          path: |
+            dist/*.exe
+            dist/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WuwaTappoPlus-source
+          path: dist/*-source.zip

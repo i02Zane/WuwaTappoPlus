@@ -1,0 +1,23 @@
+# runtime state, not source
+.state.json
+.state.tmp
+.stop
+.disabled
+.daemon.lock
+logs/
+__pycache__/
+*.pyc
+runtime/
+# Machine-specific settings; defaults live in src/wuwa_tappo_plus/config.py.
+config.toml
+reports/
+# Local working notes kept alongside the code, never part of a release.
+.workbuddy/
+.venv/
+build/
+dist/
+*.egg-info/
+.build-deps/
+.build-python/
+.smoke-data/
+.local-backup/

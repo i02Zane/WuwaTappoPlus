@@ -1,0 +1,5 @@
+include LICENSE README.md AGENTS.md launch.py
+recursive-include packaging *.spec *.manifest
+recursive-include packaging/licenses *.txt
+recursive-include tools *.py
+recursive-include tests *.py *.js
