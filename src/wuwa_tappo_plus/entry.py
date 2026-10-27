@@ -88,7 +88,7 @@ def main(argv=None):
             from .cli import main as cli_main
             code = cli_main(argv)
             if code and "--elevated" in argv and sys.stdin and sys.stdin.isatty():
-                input("\nPress Enter to close this window...")
+                input("\n按 Enter 键关闭此窗口...")
             return code
         except Exception:
             traceback.print_exc()

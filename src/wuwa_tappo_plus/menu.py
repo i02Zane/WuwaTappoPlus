@@ -234,11 +234,12 @@ def _frame(data):
 
     # ---- actions
     lines.append("  " + _paint(BOLD, "[1]") + " 安装 / 修复  "
-                 + _paint(BOLD, "[2]") + " 卸载       "
+                 + _paint(BOLD, "[2]") + " 卸载（保留数据）")
+    lines.append("  " + _paint(BOLD, "[3]") + " 完整卸载（清除数据）  "
                  + _paint(BOLD, "[0]") + " 退出")
     lines.append("")
     lines.append("  " + _paint(DIM, "日常开关请到桌宠的「设置 → Wuwa Tappo Plus」"))
-    lines.append("  " + _paint(DIM, "直接按数字键，卸载保留个人配置"))
+    lines.append("  " + _paint(DIM, "直接按数字键，完整卸载需确认，完成后退出面板"))
     lines.append("")
     return lines
 
@@ -309,6 +310,8 @@ class _Indent:
 def _run(title, handler):
     """Run one cli handler on a clean screen, then wait for a key."""
     _clear()
+    if COLOR:
+        sys.stdout.write("\x1b[?25h")
     sys.stdout.write("  " + _paint(BOLD, title) + "\n")
     sys.stdout.write("  " + _paint(DIM, "-" * WIDTH) + "\n\n")
     sys.stdout.flush()
@@ -333,7 +336,11 @@ def _run(title, handler):
     if rc not in (0, None):
         sys.stdout.write("  " + _paint(YELLOW, "返回码 %s" % rc) + "\n")
     sys.stdout.flush()
-    _wait_key()
+    if title == "完整卸载（清除数据）" and rc == 0:
+        _wait_key("按任意键退出面板...")
+    else:
+        _wait_key()
+    return rc
 
 
 def _install():
@@ -342,12 +349,17 @@ def _install():
 
 def _uninstall():
     # Cleanup is still needed when policy/startup exists but no process is alive.
-    _run("卸载", cli.cmd_uninstall)
+    _run("卸载（保留数据）", cli.cmd_uninstall)
+
+
+def _uninstall_purge():
+    return _run("完整卸载（清除数据）", lambda argv: cli.cmd_uninstall(["--purge"]))
 
 
 ACTIONS = {
     "1": ("安装 / 修复", _install),
-    "2": ("卸载", _uninstall),
+    "2": ("卸载（保留数据）", _uninstall),
+    "3": ("完整卸载（清除数据）", _uninstall_purge),
 }
 
 
@@ -372,7 +384,8 @@ def main(argv):
     global COLOR
     argv = list(argv or [])
     once = "--once" in argv
-    interactive = bool(sys.stdin.isatty() and sys.stdout.isatty()) and msvcrt is not None
+    interactive = bool(sys.stdin and sys.stdout and sys.stdin.isatty()
+                       and sys.stdout.isatty()) and msvcrt is not None
 
     if once:
         # Render a single frame and leave: used to check the layout in a pipe.
@@ -402,8 +415,10 @@ def main(argv):
             entry = ACTIONS.get(key)
             if entry is None:
                 continue
-            entry[1]()
-            sys.stdout.write("\x1b[2J")
+            result = entry[1]()
+            if key == "3" and result == 0:
+                break
+            sys.stdout.write("\x1b[2J\x1b[?25l")
             sys.stdout.flush()
             _draw(_collect())
     except KeyboardInterrupt:
@@ -423,7 +438,7 @@ def _plain_menu():
             print(line)
         print()
         try:
-            choice = input("  选择 [1-2, 0=退出]: ").strip()
+            choice = input("  选择 [1-3, 0=退出]: ").strip()
         except (EOFError, KeyboardInterrupt):
             return 0
         if choice in ("0", "q", "Q", ""):
@@ -432,6 +447,8 @@ def _plain_menu():
         if entry is None:
             continue
         try:
-            entry[1]()
+            result = entry[1]()
+            if choice == "3" and result == 0:
+                return 0
         except Exception:
             traceback.print_exc()

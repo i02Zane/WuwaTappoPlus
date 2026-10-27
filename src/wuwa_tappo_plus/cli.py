@@ -1,6 +1,7 @@
 """Command line interface."""
 
 import json
+import stat
 import sys
 import time
 from datetime import datetime
@@ -14,10 +15,11 @@ from .config import (
     load,
 )
 from .logs import Log
+from .paths import DATA_DIR
 
-OK = "[ok]  "
-BAD = "[fail]"
-WARN = "[warn]"
+OK = "[完成] "
+BAD = "[失败] "
+WARN = "[提示] "
 
 
 def out(text=""):
@@ -130,56 +132,53 @@ def cmd_install(argv):
 
     if not win.is_admin():
         if elevated:
-            out("still not elevated, aborting")
+            out(BAD + "未获得管理员权限，安装已中止。")
             return 1
-        out("Administrator rights are required to write the WebView2 policy.")
-        out("Relaunching with a UAC prompt...")
+        out("写入 WebView2 策略需要管理员权限。")
+        out("正在请求管理员权限，请确认系统弹窗...")
         if win.relaunch_elevated(["install", "--elevated"]):
             return 0
-        out("elevation was refused; nothing changed")
+        out("未获得管理员授权，未更改安装设置。")
         return 1
 
-    out("Wuwa Tappo Plus v%s - install" % __version__)
+    out("Wuwa Tappo Plus v%s - 安装 / 修复" % __version__)
     out("")
-    out(OK + " interpreter     %s" % win.interpreter_label())
+    out(OK + "运行环境：%s" % win.interpreter_label())
 
     exe = win.find_exe(cfg.exe)
     if not exe:
-        out(BAD + " cannot find WuwaTappo.exe")
-        out("       Set app.exe in %s and retry." % CONFIG_PATH)
+        out(BAD + "未找到 WuwaTappo.exe。")
+        out("       请在 %s 中设置 app.exe 路径后重试。" % CONFIG_PATH)
         return 1
-    out(OK + " executable      %s" % exe)
+    out(OK + "桌宠程序：%s" % exe)
 
     conflicts = win.policy_conflicts(cfg.port)
     if conflicts:
-        out(BAD + " policy conflict, nothing was changed")
+        out(BAD + "检测到策略冲突，未更改安装设置。")
         out("")
         for c in conflicts:
             if c["kind"] == "value":
-                out("       %s\\%s already holds %s"
+                out("       %s\\%s 已设置为 %s"
                     % (c["hive"], c["name"], c["value"]))
-                out("       expected %s" % win.debug_args(cfg.port))
-                out("       not written by this tool; overwriting it would "
-                    "destroy a setup we know nothing about")
+                out("       本工具需要：%s" % win.debug_args(cfg.port))
+                out("       该配置并非本工具预期的值，为避免破坏现有设置，不会覆盖。")
             else:
-                out("       %s\\%s also claims port %d: %s"
+                out("       %s\\%s 也使用端口 %d：%s"
                     % (c["hive"], c["name"], cfg.port, c["value"]))
-                out("       two apps cannot share the port, and CDP could attach "
-                    "to the wrong one")
+                out("       两个应用不能共用该端口，否则可能连接到错误的应用。")
         out("")
-        out("  use another port instead:")
-        out("      port = %d   in %s" % (cfg.port + 1, CONFIG_PATH))
-        out("      then run  WuwaTappoPlus.exe install  again")
+        out("  可以更换调试端口：")
+        out("      在 %s 中设置 port = %d" % (CONFIG_PATH, cfg.port + 1))
+        out("      然后重新执行 WuwaTappoPlus.exe install")
         if any(c["kind"] == "value" for c in conflicts):
             out("")
-            out("  or delete that value if you are sure it is dead:")
-            out("      WuwaTappoPlus.exe uninstall   (removes only the value under "
-                "%s)" % win.TARGET_EXE)
+            out("  确认旧配置已不再使用时，也可执行卸载清理：")
+            out("      WuwaTappoPlus.exe uninstall（仅移除 %s 对应的策略值）" % win.TARGET_EXE)
         if any(c["kind"] == "port" for c in conflicts):
             out("")
-            out("  or free the port:")
-            out("      WuwaTappoPlus.exe doctor --policy         inspect, read-only")
-            out("      WuwaTappoPlus.exe doctor --clean-policy delete, asks for confirmation")
+            out("  或检查并释放冲突端口：")
+            out("      WuwaTappoPlus.exe doctor --policy         只读检查策略")
+            out("      WuwaTappoPlus.exe doctor --clean-policy 确认后清理残留策略")
         return 1
 
     rc = _stop_daemon([])
@@ -188,22 +187,22 @@ def cmd_install(argv):
 
     _write_config_exe(exe)
     args = win.write_policy(cfg.port)
-    out(OK + " policy          %s = %s" % (win.TARGET_EXE, args))
+    out(OK + "调试策略：%s = %s" % (win.TARGET_EXE, args))
 
     try:
         if win.processes():
-            out("       restarting the app to load policy and page configuration...")
+            out("       正在重启桌宠，以加载策略和页面配置...")
             if win.restart_app(exe) is None:
-                out(BAD + " cannot find WuwaTappo.exe for restart")
+                out(BAD + "未找到 WuwaTappo.exe，无法重启桌宠。")
                 return 1
         else:
             win.launch_app(exe)
-        out(OK + " app ready")
+        out(OK + "桌宠程序已启动。")
     except OSError as exc:
-        out(BAD + " app launch/restart failed: %s" % exc)
+        out(BAD + "桌宠启动或重启失败：%s" % exc)
         return 1
 
-    out("       waiting for the debug port...")
+    out("       正在等待调试端口就绪...")
     deadline = time.time() + 25
     version = None
     while time.time() < deadline:
@@ -213,30 +212,33 @@ def cmd_install(argv):
         time.sleep(1.0)
 
     if version:
-        out(OK + " debug port      %d (%s)" % (cfg.port, version.get("Browser")))
+        out(OK + "调试端口已就绪：%d（%s）" % (cfg.port, version.get("Browser")))
     else:
-        out(BAD + " debug port      %d never opened" % cfg.port)
-        out("       The app may need a full restart. Run: WuwaTappoPlus.exe install")
+        out(BAD + "等待调试端口 %d 超时。" % cfg.port)
+        out("       桌宠可能需要完全重启，请重新执行：WuwaTappoPlus.exe install")
         _finish_elevated(elevated)
         return 1
 
     cmd = win.enable_autostart()
-    out(OK + " autostart       %s" % cmd)
+    out(OK + "开机自启已配置：%s" % cmd)
 
     minutes = cfg.watchdog_min
     if minutes > 0:
         if win.register_watchdog(minutes):
-            out(OK + " watchdog        every %d min, restarts a lost daemon"
+            out(OK + "后台守护任务已配置：每 %d 分钟检查并恢复意外退出的后台。"
                 % minutes)
         else:
-            out(WARN + " watchdog        scheduled task could not be created")
-            out("       run this from an elevated prompt to try again")
+            out(WARN + "无法创建后台守护计划任务。")
+            out("       请以管理员身份重新执行安装 / 修复。")
     elif win.remove_watchdog():
-        out(WARN + " watchdog        turned off in config.toml")
+        out(WARN + "config.toml 中已关闭后台守护任务。")
 
     rc = _start_daemon([])
     out("")
-    out("Done. Open Wuwa Tappo Settings > Wuwa Tappo Plus for feature switches.")
+    if rc == 0:
+        out("安装完成。请打开桌宠的「设置 → Wuwa Tappo Plus」调整功能开关。")
+    else:
+        out("安装未完成，请根据上方提示排查后重新执行安装 / 修复。")
     _finish_elevated(elevated)
     return rc
 
@@ -244,7 +246,7 @@ def cmd_install(argv):
 def _finish_elevated(elevated):
     if elevated and sys.stdin and sys.stdin.isatty():
         try:
-            input("\nPress Enter to close this window...")
+            input("\n按 Enter 键关闭此窗口...")
         except EOFError:
             pass
 
@@ -272,20 +274,70 @@ def _write_config_exe(exe):
 # ---------------------------------------------------------------- uninstall
 
 
+def _purge_data():
+    """Remove only known Plus data, even when data lives in the checkout."""
+    if daemon_status()[1] or _lock_held():
+        raise OSError("Plus 后台仍在运行，未清除数据。")
+    root = DATA_DIR.resolve()
+    files = [root / name for name in
+             ("config.toml", ".state.json", ".state.tmp", ".daemon.lock", ".stop", ".disabled")]
+    files.extend(root.glob(".plus-config-*.tmp"))
+    for database in ("input.sqlite3", "rooms.sqlite3"):
+        files.extend(root / "reports" / (database + suffix)
+                     for suffix in ("", "-wal", "-shm", "-journal"))
+    files.append(root / "logs" / "auto.log")
+    files.extend(path for path in (root / "logs").glob("auto.log.*")
+                 if path.suffix[1:].isdigit())
+    # Validate every target before deleting anything; do not follow links out.
+    for path in [root / "logs", root / "reports", *files]:
+        reparse = (path.exists() and getattr(path.lstat(), "st_file_attributes", 0)
+                   & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+        if not path.resolve().is_relative_to(root) or path.is_symlink() or reparse:
+            raise OSError("为避免误删，不清理链接指向的数据路径：%s" % path)
+        if path in files and path.exists() and not path.is_file():
+            raise OSError("数据路径不是普通文件，已中止清理：%s" % path)
+    for path in files:
+        path.unlink(missing_ok=True)
+    for directory in (root / "logs", root / "reports", root):
+        if directory.is_dir() and not any(directory.iterdir()):
+            directory.rmdir()
+
+
 def cmd_uninstall(argv):
-    """uninstall Plus and clear injected code; keep preferences"""
+    """uninstall (keep data); --purge also deletes personal data after confirmation"""
+    purge = "--purge" in argv
+    if purge and "--yes" not in argv:
+        out("完整卸载将永久清除 Plus 配置、键鼠统计、最近房间和日志。")
+        out("数据目录：%s" % DATA_DIR)
+        if not sys.stdin or not sys.stdin.isatty():
+            out(BAD + "清除数据需要确认；自动化运行请显式添加 --yes。")
+            return 1
+        try:
+            answer = input("输入 yes 确认完整卸载，其他输入取消：").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer != "yes":
+            out("已取消，未卸载或清除数据。")
+            return 1
     cfg = load()
     elevated = "--elevated" in argv
     if not win.is_admin():
         if elevated:
-            out(BAD + " still not elevated, aborting")
+            out(BAD + "未获得管理员权限，卸载已中止。")
             return 1
-        out("Administrator rights are required to remove the WebView2 policy.")
+        out("移除 WebView2 策略需要管理员权限。")
+        out("正在请求管理员权限，请确认系统弹窗...")
         args = ["uninstall", "--elevated"]
-        return 0 if win.relaunch_elevated(args) else 1
+        if purge:
+            args.extend(["--purge", "--yes"])
+        if win.relaunch_elevated(args):
+            return 0
+        out("未获得管理员授权，未执行卸载。")
+        return 1
 
     app_running = bool(win.processes())
-    out("Wuwa Tappo Plus v%s - uninstall" % __version__)
+    out("Wuwa Tappo Plus v%s - %s" %
+        (__version__, "完整卸载（清除数据）" if purge else "卸载（保留数据）"))
     out("")
 
     rc = _stop_daemon([])
@@ -293,40 +345,47 @@ def cmd_uninstall(argv):
         return rc
 
     if win.remove_policy():
-        out(OK + " policy removed")
+        out(OK + "调试策略已移除。")
     else:
-        out(WARN + " policy value was not present or could not be removed")
+        out(WARN + "调试策略不存在，或暂时无法移除。")
 
     for label, _hive, name, value in win.stray_policy_values(cfg.port):
-        out(WARN + " policy note      %s\\%s = %s (not ours, left alone)"
+        out(WARN + "其他策略保留不变：%s\\%s = %s（不属于本工具）"
             % (label, name, value))
 
     if win.disable_autostart():
-        out(OK + " autostart removed")
+        out(OK + "开机自启已移除。")
     else:
-        out(WARN + " autostart was not registered")
+        out(WARN + "未注册开机自启。")
 
     if win.remove_watchdog():
-        out(OK + " watchdog removed")
+        out(OK + "后台守护任务已移除。")
     else:
-        out(WARN + " watchdog task could not be removed")
+        out(WARN + "后台守护任务不存在，或暂时无法移除。")
 
     if win.read_policy().get(win.TARGET_EXE) or win.read_autostart() or win.read_watchdog():
-        out(BAD + " cleanup incomplete; check policy, autostart and watchdog")
+        out(BAD + "卸载清理未完成，请检查调试策略、开机自启和后台守护任务。")
         return 1
 
     if app_running:
         try:
             if win.restart_app(cfg.exe) is None:
-                out(BAD + " cannot find WuwaTappo.exe; close the app manually")
+                out(BAD + "未找到 WuwaTappo.exe，请手动关闭桌宠以清除注入脚本。")
                 return 1
         except OSError as exc:
-            out(BAD + " could not restart the app: %s" % exc)
+            out(BAD + "无法重启桌宠：%s" % exc)
             return 1
-        out(OK + " app restarted, injected code cleared")
+        out(OK + "桌宠已重启，注入脚本已清除。")
 
-    out("")
-    out("Uninstalled. Policy and startup entries removed; preferences kept.")
+    if purge:
+        try:
+            _purge_data()
+        except OSError as exc:
+            out(BAD + "程序已卸载，但数据清理失败：%s" % exc)
+            return 1
+        out("完整卸载完成，Plus 个人数据已清除。EXE 可手动删除。")
+    else:
+        out("卸载完成（保留数据）。配置、统计、最近房间和日志继续保留。")
     return 0
 
 
@@ -348,7 +407,7 @@ def _start_daemon(argv):
     _arm()
     state, pid = daemon_status()
     if pid:
-        out("already running, pid %d" % pid)
+        out("Plus 后台已在运行，进程号 %d。" % pid)
         return 0
 
     from .config import LOCK_PATH
@@ -370,10 +429,10 @@ def _start_daemon(argv):
         time.sleep(0.4)
         state, pid = daemon_status()
         if pid:
-            out(OK + " daemon started, pid %d" % pid)
-            out("       log: %s" % (LOG_DIR / "auto.log"))
+            out(OK + "Plus 后台已启动，进程号 %d。" % pid)
+            out("       日志：%s" % (LOG_DIR / "auto.log"))
             return 0
-    out(BAD + " daemon did not start, check the log")
+    out(BAD + "Plus 后台未能启动，请检查日志。")
     return 1
 
 
@@ -384,7 +443,7 @@ def _stop_daemon(argv):
     _disarm()
     state, pid = daemon_status()
     if not pid:
-        out("not running")
+        out("Plus 后台未运行，无需停止。")
         return 0
 
     stop_file = LOG_DIR.parent / ".stop"
@@ -400,7 +459,7 @@ def _stop_daemon(argv):
                 stop_file.unlink()
             except OSError:
                 pass
-            out(OK + " stopped, pid %d" % pid)
+            out(OK + "Plus 后台已停止，进程号 %d。" % pid)
             return 0
 
     if win.kill_pid(pid):
@@ -408,9 +467,9 @@ def _stop_daemon(argv):
             stop_file.unlink()
         except OSError:
             pass
-        out(OK + " force stopped, pid %d" % pid)
+        out(OK + "已强制停止 Plus 后台，进程号 %d。" % pid)
     else:
-        out(BAD + " could not stop pid %d" % pid)
+        out(BAD + "无法停止 Plus 后台，进程号 %d。" % pid)
         return 1
     return 0
 
@@ -764,6 +823,7 @@ def main(argv=None):
         out("")
         out("  doctor --policy         inspect policies, read-only")
         out("  doctor --clean-policy   remove leftovers, asks for confirmation")
+        out("  uninstall --purge       clear data after confirmation; --yes for automation")
         return 0 if cmd in ("help", "h") else 1
 
     try:

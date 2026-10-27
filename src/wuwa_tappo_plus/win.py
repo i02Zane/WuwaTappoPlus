@@ -98,11 +98,11 @@ def pythonw():
 def interpreter_label():
     """Human readable: which interpreter this project runs on."""
     if frozen():
-        return "%s  (packaged)" % sys.executable
+        return "%s（单文件内置环境）" % sys.executable
     bundled = bundled_python()
     if bundled:
-        return "%s  (bundled)" % bundled
-    return "%s  (system fallback)" % sys.executable
+        return "%s（内置 Python）" % bundled
+    return "%s（系统 Python）" % sys.executable
 
 
 def command_args(*args, background=False):
@@ -669,14 +669,14 @@ def restart_app(hint=""):
 
     for pid in running_pids():
         if not kill_pid(pid):
-            raise OSError("could not stop WuwaTappo.exe pid %d" % pid)
+            raise OSError("无法停止 WuwaTappo.exe，进程号 %d。" % pid)
 
     deadline = time.time() + 8.0
     while time.time() < deadline and running_pids():
         time.sleep(0.25)
 
     if running_pids():
-        raise OSError("WuwaTappo.exe is still running; restart aborted")
+        raise OSError("WuwaTappo.exe 仍在运行，已中止重启。")
 
     launch_app(exe)
     return exe

@@ -29,7 +29,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 - `.\runtime\python.exe launch.py install`、`.\runtime\python.exe launch.py uninstall`：安装 / 修复或卸载，保留个人配置与功能开关。
 - `.\runtime\python.exe launch.py doctor --policy`：只读查看策略；`--clean-policy` 显式清理残留，需要管理员权限和确认。
 
-对外命令仅保留 `install`、`uninstall`、`status`、`doctor`、`logs`；`run`、`ensure`、`menu` 为内部入口。EXE 双击打开终端安装管理，安装／卸载才提权；日常功能开关放在桌宠设置中。不要添加语义重复的 `start`、`stop`、`restart` 命令。重复安装应修复后台与策略，卸载不能因进程未运行而跳过清理。
+对外命令仅保留 `install`、`uninstall`、`status`、`doctor`、`logs`；`run`、`ensure`、`menu` 为内部入口。EXE 双击打开终端安装管理，安装／卸载才提权；日常功能开关放在桌宠设置中。不要添加语义重复的 `start`、`stop`、`restart` 命令。重复安装应修复后台与策略，卸载不能因进程未运行而跳过清理。`uninstall` 保留数据；`uninstall --purge` 经确认后完整卸载，`--yes` 用于自动化。仅在卸载成功且后台已退出后删除已知 Plus 数据文件，保留源码、EXE 和其他文件；完整卸载成功后退出面板，避免重新生成配置。
 
 设置页仅允许修改自动开箱、气泡显示、气泡动画和主窗口保持打开四个布尔值；由后台原子保存到配置，保存成功后才确认。保持打开使用原生外部点击控制接口，保留手动关闭，卸载时恢复原行为。暂停点击不停止后台，界面关闭或重建后必须能重新挂载。
 
