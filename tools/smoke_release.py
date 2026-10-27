@@ -43,7 +43,7 @@ def main():
         probe = json.loads((data / "probe.json").read_text(encoding="utf-8"))
         assert probe["frozen"] and probe["version"] == __version__
         assert Path(probe["data_dir"]) == data
-        assert set(probe["scripts"]) == {"pet", "settings", "rooms"}
+        assert set(probe["scripts"]) == {"pet", "settings", "rooms", "toast"}
         assert all(version == __version__ for version in probe["scripts"].values())
         assert len(probe["licenses"]) == 6
         run("--output", data / "help.txt", "help")
@@ -65,7 +65,8 @@ def main():
                     pid = state.get("pid")
                     assert state["plus_version"] == __version__ and state["port"] == port
                     resources = Path(state["resource_dir"])
-                    assert all((resources / name).is_file() for name in ("inject.js", "settings.js", "rooms.js"))
+                    assert all((resources / name).is_file()
+                               for name in ("inject.js", "settings.js", "rooms.js", "toast.js"))
                     break
                 time.sleep(0.1)
             assert pid, "watchdog did not start the frozen daemon"
