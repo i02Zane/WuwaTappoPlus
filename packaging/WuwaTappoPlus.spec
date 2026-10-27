@@ -17,6 +17,7 @@ archive = PYZ(analysis.pure)
 executable = EXE(
     archive, analysis.scripts, analysis.binaries, analysis.datas, [],
     name="WuwaTappoPlus", debug=False, strip=False, upx=False, console=False,
+    icon=str(root / "packaging/WuwaTappoPlus.ico"),
     manifest=str(root / "build/app.manifest"),
     version=str(root / "build/version-info.txt"),
 )
