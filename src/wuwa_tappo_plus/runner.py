@@ -14,6 +14,7 @@ from .logs import Log
 from .settings import SettingsBridge
 from .reports import DailyReport
 from .rooms import RoomBridge, RoomHistory
+from .screens import ScreenKeeper
 from .toasts import ToastBridge
 
 POLL_JS = r"""
@@ -73,6 +74,7 @@ class Runner:
         self.rooms = RoomBridge(self.cfg.port, self.cfg.host, self.log)
         self.history = RoomHistory(self.log, limit=self.cfg.room_history)
         self.toasts = ToastBridge(self.cfg.port, self.cfg.host, self.log)
+        self.screens = ScreenKeeper(self.log)
         self.pending = deque(maxlen=400)
         # The page keeps its last 20 notes and hands back the last five on every
         # poll, so without this ledger one error would be written to the log once
@@ -429,6 +431,11 @@ class Runner:
                     self.note_block(payload.get("block"), snapshot)
                     self.alert_balance(snapshot, payload.get("alert"))
                     self.rooms.sync(self.history)
+
+                    try:
+                        self.screens.tick(self.session, self.cfg.panel_remember_screen)
+                    except Exception as exc:  # never let window work stop the clicker
+                        self.log.warn("screen: %s" % str(exc)[:160])
 
                     for when, text in self.toasts.poll(self.toast_floor_ms):
                         self.log_toast(when, text)

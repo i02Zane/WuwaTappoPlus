@@ -58,6 +58,8 @@ animation = true
 [panel]
 # Keep the main panel open when clicking outside; manual close still works.
 keep_open = true
+# Remember which monitor the pet is on and put it back after the app restarts.
+remember_screen = true
 
 [rooms]
 # How many visited rooms the multiplayer tab remembers. Pinned rooms are kept
@@ -93,7 +95,7 @@ BUILTIN = {
     "app": {"exe": "", "port": 9222, "host": "127.0.0.1"},
     "inject": {"enabled": True, "min_balance": 1000},
     "alerts": {"bubble": True, "animation": True},
-    "panel": {"keep_open": True},
+    "panel": {"keep_open": True, "remember_screen": True},
     "rooms": {"history": 20},
     "daemon": {"heartbeat": 300, "max_runtime": 0, "watchdog_min": 1},
     "log": {"max_bytes": 1048576, "keep": 3},
@@ -168,13 +170,18 @@ class Config:
         return bool(self.get("panel", "keep_open", True))
 
     @property
+    def panel_remember_screen(self):
+        return bool(self.get("panel", "remember_screen", True))
+
+    @property
     def room_history(self):
         return max(1, int(self.get("rooms", "history", 20)))
 
     @property
     def preferences(self):
         return {"auto_open": self.auto_open, "bubble": self.alert_bubble,
-                "animation": self.alert_animation, "keep_panel_open": self.panel_keep_open}
+                "animation": self.alert_animation, "keep_panel_open": self.panel_keep_open,
+                "remember_screen": self.panel_remember_screen}
 
     @property
     def heartbeat(self):
@@ -360,7 +367,8 @@ def load():
 PREFERENCE_KEYS = {"auto_open": ("inject", "enabled"),
                    "bubble": ("alerts", "bubble"),
                    "animation": ("alerts", "animation"),
-                   "keep_panel_open": ("panel", "keep_open")}
+                   "keep_panel_open": ("panel", "keep_open"),
+                   "remember_screen": ("panel", "remember_screen")}
 
 
 def with_preferences(cfg, preferences):

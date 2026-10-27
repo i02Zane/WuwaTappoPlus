@@ -5,7 +5,8 @@
 
   var S = window.__WUT_SETTINGS__ = {
     version: VERSION, requests: [], beat: 0, panelError: null, report: null,
-    preferences: { auto_open: true, bubble: true, animation: true, keep_panel_open: true }
+    preferences: { auto_open: true, bubble: true, animation: true, keep_panel_open: true,
+                   remember_screen: true }
   };
   var HOST = 'wut-plus-settings';
   var STYLE = 'wut-plus-settings-style';
@@ -39,7 +40,8 @@
     ['auto_open', '自动开箱', '宝箱到期且余额充足时自动开启，关闭后仍显示倒计时。'],
     ['bubble', '余额提醒气泡', '余额不足时，在桌宠上方显示提醒和宝箱倒计时。'],
     ['animation', '气泡动画', '让提醒气泡轻轻跳动；关闭后保留静态气泡。'],
-    ['keep_panel_open', '主窗口保持打开', '点击其他窗口时不自动收起，仍可使用关闭按钮手动关闭。']
+    ['keep_panel_open', '主窗口保持打开', '点击其他窗口时不自动收起，仍可使用关闭按钮手动关闭。'],
+    ['remember_screen', '屏幕记忆', '记住桌宠所在的显示器，重启后自动回到该屏幕；显示器不可用时保持原样。']
   ];
 
   function mount() {

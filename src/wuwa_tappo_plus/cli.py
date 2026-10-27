@@ -280,7 +280,8 @@ def _purge_data():
         raise OSError("Plus 后台仍在运行，未清除数据。")
     root = DATA_DIR.resolve()
     files = [root / name for name in
-             ("config.toml", ".state.json", ".state.tmp", ".daemon.lock", ".stop", ".disabled")]
+             ("config.toml", ".state.json", ".state.tmp", ".daemon.lock", ".stop", ".disabled",
+              "screen.json")]
     files.extend(root.glob(".plus-config-*.tmp"))
     for database in ("input.sqlite3", "rooms.sqlite3"):
         files.extend(root / "reports" / (database + suffix)

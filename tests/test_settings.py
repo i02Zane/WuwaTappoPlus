@@ -25,7 +25,14 @@ class PreferenceTests(unittest.TestCase):
     def test_old_config_defaults_all_switches_on(self):
         self.assertEqual(Config({}).preferences,
                          {"auto_open": True, "bubble": True, "animation": True,
-                          "keep_panel_open": True})
+                          "keep_panel_open": True, "remember_screen": True})
+
+    def test_screen_memory_switch_is_saved_to_the_panel_section(self):
+        saved = save_preferences({"remember_screen": False}, self.path)
+        self.assertFalse(saved.panel_remember_screen)
+        parsed = tomllib.loads(self.path.read_text(encoding="utf-8"))
+        self.assertIs(parsed["panel"]["remember_screen"], False)
+        self.assertTrue(parsed["panel"]["keep_open"])
 
     def test_save_keeps_other_values_and_comments(self):
         source = "# keep this\n[app]\nexe = 'D:\\Pets\\WuwaTappo.exe'\nport = 9223\n"

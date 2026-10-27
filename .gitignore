@@ -1,6 +1,7 @@
 # runtime state, not source
 .state.json
 .state.tmp
+screen.json
 .stop
 .disabled
 .daemon.lock
