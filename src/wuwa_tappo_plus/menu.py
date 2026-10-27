@@ -233,10 +233,10 @@ def _frame(data):
         lines.append("")
 
     # ---- actions
-    lines.append("  " + _paint(BOLD, "[1]") + " 安装 / 修复  "
-                 + _paint(BOLD, "[2]") + " 卸载（保留数据）")
-    lines.append("  " + _paint(BOLD, "[3]") + " 完整卸载（清除数据）  "
-                 + _paint(BOLD, "[0]") + " 退出")
+    lines.append("  " + _paint(BOLD, "[1]") + " 安装 / 修复")
+    lines.append("  " + _paint(BOLD, "[2]") + " 卸载（保留数据）")
+    lines.append("  " + _paint(BOLD, "[3]") + " 完整卸载（清除数据）")
+    lines.append("  " + _paint(BOLD, "[0]") + " 退出")
     lines.append("")
     lines.append("  " + _paint(DIM, "日常开关请到桌宠的「设置 → Wuwa Tappo Plus」"))
     lines.append("  " + _paint(DIM, "直接按数字键，完整卸载需确认，完成后退出面板"))
