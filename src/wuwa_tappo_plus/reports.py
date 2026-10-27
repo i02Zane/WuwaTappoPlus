@@ -1,4 +1,4 @@
-"""Daily keyboard/mouse totals from Wuwa Tappo's cumulative input counter."""
+"""Daily totals of the pet's own click counter (the number shown as 累计点击数)."""
 
 import hashlib
 import sqlite3
@@ -13,6 +13,8 @@ class DailyReport:
         self.log = log
         self.now = now or datetime.now
         # Keep the old opening-click database separate; never reinterpret it.
+        # The file and table names are historical: the counter they store is the
+        # pet's 累计点击数, not a keystroke log.
         self.path = Path(path) if path is not None else ROOT / "reports" / "input.sqlite3"
         self.connection = None
         self.error = None
@@ -33,13 +35,13 @@ class DailyReport:
 
     def _fail(self, exc):
         self.error = str(exc)
-        self.log.warn("daily input statistics unavailable: " + self.error[:160])
+        self.log.warn("daily click statistics unavailable: " + self.error[:160])
 
     def observe(self, snapshot):
         if self.error or not self.connection or not snapshot:
             return
-        total = snapshot.get("input_total")
-        account = snapshot.get("input_account")
+        total = snapshot.get("click_total")
+        account = snapshot.get("click_account")
         if type(total) is not int or not 0 <= total <= 9007199254740991 or not account:
             return
         # Persist no keystrokes, button names, or raw account identifiers.

@@ -134,11 +134,11 @@
     });
     var report = document.createElement('div');
     report.id = 'wut-daily-report';
-    report.innerHTML = '<div class="wut-report-title">昨日键鼠输入</div>'
+    report.innerHTML = '<div class="wut-report-title">昨日点击数</div>'
       + '<div><span class="wut-report-count">—</span>次</div>'
       + '<div class="wut-report-note"></div>'
-      + '<details open><summary>最近 7 天 · 键鼠输入次数</summary>'
-      + '<div class="wut-report-chart" role="list" aria-label="最近七天键鼠输入次数"></div></details>';
+      + '<details open><summary>最近 7 天 · 点击数</summary>'
+      + '<div class="wut-report-chart" role="list" aria-label="最近七天点击数"></div></details>';
     host.appendChild(report);
     reportKey = '';
     var anchor = container.querySelector('.btn-check-update');
@@ -174,12 +174,12 @@
     reportKey = key;
     var report = S.report;
     host.querySelector('.wut-report-title').textContent =
-      '昨日键鼠输入' + (report ? ' · ' + report.yesterday_date : '');
+      '昨日点击数' + (report ? ' · ' + report.yesterday_date : '');
     host.querySelector('.wut-report-count').textContent =
       report && report.available && report.yesterday_count !== null ? String(report.yesterday_count) : '—';
     host.querySelector('.wut-report-note').textContent = !report ? '正在读取…' :
       !report.available ? '统计暂不可用，自动开箱不受影响。' :
-      '键盘与鼠标合计，按桌宠累计输入增量统计；仅包含启用统计后的记录。— 表示暂无数据。';
+      '按桌宠「累计点击数」的每日增量统计，键盘与鼠标合计；仅包含启用统计后的记录。— 表示暂无数据。';
     var chart = host.querySelector('.wut-report-chart');
     chart.textContent = '';
     var days = report && report.available ? report.days.slice().reverse() : [];

@@ -12,7 +12,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 - `src/wuwa_tappo_plus/config.py`：默认配置与 TOML 加载；`config.toml`：本地配置。
 - `src/wuwa_tappo_plus/settings.py`、`src/wuwa_tappo_plus/scripts/settings.js`：独立设置窗口中的 Plus 开关、配置持久化与运行状态同步。
 - `src/wuwa_tappo_plus/rooms.py`、`src/wuwa_tappo_plus/scripts/rooms.js`：联机页的房间历史。页面自己解析房间号、渲染列表并完成回跳（填入真实输入框后点击「加入房间」），Python 只负责落库与回传列表；数据保存在 `reports/rooms.sqlite3`，默认保留 20 条未收藏房间。收藏（`pinned`）房间置顶显示、永不因数量上限被删除，上限同时由条数控制和 `config.toml` 的 `[rooms] history` 控制；旧库缺少该列时启动补列。房间号必须匹配 `[0-9A-Za-z]{4,16}`，写入前做校验；房主名字晚于房间号渲染时只补名字，不计新的一次进入。
-- `src/wuwa_tappo_plus/reports.py`：使用桌宠原生累计输入计数统计每日键鼠合计增量；数据保存在 `reports/input.sqlite3`。首次采样只建基线，开箱、消费和旧开箱日志不能计入；缺失日期与已采样的零次须区分。仅保存计数和账户标识的哈希，不记录按键内容。
+- `src/wuwa_tappo_plus/reports.py`：统计桌宠自身的累计点击数（`cumulativeClickCount`，即设置页显示的「累计点击数」）的每日增量；数据保存在 `reports/input.sqlite3`（文件名沿用历史命名）。首次采样只建基线，开箱、消费和旧开箱日志不能计入；缺失日期与已采样的零次须区分。仅保存计数和账户标识的哈希，不记录按键内容。
 - `src/wuwa_tappo_plus/toasts.py`、`src/wuwa_tappo_plus/scripts/toast.js`：在独立的 toast 页面里缓存桌宠气泡的原文与时间，后台逐条写入日志（`TOAST at=… text="…"`），并标注是否紧跟一次自动点击。气泡页是单独 WebView，桌宠页面看不到这些文本。
 
 `runtime/` 包含内置 Python 3.13。`tests/` 存放隔离回归测试。日志、本地配置、状态文件、锁文件和运行时二进制文件均由 Git 忽略。

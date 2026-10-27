@@ -109,9 +109,12 @@
         right: u.right_treasure_chest || 0,
         click: u.total_click_count || 0,
         spend: u.total_click_consume || 0,
-        input_total: store.isLoggedIn && Number.isSafeInteger(store.cumulativeClickCount)
+        // The pet's own 累计点击数: cumulativeClickCount on the store. It is the
+        // number the settings page shows, and it includes clicks not synced yet
+        // (total_click_count lags behind it).
+        click_total: store.isLoggedIn && Number.isSafeInteger(store.cumulativeClickCount)
           ? store.cumulativeClickCount : null,
-        input_account: store.isLoggedIn && u.cuid ? String(u.cuid) : null,
+        click_account: store.isLoggedIn && u.cuid ? String(u.cuid) : null,
         bal: barBalance()
       };
     } catch (e) {

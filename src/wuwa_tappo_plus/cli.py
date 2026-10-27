@@ -307,7 +307,7 @@ def cmd_uninstall(argv):
     """uninstall (keep data); --purge also deletes personal data after confirmation"""
     purge = "--purge" in argv
     if purge and "--yes" not in argv:
-        out("完整卸载将永久清除 Plus 配置、键鼠统计、最近房间和日志。")
+        out("完整卸载将永久清除 Plus 配置、点击数统计、最近房间和日志。")
         out("数据目录：%s" % DATA_DIR)
         if not sys.stdin or not sys.stdin.isatty():
             out(BAD + "清除数据需要确认；自动化运行请显式添加 --yes。")

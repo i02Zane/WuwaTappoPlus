@@ -8,7 +8,7 @@ from unittest.mock import Mock
 from wuwa_tappo_plus.reports import DailyReport
 
 
-class DailyInputTests(unittest.TestCase):
+class DailyClickTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -21,7 +21,7 @@ class DailyInputTests(unittest.TestCase):
         return tracker
 
     def sample(self, total, account="person"):
-        return {"input_total": total, "input_account": account}
+        return {"click_total": total, "click_account": account}
 
     def counts(self, tracker):
         return {row["date"]: row["count"] for row in tracker.yesterday()["days"]}
@@ -32,7 +32,7 @@ class DailyInputTests(unittest.TestCase):
         self.assertEqual(self.counts(tracker)["2026-10-27"], 0)
         self.assertIsNone(tracker.yesterday()["yesterday_count"])
 
-    def test_positive_input_increments_are_counted(self):
+    def test_positive_click_increments_are_counted(self):
         tracker = self.tracker()
         tracker.observe(self.sample(100))
         tracker.observe(self.sample(107))
