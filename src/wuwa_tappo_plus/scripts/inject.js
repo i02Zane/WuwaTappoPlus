@@ -71,27 +71,39 @@
     if (A.errors.length > 20) A.errors.shift();
   }
 
-  // The number under the pet is the real wallet. `total_click_count -
-  // total_click_consume` only counts what the auto clicker did and ignores
-  // everything else, so it drifts from the displayed value and lags behind it.
-  // Read the rendered number instead: the bubble then always agrees with what
-  // the user sees on screen. The node is cached because this runs every poll.
+  // Use the native getter that drives both the displayed wallet and chest
+  // affordability. Raw userInfo counters omit local clicks/spending. The DOM
+  // reader is a fallback for missing, invalid or inaccessible store values.
   var balNode = null;
 
+  function walletNumber(text) {
+    var value = String(text || '').trim();
+    if (!/^[0-9]+$/.test(value)) return null;
+    var number = Number(value);
+    return Number.isSafeInteger(number) ? number : null;
+  }
+
   function barBalance() {
+    try {
+      var app = document.querySelector('#app');
+      var vue = app && app.__vue_app__;
+      var pinia = vue && vue.config && vue.config.globalProperties.$pinia;
+      var store = pinia && pinia._s && pinia._s.get('GlobalState');
+      var balance = store && store.totalClickCount;
+      if (Number.isSafeInteger(balance) && balance >= 0) return balance;
+    } catch (e) { /* A changing page/store must not disable the DOM fallback. */ }
     if (!balNode || !balNode.isConnected) {
       balNode = null;
       var nodes = document.querySelectorAll('.text.web-bold-font');
       for (var i = 0; i < nodes.length; i++) {
-        if (/^[0-9]{1,7}$/.test((nodes[i].textContent || '').trim())) {
+        if (walletNumber(nodes[i].textContent) !== null) {
           balNode = nodes[i];
           break;
         }
       }
     }
     if (!balNode) return null;
-    var v = (balNode.textContent || '').trim();
-    return /^[0-9]{1,7}$/.test(v) ? parseInt(v, 10) : null;
+    return walletNumber(balNode.textContent);
   }
 
   // Since official 1.0.2, opening a chest starts a component-local monotonic
@@ -529,10 +541,8 @@
     return later ? list[list.length - 1] : list[0];
   }
 
-  // The only balance the project uses. `bal` is the number rendered under the
-  // pet; every consumer (bubble, click gate, payload, CLI) reads this one value
-  // instead of recomputing it from the click counters, which track only what the
-  // auto clicker did and therefore drift from the real wallet.
+  // The only balance reader: native totalClickCount first, rendered wallet as
+  // fallback. Bubble, click gate, payload and CLI all share this value.
   // A failure the user has to hear about: reuses the reminder bubble so the
   // native hit region and the pet tracking keep working unchanged.
   function showNotice(notice) {
@@ -724,8 +734,8 @@
       return;
     }
 
-    // No wallet on screen yet: the pet dock has not painted its number, so do
-    // not guess from the click counters. Wait for the real value.
+    // Neither native wallet nor DOM fallback is available. Wait instead of
+    // guessing from raw account counters.
     if (balance === null) {
       A.lowBalance = 0;
       setBlock(target.name, 'no-wallet', target.ts, balance);

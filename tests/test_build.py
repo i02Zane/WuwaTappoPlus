@@ -6,6 +6,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -74,11 +75,23 @@ class ReleaseArchiveTests(unittest.TestCase):
                 archived = builder.archive_release(notes)
             self.assertEqual(archived, root / "dist/history" / ("v" + builder.__version__))
             self.assertEqual({p.name for p in archived.iterdir()},
-                             {"WuwaTappoPlus.exe", "SHA256SUMS.txt", "release-notes.md"})
+                             {"WuwaTappoPlus.exe", "SHA256SUMS.txt", "release-notes.md",
+                              "WuwaTappoPlus-%s-windows-x64.zip" % builder.__version__})
             self.assertEqual((archived / "WuwaTappoPlus.exe").read_bytes(), b"release fixture")
             self.assertEqual((archived / "release-notes.md").read_text(encoding="utf-8"),
                              notes.read_text(encoding="utf-8"))
             self.assertEqual(list((root / "dist/history").iterdir()), [archived])
+            share_zip = archived / ("WuwaTappoPlus-%s-windows-x64.zip" % builder.__version__)
+            with zipfile.ZipFile(share_zip) as archive:
+                self.assertIsNone(archive.testzip())
+                self.assertEqual(set(archive.namelist()),
+                                 {"WuwaTappoPlus.exe", "SHA256SUMS.txt", "release-notes.md"})
+                for name in archive.namelist():
+                    self.assertEqual(archive.read(name), (archived / name).read_bytes())
+            before = share_zip.read_bytes()
+            with self.assertRaises(FileExistsError):
+                builder.create_share_zip(archived)
+            self.assertEqual(share_zip.read_bytes(), before)
 
     def test_existing_history_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as folder:

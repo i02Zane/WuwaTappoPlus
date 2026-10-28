@@ -587,3 +587,91 @@ test('unmatched consumption, late confirmation and uninstalled listeners cannot 
   assert.equal(c.listeners.size, 0);
   assert.equal(c.stopped(), true);
 });
+
+
+test('wallet reads seven-digit, eight-digit and larger safe integer balances', () => {
+  const f = fixture();
+  const wallet = { textContent: '', isConnected: true };
+  f.context.document.querySelectorAll = selector => selector === '.text.web-bold-font' ? [wallet] : [];
+  for (const value of ['0', '9999999', '10000000', '10000001', '123456789', '9007199254740991']) {
+    wallet.textContent = ' ' + value + ' ';
+    assert.equal(f.a.readBal(), Number(value));
+  }
+  for (const text of ['', '-1', '1.5', '1000W', '1e7', '9007199254740992']) {
+    wallet.textContent = text;
+    assert.equal(f.a.readBal(), null);
+  }
+});
+
+test('initial wallet discovery accepts eight digits and ignores other text', () => {
+  const f = fixture();
+  f.context.document.querySelectorAll = () => [
+    { textContent: 'loading', isConnected: true },
+    { textContent: '10000000', isConnected: true }
+  ];
+  assert.equal(f.a.readBal(), 10000000);
+});
+
+test('crossing ten million does not block an otherwise ready native chest', () => {
+  const f = nativeChests();
+  let now = 100000, clicks = 0;
+  class Clock extends Date { static now() { return now; } }
+  f.context.Date = Clock;
+  const wallet = { textContent: '9999999', isConnected: true };
+  f.context.document.querySelectorAll = selector => selector === '.text.web-bold-font' ? [wallet] : [];
+  f.nodes.set('.reward-anchor--left .reward-btn', f.button(() => { clicks++; }));
+  f.a.tick();
+  wallet.textContent = '10000000';
+  now += 2100;
+  f.a.tick();
+  assert.equal(clicks, 1);
+  assert.equal(f.a.clicks[0].balance, 10000000);
+  assert.equal(f.a.block, null);
+});
+
+
+test('native wallet getter wins over DOM including zero and eight-digit balances', () => {
+  const f = nativeChests();
+  f.context.document.querySelectorAll = () => [{ textContent: '4000', isConnected: true }];
+  for (const value of [0, 9999999, 10000000, 123456789, Number.MAX_SAFE_INTEGER]) {
+    f.store.totalClickCount = value;
+    assert.equal(f.a.readBal(), value);
+    assert.equal(f.a.snapshot().bal, value);
+  }
+  f.context.document.querySelectorAll = () => { throw new Error('DOM should not be read'); };
+  assert.equal(f.a.readBal(), Number.MAX_SAFE_INTEGER);
+});
+
+test('missing invalid or throwing native wallet uses DOM and can recover', () => {
+  const f = nativeChests();
+  f.context.document.querySelectorAll = () => [{ textContent: '10000001', isConnected: true }];
+  for (const value of [undefined, null, NaN, Infinity, -1, 1.5, '10000000', Number.MAX_SAFE_INTEGER + 1]) {
+    f.store.totalClickCount = value;
+    assert.equal(f.a.readBal(), 10000001);
+  }
+  Object.defineProperty(f.store, 'totalClickCount', { configurable: true,
+    get() { throw new Error('store updating'); } });
+  assert.equal(f.a.readBal(), 10000001);
+  Object.defineProperty(f.store, 'totalClickCount', { configurable: true, value: 20000000 });
+  assert.equal(f.a.readBal(), 20000000);
+});
+
+test('unavailable native wallet and DOM remain unknown', () => {
+  const f = nativeChests();
+  f.store.totalClickCount = NaN;
+  assert.equal(f.a.readBal(), null);
+});
+
+test('native zero balance prevents clicking despite a stale sufficient DOM balance', () => {
+  const f = nativeChests();
+  f.a.cfg.min_balance = 1000;
+  let now = 100000, clicks = 0;
+  class Clock extends Date { static now() { return now; } }
+  f.context.Date = Clock;
+  f.store.totalClickCount = 0;
+  f.context.document.querySelectorAll = () => [{ textContent: '10000000', isConnected: true }];
+  f.nodes.set('.reward-anchor--left .reward-btn', f.button(() => { clicks++; }));
+  f.a.tick(); now += 2100; f.a.tick();
+  assert.equal(clicks, 0);
+  assert.equal(f.a.block.reason, 'low-balance');
+});

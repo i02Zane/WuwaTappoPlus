@@ -37,6 +37,8 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 
 官方 1.0.2 开箱后使用组件内部计时，`userInfo.left_treasure_chest/right_treasure_chest` 可能保持旧值。宝箱状态以左右 `.reward-anchor--left/right` 内的原生按钮及 `.reward-countdown__text` 为准；隐藏的倒计时优先使用本账户已确认开箱的本地缓存；无有效缓存时标记为未知，不用旧字段或余额变化推算。缓存只供提醒，不能作为点击授权。必须按目标槽选择按钮，保留各槽独立的重试预算；脚本卸载后的旧验证回调不得继续报错。CLI 与后台共用主注入的快照。
 
+余额读取统一经主注入的 `readBal`：优先读取 `GlobalState.totalClickCount` 非负安全整数（0 是有效余额）， getter 缺失、异常或无效时再用 DOM 数字兜底；不限制为7位数字，不自行用 userInfo 原始计数相减。自动点击、气泡、CLI 与后台必须共用此读数。
+
 ## 代码风格与命名约定
 
 沿用现有代码风格：Python 使用四空格缩进，函数和变量使用 `snake_case`，类名使用 `PascalCase`，常量使用全大写。JavaScript 使用两空格缩进和 `camelCase` 命名。目前未配置格式化或静态检查工具。保持现有模块职责，避免引入不必要的依赖。修改默认配置时，同步更新 `BUILTIN` 与 `DEFAULT_TOML`；项目版本唯一来源是 `src/wuwa_tappo_plus/__init__.py` 的 `__version__`，后台、主注入、设置面板与房间历史必须共用该版本；JavaScript 模板通过 Python 注入版本值，不手写独立脚本版本。版本由程序管理，不写入用户配置。
@@ -73,7 +75,7 @@ EXE 数据存放在 `%LOCALAPPDATA%\WuwaTappoPlus`，源码数据保留在仓库
 
 1. 确认统一版本号、发布提交与版本标签对应，生成该版本的中文 Release Notes（写成 `dist/release-notes.md`，构建时归档）。
 2. 完成构建、测试和 EXE 启动验证，核对程序及页面脚本版本一致：`build_release.py --notes` 会跑 `--probe`；再跑 `tools/smoke_release.py` 验证冻结入口、资源、终端菜单、看门狗拉起与超时退出。
-3. 发布前必须将本次 EXE、SHA256SUMS.txt 和 release-notes.md 保存到 `dist/history/v<版本号>/`；通过 `python tools/build_release.py --notes dist/release-notes.md` 完成。普通开发构建不必归档；已有版本归档不得静默覆盖。
+3. 发布前必须将本次 EXE、SHA256SUMS.txt 和 release-notes.md 保存到 `dist/history/v<版本号>/`；通过 `python tools/build_release.py --notes dist/release-notes.md` 完成。同时在该归档目录生成 `WuwaTappoPlus-<版本号>-windows-x64.zip`，供用户上传网盘，ZIP 内仅放 EXE、SHA256SUMS.txt 和 release-notes.md，不含源码、配置或个人数据。ZIP 只保留本地，不上传 GitHub Release。普通开发构建不必归档；已有版本归档及 ZIP 不得静默覆盖。
 4. 推代码和标签：`git push origin main`，`git tag -a v<版本号> -m "..."`，`git push origin v<版本号>`。标签必须指向发布提交，不要在 Release 页面新建标签。
 5. 创建 Release 用 GitHub CLI（`winget install --id GitHub.cli -e`，默认路径 `C:\Program Files\GitHub CLI\gh.exe`）。首次使用先授权：`gh auth login --hostname github.com --git-protocol ssh --web`，在浏览器打开 https://github.com/login/device 输入终端显示的一次性代码，`gh auth status` 显示已登录即可。然后执行：
 

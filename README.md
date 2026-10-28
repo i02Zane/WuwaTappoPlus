@@ -245,7 +245,7 @@ node --test tests/test_bubble.js tests/test_panel.js tests/test_rooms.js tests/t
 
 构建会检查解释器架构，并自动验证生成的 EXE 能启动、资源和版本完整，再生成校验文件。`dist/` 仅输出单文件 `WuwaTappoPlus.exe` 和只包含该 EXE 哈希的 `SHA256SUMS.txt`，不再额外生成源码包。Release 上传这两个文件，对应源码使用 GitHub 根据版本标签自动提供的 ZIP / TAR.GZ；发布时确保标签源码与 EXE 对应，并保留构建文件和许可证。不要上传个人配置、数据库、日志或开发运行时。Python、PyInstaller 和项目的许可证均内嵌在 EXE 中。GitHub Actions 支持测试和手动构建。
 
-每次打标签发布时，使用 `python tools/build_release.py --notes <发布说明.md>` 构建并归档。EXE、校验文件和发布说明会保存到 `dist/history/v<版本号>/`，同版本归档不会覆盖；普通构建不生成历史副本。`dist/` 已整体被 Git 忽略，无需额外的归档忽略规则。
+每次打标签发布时，使用 `python tools/build_release.py --notes <发布说明.md>` 构建并归档。EXE、校验文件和发布说明会保存到 `dist/history/v<版本号>/`，同时生成供网盘分享的 `WuwaTappoPlus-<版本号>-windows-x64.zip`，其中仅含 EXE、校验文件与发布说明。ZIP 仅保留本地，GitHub Release 仍只上传 EXE 和校验文件。同版本归档不会覆盖；普通构建不生成历史副本。`dist/` 已整体被 Git 忽略，无需额外的归档忽略规则。
 
 测试使用模拟对象和临时目录，避免真实安装、注册表修改或桌宠点击。发布包冒烟测试使用隔离数据目录与未连接的本机端口；安装／卸载的真实系统修改仍应在 Windows 测试环境验证。贡献约定见 [AGENTS.md](AGENTS.md)。
 

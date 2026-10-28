@@ -8,6 +8,7 @@ import subprocess
 import struct
 import sys
 import tempfile
+import zipfile
 from importlib.metadata import distribution
 from pathlib import Path
 
@@ -46,6 +47,24 @@ def validate_executable(executable, build):
         raise RuntimeError("Packaged EXE returned inconsistent release metadata; see %s" % report)
 
 
+def create_share_zip(directory):
+    """Bundle only the published artifacts for local cloud-drive sharing."""
+    directory = Path(directory)
+    names = ("WuwaTappoPlus.exe", "SHA256SUMS.txt", "release-notes.md")
+    for name in names:
+        if not (directory / name).is_file():
+            raise FileNotFoundError(directory / name)
+    executable = directory / names[0]
+    expected = "%s  %s" % (hashlib.sha256(executable.read_bytes()).hexdigest(), executable.name)
+    if (directory / names[1]).read_text(encoding="utf-8").strip() != expected:
+        raise ValueError("EXE checksum mismatch; sharing ZIP was not created")
+    target = directory / ("WuwaTappoPlus-%s-windows-x64.zip" % __version__)
+    with zipfile.ZipFile(target, "x", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in names:
+            archive.write(directory / name, arcname=name)
+    return target
+
+
 def archive_release(notes_path):
     """Snapshot published files without overwriting an existing version."""
     notes = Path(notes_path)
@@ -66,6 +85,7 @@ def archive_release(notes_path):
         shutil.copy2(executable, staged / executable.name)
         shutil.copy2(checksum, staged / checksum.name)
         shutil.copy2(notes, staged / "release-notes.md")
+        create_share_zip(staged)
         staged.rename(destination)
     return destination
 
