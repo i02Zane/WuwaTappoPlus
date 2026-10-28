@@ -94,6 +94,32 @@
     return /^[0-9]{1,7}$/.test(v) ? parseInt(v, 10) : null;
   }
 
+  // Since official 1.0.2, opening a chest starts a component-local monotonic
+  // timer. userInfo's timestamps can remain unchanged after a successful open.
+  // The native slot UI is authoritative; hidden timers are unknown, not due.
+  var chestUi = { left: { readyAt: 0 }, right: { readyAt: 0 } };
+
+  function chestButton(name) {
+    return document.querySelector('.reward-anchor--' + name + ' .reward-btn');
+  }
+
+  function chestTime(name, now, loggedIn) {
+    var record = chestUi[name];
+    if (loggedIn && chestButton(name)) {
+      if (!record.readyAt) record.readyAt = now;
+      return record.readyAt;
+    }
+    record.readyAt = 0;
+    if (!loggedIn) return 0;
+    var text = document.querySelector('.reward-anchor--' + name
+      + ' .reward-countdown__text');
+    var match = text && /^(\d{1,3}):([0-5]\d)$/.exec((text.textContent || '').trim());
+    if (!match) return 0;
+    var seconds = Number(match[1]) * 60 + Number(match[2]);
+    // 00:00 alone does not authorize a click; wait for the native button.
+    return seconds > 0 ? now + seconds * 1000 : 0;
+  }
+
   function snapshot() {
     try {
       var el = document.querySelector('#app');
@@ -103,10 +129,12 @@
       var store = p && p._s && p._s.get('GlobalState');
       if (!store) return null;
       var u = store.$state.userInfo || {};
+      var now = Date.now();
       return {
-        now: Date.now(),
-        left: u.left_treasure_chest || 0,
-        right: u.right_treasure_chest || 0,
+        now: now,
+        left: chestTime('left', now, store.isLoggedIn),
+        right: chestTime('right', now, store.isLoggedIn),
+        native_chests: true,
         click: u.total_click_count || 0,
         spend: u.total_click_consume || 0,
         // The pet's own 累计点击数: cumulativeClickCount on the store. It is the
@@ -410,11 +438,8 @@
     return true;
   }
 
-  // The page hides the chest timer completely once the balance cannot pay for
-  // it: at 740 there is no `.reward-btn` in the DOM at all, and between 1000
-  // and 2000 only one of the two slots is drawn. The two timestamps in the
-  // store keep ticking regardless, so the bubble can still tell you when the
-  // next chest lands - which is exactly the moment you would want to top up.
+  // Hidden native timers are unknown. In particular, a low wallet can hide
+  // both slots; do not invent a countdown from stale account timestamps.
   function fmtCd(ms) {
     if (!(ms > 0)) return '';
     var s = Math.ceil(ms / 1000);
@@ -434,9 +459,8 @@
   //   1000..2000   the page is already showing the first slot, so quote the
   //               LATER one and answer "what comes after that".
   //
-  // A slot keeps its past timestamp until it is actually opened (the left one
-  // sat 267s overdue during testing), so a non-positive value means "the chest
-  // is sitting there waiting for money", not "waiting for time".
+  // Only visible native countdowns and ready buttons supply times. Hidden
+  // slots are unknown and must not reuse the legacy store timestamps.
   function slotWait(s, later) {
     var list = [];
     if (s.left > 0) list.push(s.left - s.now);
@@ -579,8 +603,8 @@
     // on its last text when both slots were empty.
     updateAlert(balance, s);
 
-    // Each chest is its own record: its timestamp moving means the app opened
-    // it, which resets that slot and nothing else.
+    // Each visible ready chest has a stable identity until its native button
+    // is replaced by a cooldown or hidden. Keep the two retry budgets separate.
     var now = Date.now();
     var pairs = [{ name: 'left', ts: s.left > 0 ? s.left : 0 },
                  { name: 'right', ts: s.right > 0 ? s.right : 0 }];
@@ -606,12 +630,7 @@
       return;
     }
 
-    var btn = document.querySelector('.reward-btn');
-
-    if (btn && !A.btn) A.btn = { t: now };
-    if (!btn && A.btn) A.btn = null;
-
-    if (!due.length) { clearBlock(); return; }
+    if (!due.length) { A.btn = null; clearBlock(); return; }
 
     // The earliest due chest that has not burned its attempts. The other chest
     // keeps its own state; it is neither blocked nor retried by this one.
@@ -627,6 +646,10 @@
 
     var slot = A.slots[target.name];
     var overdue = now - target.ts;
+    // Never use the first global reward button: it may belong to the other slot.
+    var btn = chestButton(target.name);
+    if (btn && (!A.btn || A.btn.slot !== target.name)) A.btn = { t: now, slot: target.name };
+    if (!btn) A.btn = null;
 
     if (!btn) {
       // The page draws the button a beat after the countdown turns due; only
@@ -712,16 +735,20 @@
     A.clicks.push(rec);
     if (A.clicks.length > 50) A.clicks.shift();
 
-    // Only this chest's timestamp decides the outcome. A click that changes
-    // nothing is retried after the lock, up to MAX_ATTEMPTS; then the chest is
-    // parked until the app opens it or the page reloads.
+    // Verify the same native slot, not the stale userInfo timestamp. A missing
+    // button may also mean the dock was hidden: do not claim failure or retry
+    // against another slot. The next real button starts a new chest record.
+    var attempt = slot.attempts;
+    var clickAt = slot.lastClickAt;
     setTimeout(function () {
+      if (window.__WUT__ !== A) return;
       var after = (A.snapshot || snapshot)();
       if (!after) return;
+      if (slot.ts !== target.ts || slot.lastClickAt !== clickAt) return;
       var moved = target.name === 'left' ? after.left : after.right;
-      if (moved !== target.ts) return;
+      if (moved !== target.ts || (after.native_chests && !chestButton(target.name))) return;
       A.retries++;
-      if (slot.attempts >= MAX_ATTEMPTS) {
+      if (attempt >= MAX_ATTEMPTS) {
         slot.gaveUp = true;
         A.notice = {
           text: '自动开箱失败',

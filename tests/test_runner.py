@@ -9,7 +9,7 @@ from unittest.mock import Mock
 
 from wuwa_tappo_plus import __version__, config
 from wuwa_tappo_plus.config import Config
-from wuwa_tappo_plus.runner import Runner
+from wuwa_tappo_plus.runner import Runner, _remaining
 
 
 def bare_runner():
@@ -213,6 +213,33 @@ class InjectionVersionTests(unittest.TestCase):
             self.assertIn(json.dumps(__version__), source)
             self.assertNotIn("__VERSION__", source)
             self.assertNotIn("__CFG__", source)
+
+
+class NativeCountdownTests(unittest.TestCase):
+    def test_hidden_timer_is_unknown_instead_of_epoch_sized_overdue(self):
+        self.assertIsNone(_remaining({"left": 0}, "left", 1793158874936))
+        self.assertIsNone(_remaining({}, "right", 1793158874936))
+
+    def test_visible_timer_and_due_button_keep_their_remaining_time(self):
+        self.assertEqual(_remaining({"left": 130500}, "left", 100000), 30.5)
+        self.assertEqual(_remaining({"right": 98000}, "right", 100000), -2.0)
+
+
+class HiddenChestBalanceTests(unittest.TestCase):
+    def test_hidden_chests_do_not_suppress_balance_changes(self):
+        runner = bare_runner()
+        runner.alert_level = None
+        runner.alert_balance({"left": 0, "right": 0, "bal": 3000}, 0)
+        runner.alert_balance({"left": 0, "right": 0, "bal": 0}, 2)
+        self.assertEqual(runner.alert_level, 2)
+        runner.log.warn.assert_called_once()
+
+    def test_unreadable_wallet_does_not_change_baseline(self):
+        runner = bare_runner()
+        runner.alert_level = 0
+        runner.alert_balance({"left": 100000, "bal": None}, 2)
+        self.assertEqual(runner.alert_level, 0)
+        runner.log.warn.assert_not_called()
 
 
 if __name__ == "__main__":

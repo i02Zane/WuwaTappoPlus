@@ -64,6 +64,12 @@ def _stamp_ms(milliseconds):
         return "-"
 
 
+def _remaining(snapshot, name, now):
+    """A hidden native countdown is unknown, not an epoch-sized overdue value."""
+    timestamp = snapshot.get(name)
+    return round((timestamp - now) / 1000.0, 1) if timestamp else None
+
+
 class Runner:
     def __init__(self, cfg=None, log=None):
         self.cfg = cfg or load()
@@ -151,8 +157,8 @@ class Runner:
                 "now": now,
                 "left": snapshot.get("left"),
                 "right": snapshot.get("right"),
-                "remain_left": round((snapshot.get("left") or 0) / 1000.0 - now / 1000.0, 1),
-                "remain_right": round((snapshot.get("right") or 0) / 1000.0 - now / 1000.0, 1),
+                "remain_left": _remaining(snapshot, "left", now),
+                "remain_right": _remaining(snapshot, "right", now),
                 "balance": snapshot.get("bal"),
                 "inject": snapshot.get("inject", 0),
             })
@@ -343,9 +349,9 @@ class Runner:
         """
         if not snapshot:
             return
-        # A page that just reloaded reports zeros until the Pinia store fills
-        # in, so the chest timestamps (absolute epoch ms, never 0) gate this.
-        if not (snapshot.get("left") or 0):
+        # Hidden native chests have no timestamp. Only an unreadable wallet
+        # means the page is not ready; a visible zero balance is valid.
+        if snapshot.get("bal") is None:
             return
 
         level = alert or 0
@@ -449,10 +455,10 @@ class Runner:
                         self.last_beat = time.time()
                         now = snapshot.get("now") or 0
                         self.log.info(
-                            "state remain L=%.1fs R=%.1fs balance=%s"
+                            "state remain L=%s R=%s balance=%s"
                             % (
-                                ((snapshot.get("left") or 0) - now) / 1000.0,
-                                ((snapshot.get("right") or 0) - now) / 1000.0,
+                                ("%.1fs" % _remaining(snapshot, "left", now)) if snapshot.get("left") else "unknown",
+                                ("%.1fs" % _remaining(snapshot, "right", now)) if snapshot.get("right") else "unknown",
                                 snapshot.get("bal"),
                             )
                         )

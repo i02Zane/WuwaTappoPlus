@@ -32,11 +32,12 @@ STATE_JS = r"""
     var st = app.config.globalProperties.$pinia._s.get('GlobalState').$state;
     var u = st.userInfo || {};
     var A = window.__WUT__ || {};
+    var snap = A.snapshot ? A.snapshot() : null;
     return JSON.stringify({
       ok: true,
       now: Date.now(),
-      left: u.left_treasure_chest || 0,
-      right: u.right_treasure_chest || 0,
+      left: snap ? snap.left : 0,
+      right: snap ? snap.right : 0,
       click: u.total_click_count || 0,
       spend: u.total_click_consume || 0,
       // The one wallet reader lives in the injected script, so the CLI cannot

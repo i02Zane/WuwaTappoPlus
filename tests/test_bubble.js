@@ -202,7 +202,7 @@ test('live pause blocks clicks while keeping state and reminders available', () 
   const f = fixture();
   let clicks = 0;
   const query = f.context.document.querySelector;
-  f.context.document.querySelector = selector => selector === '.reward-btn' ? {
+  f.context.document.querySelector = selector => /^\.reward-anchor--(?:left|right) \.reward-btn$/.test(selector) ? {
     disabled: false, click() { clicks++; },
     getBoundingClientRect: () => ({ width: 20, height: 20, x: 1, y: 1 })
   } : query(selector);
@@ -220,7 +220,7 @@ test('a chest that has just come due waits out the server grace', () => {
   const f = fixture();
   let clicks = 0;
   const query = f.context.document.querySelector;
-  f.context.document.querySelector = selector => selector === '.reward-btn' ? {
+  f.context.document.querySelector = selector => /^\.reward-anchor--(?:left|right) \.reward-btn$/.test(selector) ? {
     disabled: false, click() { clicks++; },
     getBoundingClientRect: () => ({ width: 20, height: 20, x: 1, y: 1 })
   } : query(selector);
@@ -275,7 +275,7 @@ test('a chest that refuses every click is parked and announced', () => {
   const f = fixture();
   let clicks = 0;
   const query = f.context.document.querySelector;
-  f.context.document.querySelector = selector => selector === '.reward-btn' ? {
+  f.context.document.querySelector = selector => /^\.reward-anchor--(?:left|right) \.reward-btn$/.test(selector) ? {
     disabled: false, click() { clicks++; },
     getBoundingClientRect: () => ({ width: 20, height: 20, x: 1, y: 1 })
   } : query(selector);
@@ -307,7 +307,7 @@ test('giving up on one chest does not stop the other', () => {
   const f = fixture();
   let clicks = 0;
   const query = f.context.document.querySelector;
-  f.context.document.querySelector = selector => selector === '.reward-btn' ? {
+  f.context.document.querySelector = selector => /^\.reward-anchor--(?:left|right) \.reward-btn$/.test(selector) ? {
     disabled: false, click() { clicks++; },
     getBoundingClientRect: () => ({ width: 20, height: 20, x: 1, y: 1 })
   } : query(selector);
@@ -374,4 +374,127 @@ test('re-enabling a hidden bubble after balance recovery clears alert status', (
   f.a.configure({ enabled: true, bubble: true, animation: true });
   f.a.updateAlert(3000, null);
   assert.equal(f.a.alert, 0);
+});
+
+// Official 1.0.2 leaves userInfo chest timestamps stale after an open.
+function nativeChests() {
+  const f = fixture();
+  const nodes = new Map();
+  const store = { isLoggedIn: true, cumulativeClickCount: 9000,
+    $state: { userInfo: { left_treasure_chest: 1, right_treasure_chest: 2 } } };
+  const query = f.context.document.querySelector;
+  f.context.document.querySelector = selector => {
+    if (selector === '#app') return { __vue_app__: { config: {
+      globalProperties: { $pinia: { _s: new Map([['GlobalState', store]]) } }
+    } } };
+    if (nodes.has(selector)) return nodes.get(selector);
+    return query(selector);
+  };
+  f.a.configure({ enabled: true, bubble: false, animation: false });
+  const button = click => ({ disabled: false, textContent: '', click,
+    getBoundingClientRect: () => ({ width: 20, height: 20, x: 1, y: 1 }) });
+  return { ...f, nodes, store, button };
+}
+
+test('native hidden chest timers ignore stale userInfo timestamps', () => {
+  const f = nativeChests();
+  const s = f.a.snapshot();
+  assert.equal(s.left, 0);
+  assert.equal(s.right, 0);
+  f.a.tick();
+  assert.equal(f.a.block, null);
+  assert.equal(f.a.clicks.length, 0);
+});
+
+test('native countdown is read from its own slot and malformed text is unknown', () => {
+  const f = nativeChests();
+  f.nodes.set('.reward-anchor--right .reward-countdown__text', { textContent: '12:34' });
+  const s = f.a.snapshot();
+  assert.equal(s.left, 0);
+  assert.ok(Math.abs(s.right - s.now - 754000) < 5);
+  for (const textContent of ['00:00', '12:99', '', 'loading']) {
+    f.nodes.set('.reward-anchor--right .reward-countdown__text', { textContent });
+    assert.equal(f.a.snapshot().right, 0);
+  }
+});
+
+test('right-only native button never clicks a left button or uses stale slot order', () => {
+  const f = nativeChests();
+  let clicks = 0;
+  const key = '.reward-anchor--right .reward-btn';
+  f.nodes.set(key, f.button(() => { clicks++; f.nodes.delete(key); }));
+  f.a.snapshot = () => ({ now: Date.now(), left: 0, right: 10,
+    native_chests: true, bal: 3000 });
+  f.a.tick();
+  assert.equal(clicks, 1);
+  assert.equal(f.a.clicks[0].slot, 'right');
+  f.timers.find(t => t.ms === undefined).fn();
+  assert.equal(f.a.retries, 0, 'disappeared native button is not a failed open');
+});
+
+test('native button gets a stable ready identity and clears when cooldown starts', () => {
+  const f = nativeChests();
+  const key = '.reward-anchor--left .reward-btn';
+  f.nodes.set(key, f.button(() => {}));
+  const first = f.a.snapshot().left;
+  assert.ok(first > 0);
+  assert.equal(f.a.snapshot().left, first);
+  f.nodes.delete(key);
+  f.nodes.set('.reward-anchor--left .reward-countdown__text', { textContent: '29:58' });
+  const after = f.a.snapshot();
+  assert.ok(after.left > after.now);
+  assert.equal(f.store.$state.userInfo.left_treasure_chest, 1);
+  f.store.isLoggedIn = false;
+  assert.equal(f.a.snapshot().left, 0);
+});
+
+test('failed native left chest never clicks the ready right button', () => {
+  const f = nativeChests();
+  let clicks = 0;
+  f.nodes.set('.reward-anchor--right .reward-btn', f.button(() => { clicks++; }));
+  f.a.snapshot = () => ({ now: Date.now(), left: 10, right: 0, bal: 3000 });
+  f.a.tick();
+  assert.equal(clicks, 0);
+  assert.equal(f.a.block.reason, 'no-button');
+});
+
+test('verification from an uninstalled script cannot report a failure', () => {
+  const f = nativeChests();
+  f.nodes.set('.reward-anchor--left .reward-btn', f.button(() => {}));
+  f.a.snapshot = () => ({ now: Date.now(), left: 10, right: 0, bal: 3000 });
+  f.a.tick();
+  const verify = f.timers.find(t => t.ms === undefined);
+  f.a.uninstall();
+  verify.fn();
+  assert.equal(f.a.retries, 0);
+});
+
+
+test('native open changing only local UI is not retried against stale userInfo', () => {
+  const f = nativeChests();
+  let now = 100000, clicks = 0;
+  class Clock extends Date { static now() { return now; } }
+  f.context.Date = Clock;
+  const key = '.reward-anchor--left .reward-btn';
+  f.nodes.set(key, f.button(() => {
+    clicks++;
+    f.nodes.delete(key);
+    f.nodes.set('.reward-anchor--left .reward-countdown__text', { textContent: '30:00' });
+  }));
+  f.a.readBal = () => 3000;
+  f.nodes.set('.text.web-bold-font', { textContent: '3000', isConnected: true });
+  f.context.document.querySelectorAll = selector => selector === '.text.web-bold-font'
+    ? [f.nodes.get(selector)] : [];
+  f.a.tick();
+  assert.equal(clicks, 0, 'wait for native readiness grace');
+  now += 2100;
+  f.a.tick();
+  assert.equal(clicks, 1);
+  const verify = f.timers.find(t => t.ms === undefined);
+  verify.fn();
+  f.a.tick();
+  assert.equal(f.a.retries, 0);
+  assert.equal(f.a.block, null);
+  assert.equal(f.a.errors.length, 0);
+  assert.equal(f.store.$state.userInfo.left_treasure_chest, 1);
 });
