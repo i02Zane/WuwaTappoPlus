@@ -83,6 +83,9 @@ def archive_release(notes_path):
     with tempfile.TemporaryDirectory(prefix=".archive-", dir=history) as temporary:
         staged = Path(temporary)
         shutil.copy2(executable, staged / executable.name)
+        if sys.platform == "win32":
+            subprocess.run(["icacls", str(staged / executable.name), "/setintegritylevel", "M"],
+                           check=True, capture_output=True)
         shutil.copy2(checksum, staged / checksum.name)
         shutil.copy2(notes, staged / "release-notes.md")
         create_share_zip(staged)

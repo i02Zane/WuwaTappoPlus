@@ -5,6 +5,9 @@
 
   var HOST = 'wut-rooms';
   var STYLE = 'wut-rooms-style';
+  var VISIBILITY = 'wut-room-visibility';
+  var visibilityUntil = 0;
+  var visibilityTarget = false;
   var WAIT_JOIN_MS = 12000;
 
   var R = window.__WUT_ROOMS__ = {
@@ -86,7 +89,8 @@
     '#wut-rooms .wut-room-forget:hover{background:#fed291;}',
 
     '#wut-rooms .wut-rooms-empty{font-size:14px;line-height:24px;color:#8e7b6a;',
-    'opacity:.8;padding:0 2px;}'
+    'opacity:.8;padding:0 2px;}',
+    '#wut-room-visibility{position:absolute;bottom:0;display:flex;gap:10px;white-space:nowrap;}'
   ].join('');
 
   // The panel shows "房间号： 32RH4VrDT" next to a copy button; only the token
@@ -236,13 +240,17 @@
     return Math.floor(seconds / 86400) + ' 天前';
   }
 
-  function build() {
+  function ensureStyle() {
     if (!document.getElementById(STYLE)) {
       var style = document.createElement('style');
       style.id = STYLE;
       style.textContent = CSS;
       (document.head || document.documentElement).appendChild(style);
     }
+  }
+
+  function build() {
+    ensureStyle();
     var host = document.createElement('div');
     host.id = HOST;
     host.innerHTML = '<div class="wut-rooms-head">'
@@ -291,9 +299,66 @@
     return !!(module.querySelector('.room-number') || module.querySelector('.leave-room-btn'));
   }
 
+  function memberButtons(container) {
+    // The native panel renders an eye only for an online, non-local member.
+    return Array.from(container.querySelectorAll('.room-members .room-visible-btn')).filter(function (button) {
+      return !button.disabled;
+    });
+  }
+
+  function mountVisibility(container) {
+    var leave = container.querySelector('.leave-room-btn');
+    var info = container.querySelector('.room-info');
+    var control = document.getElementById(VISIBILITY);
+    if (!inRoom() || !leave || !info) {
+      if (control) control.remove();
+      visibilityUntil = 0;
+      return;
+    }
+    ensureStyle();
+    if (!control) {
+      control = document.createElement('div'); control.id = VISIBILITY;
+      [[true, '显示他人桌宠', 'show'], [false, '隐藏他人桌宠', 'hide']].forEach(function (definition) {
+        var button = document.createElement('button');
+        button.id = VISIBILITY + '-' + definition[2]; button.type = 'button'; button.className = 'common-btn';
+        button.textContent = definition[1];
+        button.addEventListener('click', function (event) {
+          event.preventDefault(); event.stopPropagation();
+          if (visibilityUntil > Date.now() || !inRoom()) return;
+          var current = document.querySelector('.room-module .panel-content');
+          if (!current || !current.contains(control)) return;
+          var show = definition[0];
+          // Snapshot once: IPC updates may arrive after all native clicks return.
+          var targets = memberButtons(current).filter(function (eye) {
+            return eye.classList.contains('room-invisible') === show;
+          });
+          if (!targets.length) return;
+          visibilityTarget = show;
+          visibilityUntil = Date.now() + 2000;
+          control.querySelectorAll('button').forEach(function (item) { item.disabled = true; });
+          targets.forEach(function (eye) { eye.click(); });
+          mountVisibility(current);
+        });
+        control.appendChild(button);
+      });
+      info.insertBefore(control, leave);
+    }
+    var buttons = memberButtons(container);
+    var visible = buttons.filter(function (button) { return !button.classList.contains('room-invisible'); }).length;
+    if (visibilityUntil && (visibilityTarget ? visible === buttons.length : visible === 0)) visibilityUntil = 0;
+    var pending = visibilityUntil > Date.now();
+    var disabled = pending || !buttons.length || leave.disabled;
+    control.querySelector('#' + VISIBILITY + '-show').disabled = disabled || visible === buttons.length;
+    control.querySelector('#' + VISIBILITY + '-hide').disabled = disabled || visible === 0;
+    control.style.right = ((leave.offsetWidth || 0) + 10) + 'px';
+    control.setAttribute('aria-busy', pending ? 'true' : 'false');
+    control.title = buttons.length ? '仅切换当前在线的其他桌宠，不影响自己的桌宠' : '当前没有可切换的其他桌宠';
+  }
+
   function mount() {
     var container = document.querySelector('.room-module .panel-content');
     if (!container) return;
+    mountVisibility(container);
     if (inRoom()) {
       var stale = document.getElementById(HOST);
       if (stale) stale.remove();
@@ -458,13 +523,13 @@
   R.tick = tick;
 
   var observer = new MutationObserver(function () { mount(); });
-  observer.observe(document.body, { childList: true, subtree: true });
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
   timeout = setInterval(tick, 1000);
 
   R.uninstall = function () {
     observer.disconnect();
     clearInterval(timeout);
-    [HOST, STYLE].forEach(function (id) {
+    [HOST, STYLE, VISIBILITY].forEach(function (id) {
       var element = document.getElementById(id);
       if (element) element.remove();
     });

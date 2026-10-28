@@ -360,3 +360,64 @@ test('unpinning drops the star and still records the intent', () => {
   assert.equal(view.rooms.requests.at(-1).pinned, false);
   assert.equal(view.list.children[0].dataset.pinned, 'false');
 });
+
+function visibilityView(hidden = [false, true], delayed = false) {
+  const hosts = {}, listeners = {};
+  let inRoom = true, writes = 0;
+  const eyes = hidden.map(value => ({ hidden: value, disabled: false, clicks: 0,
+    classList: { contains() { return this.eye.hidden; } },
+    click() { this.clicks++; if (!delayed) this.hidden = !this.hidden; } }));
+  eyes.forEach(eye => { eye.classList.eye = eye; });
+  const leave = { offsetWidth: 120, disabled: false };
+  const info = { insertBefore(node, before) { assert.equal(before, leave); hosts[node.id] = node; } };
+  const container = { contains: node => hosts[node.id] === node, appendChild() {},
+    querySelector: selector => !inRoom ? null : selector === '.leave-room-btn' ? leave : selector === '.room-info' ? info : null,
+    querySelectorAll: () => eyes };
+  const module = { querySelector: selector => inRoom && selector === '.leave-room-btn' ? leave : null };
+  const list = { children: [{ className: 'wut-rooms-empty' }] }, note = { dataset: {} };
+  const history = { querySelector: selector => selector === '.wut-rooms-list' ? list : note };
+  function createElement() {
+    let text = '';
+    return { style: {}, children: [], setAttribute() {},
+      get textContent() { return text; }, set textContent(value) { if ((this.id || '').startsWith('wut-room-visibility')) writes++; text = value; },
+      addEventListener(type, handler) { listeners[this.id + ':' + type] = handler; },
+      appendChild(child) { this.children.push(child); },
+      querySelector(selector) { return this.children.find(child => '#' + child.id === selector); },
+      querySelectorAll() { return this.children; },
+      remove() { delete hosts[this.id]; } };
+  }
+  const rooms = load({ '.room-module': module, '.room-module .panel-content': container }, { hosts, createElement });
+  return { rooms, eyes, leave, hosts, get control() { return hosts['wut-room-visibility']; },
+    get show() { return hosts['wut-room-visibility']?.querySelector('#wut-room-visibility-show'); },
+    get hide() { return hosts['wut-room-visibility']?.querySelector('#wut-room-visibility-hide'); },
+    writes: () => writes,
+    click(action = 'hide') { listeners['wut-room-visibility-' + action + ':click']({ preventDefault() {}, stopPropagation() {} }); },
+    leaveRoom() { inRoom = false; hosts['wut-rooms'] = history; rooms.tick(); } };
+}
+
+test('one-click room visibility hides only visible native members and can show everyone again', () => {
+  const f = visibilityView([false, true, false]);
+  assert.equal(f.show.textContent, '显示他人桌宠'); assert.equal(f.hide.textContent, '隐藏他人桌宠');
+  assert.equal(f.show.disabled, false); assert.equal(f.hide.disabled, false);
+  assert.equal(f.control.style.right, '130px');
+  f.click(); assert.deepEqual(f.eyes.map(eye => eye.clicks), [1, 0, 1]);
+  assert.equal(f.show.disabled, false); assert.equal(f.hide.disabled, true);
+  f.click('show'); assert.deepEqual(f.eyes.map(eye => eye.clicks), [2, 1, 2]);
+  assert.equal(f.show.disabled, true); assert.equal(f.hide.disabled, false);
+  const writes = f.writes(); f.rooms.tick(); f.rooms.tick(); assert.equal(f.writes(), writes);
+});
+
+test('room visibility waits for native state and ignores repeated clicks during IPC updates', () => {
+  const f = visibilityView([false, true], true);
+  f.click(); f.click(); assert.deepEqual(f.eyes.map(eye => eye.clicks), [1, 0]);
+  assert.equal(f.hide.disabled, true); assert.equal(f.show.disabled, true);
+  f.eyes[0].hidden = true; f.rooms.tick();
+  assert.equal(f.hide.disabled, true); assert.equal(f.show.disabled, false);
+});
+
+test('room visibility has no targets for a solo room and is removed on leave or uninstall', () => {
+  const solo = visibilityView([]); assert.equal(solo.hide.disabled, true); assert.equal(solo.show.disabled, true);
+  solo.click(); assert.equal(solo.hide.disabled, true); assert.equal(solo.show.disabled, true);
+  solo.leaveRoom(); assert.equal(solo.control, undefined);
+  const room = visibilityView([true]); room.rooms.uninstall(); assert.equal(room.control, undefined);
+});

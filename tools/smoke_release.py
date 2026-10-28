@@ -33,6 +33,8 @@ def main():
         # A renamed EXE copied alone into a separate directory must still work.
         copied = data / "Wuwa Tappo Plus.exe"
         shutil.copy2(executable, copied)
+        subprocess.run(["icacls", str(copied), "/setintegritylevel", "M"],
+                       check=True, capture_output=True)
         executable = copied
 
         def run(*args, timeout=15):
