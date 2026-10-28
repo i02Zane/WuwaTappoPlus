@@ -22,10 +22,27 @@ class PreferenceTests(unittest.TestCase):
     def test_template_matches_builtin(self):
         self.assertEqual(tomllib.loads(DEFAULT_TOML), BUILTIN)
 
-    def test_old_config_defaults_all_switches_on(self):
+    def test_default_switches_keep_clicks_running(self):
         self.assertEqual(Config({}).preferences,
-                         {"auto_open": True, "bubble": True, "animation": True,
-                          "keep_panel_open": True, "remember_screen": True})
+                         {"auto_open": True, "balance_reminder": True, "bubble": True, "animation": True,
+                          "keep_panel_open": True, "remember_screen": True, "pause_clicks": False})
+
+    def test_balance_reminder_and_bubble_are_saved_independently(self):
+        saved = save_preferences({"balance_reminder": False, "bubble": True}, self.path)
+        self.assertFalse(saved.balance_reminder)
+        self.assertFalse(saved.inject_cfg["balance_reminder"])
+        self.assertTrue(saved.alert_bubble)
+        saved = save_preferences({"balance_reminder": True, "bubble": False}, self.path)
+        self.assertTrue(saved.balance_reminder)
+        self.assertFalse(saved.alert_bubble)
+
+    def test_pause_clicks_persists_and_reaches_injection(self):
+        saved = save_preferences({"pause_clicks": True}, self.path)
+        self.assertTrue(saved.pause_clicks)
+        self.assertTrue(saved.inject_cfg["pause_clicks"])
+        self.assertTrue(saved.preferences["pause_clicks"])
+        self.assertIs(tomllib.loads(self.path.read_text(encoding="utf-8"))["clicks"]["pause"], True)
+        self.assertFalse(save_preferences({"pause_clicks": False}, self.path).pause_clicks)
 
     def test_screen_memory_switch_is_saved_to_the_panel_section(self):
         saved = save_preferences({"remember_screen": False}, self.path)
@@ -236,7 +253,7 @@ class ConfigSyncTests(unittest.TestCase):
         parsed = tomllib.loads(text)
         self.assertEqual(parsed["app"]["port"], 9333)
         self.assertEqual(parsed["inject"], {"enabled": False, "min_balance": 1500})
-        self.assertEqual(parsed["alerts"], {"bubble": False, "animation": True})
+        self.assertEqual(parsed["alerts"], {"balance": True, "bubble": False, "animation": True})
         self.assertEqual(parsed["rooms"], {"history": 20})       # section appended
         self.assertEqual(parsed["daemon"]["watchdog_min"], 1)    # missing key added
 

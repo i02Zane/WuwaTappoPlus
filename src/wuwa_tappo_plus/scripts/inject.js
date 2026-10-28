@@ -71,6 +71,91 @@
     if (A.errors.length > 20) A.errors.shift();
   }
 
+  // Official 1.0.2 calls these actions separately from pet animations. Leave
+  // hydration, spending, disk persistence and account switching untouched.
+  var clickStore = null;
+  var clickActions = [];
+  var socketSend = null;
+  var socketPrototype = null;
+  var pausedSend = null;
+  A.clickPause = { counting: false, reporting: false, blockedReports: 0 };
+
+  function restoreClickActions() {
+    clickActions.forEach(function (record) {
+      if (clickStore[record.name] === record.wrapper) clickStore[record.name] = record.original;
+    });
+    clickActions = [];
+    clickStore = null;
+    A.clickPause.counting = false;
+  }
+
+  function syncClickPause() {
+    var store = null;
+    try {
+      var app = document.querySelector('#app');
+      store = app && app.__vue_app__.config.globalProperties.$pinia._s.get('GlobalState');
+    } catch (e) {}
+    if (!CFG.pause_clicks || store !== clickStore) restoreClickActions();
+    if (CFG.pause_clicks && store && !clickStore) {
+      clickStore = store;
+      ['incrementLocalClickCount', 'addLocalClickCount'].forEach(function (name) {
+        var original = store[name];
+        if (typeof original !== 'function') return;
+        var wrapper = function () {
+          if (window.__WUT__ !== A || !CFG.pause_clicks) return original.apply(this, arguments);
+        };
+        store[name] = wrapper;
+        clickActions.push({ name: name, original: original, wrapper: wrapper });
+      });
+      A.clickPause.counting = clickActions.length === 2;
+    }
+    if (!CFG.pause_clicks) {
+      restoreClickTransport();
+      return;
+    }
+    if (pausedSend || !window.WebSocket || !window.MessageEvent) return;
+    socketPrototype = window.WebSocket.prototype;
+    socketSend = socketPrototype.send;
+    var originalSend = socketSend;
+    pausedSend = function (data) {
+      // Only the native default-namespace Socket.IO `cr` event is a click
+      // report. Never filter room traffic, heartbeat, HTTP logout or chests.
+      var match = typeof data === 'string' && /^42([0-9]*)(\[.*\])$/.exec(data);
+      var packet = null;
+      try {
+        var url = new URL(this.url);
+        if (match && /\/socket\.io\/?$/.test(url.pathname)) packet = JSON.parse(match[2]);
+      } catch (e) {}
+      if (window.__WUT__ === A && CFG.pause_clicks && Array.isArray(packet) &&
+          packet.length === 2 && packet[0] === 'cr' && packet[1] &&
+          typeof packet[1].num === 'number' && this.readyState === 1) {
+        A.clickPause.blockedReports++;
+        if (match[1]) {
+          // Complete the local callback with a non-success (no-code) result.
+          // Nothing is sent to the server. This releases the Socket.IO ack
+          // callback and lets the native 30-second timer re-arm, without
+          // applying report success or clearing pending local clicks.
+          var socket = this;
+          var ack = '43' + match[1] + '[null]';
+          setTimeout(function () {
+            if (socket.readyState === 1) socket.dispatchEvent(new window.MessageEvent('message', { data: ack }));
+          }, 0);
+        }
+        return;
+      }
+      return originalSend.apply(this, arguments);
+    };
+    socketPrototype.send = pausedSend;
+    A.clickPause.reporting = true;
+  }
+
+  function restoreClickTransport() {
+    if (socketPrototype && socketPrototype.send === pausedSend) socketPrototype.send = socketSend;
+    // Keep the original reference alive for a wrapper retained by other code.
+    pausedSend = null;
+    A.clickPause.reporting = false;
+  }
+
   // Use the native getter that drives both the displayed wallet and chest
   // affordability. Raw userInfo counters omit local clicks/spending. The DOM
   // reader is a fallback for missing, invalid or inaccessible store values.
@@ -569,15 +654,22 @@
     var low = CFG.alert_low || 0;
     var crit = CFG.alert_critical || 0;
     var want = 0;
-    if (balance !== null) {
+    if (CFG.balance_reminder !== false && balance !== null) {
       if (crit && balance < crit) want = 2;
       else if (low && balance < low) want = 1;
     }
 
     if (A.notice && Date.now() >= A.notice.until) A.notice = null;
 
+    // Bubble visibility is global; balance reminders and mode text have
+    // separate content switches. Keep reporting the balance tier when hidden.
     if (CFG.bubble === false) {
       if (bubble || level) dropBubble();
+      A.alert = want;
+      return;
+    }
+    if (CFG.pause_clicks) {
+      showNotice({ text: '库爹我错了，我再也不刷点击数了T T', sub: '' });
       A.alert = want;
       return;
     }
@@ -834,6 +926,7 @@
 
   // Always re-arm the grace wake-up, whichever path the step took.
   function tick() {
+    syncClickPause();
     step();
     planGrace();
   }
@@ -877,12 +970,19 @@
   });
 
   A.configure = function (next) {
+    var wasPaused = CFG.pause_clicks === true;
+    var wasReminder = CFG.balance_reminder !== false;
+    CFG.pause_clicks = next.pause_clicks === true;
+    syncClickPause();
     CFG.enabled = next.enabled !== false;
+    CFG.balance_reminder = next.balance_reminder !== false;
     CFG.bubble = next.bubble !== false;
     CFG.animation = next.animation !== false;
     if (!CFG.enabled) A.lowBalance = null;
     if (!CFG.bubble && bubble) dropBubble();
     if (bubble) bubble.box.style.animation = CFG.animation ? '' : 'none';
+    if (wasPaused !== CFG.pause_clicks || CFG.pause_clicks ||
+        wasReminder !== CFG.balance_reminder) updateAlert(A.bal, null);
   };
   A.tick = tick;
   A.snapshot = snapshot;
@@ -890,6 +990,8 @@
   A.updateAlert = updateAlert;
   A.dropBubble = dropBubble;
   A.uninstall = function () {
+    restoreClickActions();
+    restoreClickTransport();
     clearInterval(A.timer);
     if (graceTimer) clearTimeout(graceTimer);
     A.obs.disconnect();
@@ -900,5 +1002,7 @@
     delete window.__WUT__;
   };
 
+  syncClickPause();
+  if (CFG.pause_clicks) updateAlert(null, null);
   return 'installed v' + V;
 })()

@@ -226,6 +226,20 @@ class NativeCountdownTests(unittest.TestCase):
 
 
 class HiddenChestBalanceTests(unittest.TestCase):
+    def test_disabled_reminders_reset_baseline_without_false_recovery(self):
+        runner = bare_runner()
+        runner.alert_level = 2
+        runner.cfg = Config({"alerts": {"balance": False}})
+        runner.alert_balance({"bal": 500}, 0)
+        self.assertIsNone(runner.alert_level)
+        runner.log.info.assert_not_called()
+        runner.log.warn.assert_not_called()
+        runner.cfg = Config({})
+        runner.alert_balance({"bal": 500}, 2)
+        runner.log.warn.assert_not_called()
+        runner.alert_balance({"bal": 3000}, 0)
+        runner.log.info.assert_called_once()
+
     def test_hidden_chests_do_not_suppress_balance_changes(self):
         runner = bare_runner()
         runner.alert_level = None

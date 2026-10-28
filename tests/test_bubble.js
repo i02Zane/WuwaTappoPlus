@@ -675,3 +675,203 @@ test('native zero balance prevents clicking despite a stale sufficient DOM balan
   assert.equal(clicks, 0);
   assert.equal(f.a.block.reason, 'low-balance');
 });
+
+function clickPauseFixture() {
+  const f = fixture();
+  const sent = [];
+  const received = [];
+  class Socket {
+    constructor(url = 'wss://example.invalid/socket.io/?transport=websocket') {
+      this.url = url;
+      this.readyState = 1;
+      this.acks = new Map();
+    }
+    send(data) { sent.push(data); }
+    dispatchEvent(event) {
+      received.push(event.data);
+      const match = /^43([0-9]+)(.*)$/.exec(event.data);
+      if (match && this.acks.has(match[1])) {
+        const callback = this.acks.get(match[1]);
+        this.acks.delete(match[1]);
+        callback(...JSON.parse(match[2]));
+      }
+    }
+  }
+  function store() {
+    return {
+      localClickCount: 10,
+      incrementLocalClickCount() { this.localClickCount++; },
+      addLocalClickCount(n) { this.localClickCount += n; },
+      setLocalClickCount(n) { this.localClickCount = n; },
+      spendClickCount(n) { this.localClickCount -= n; }
+    };
+  }
+  let current = store();
+  const query = f.context.document.querySelector;
+  f.context.document.querySelector = selector => selector === '#app' ? {
+    __vue_app__: { config: { globalProperties: { $pinia: { _s: new Map([['GlobalState', current]]) } } } }
+  } : query(selector);
+  f.window.WebSocket = Socket;
+  f.window.MessageEvent = class { constructor(type, init) { this.type = type; Object.assign(this, init); } };
+  return { ...f, Socket, sent, received, store, get current() { return current; },
+    replaceStore() { current = store(); },
+    flushAcks() { f.timers.filter(t => t.ms === 0).splice(0).forEach(t => t.fn()); } };
+}
+
+test('pause stops new native clicks while preserving actions, hydration and spending', () => {
+  const f = clickPauseFixture();
+  const increment = f.current.incrementLocalClickCount;
+  const add = f.current.addLocalClickCount;
+  f.a.configure({ pause_clicks: true });
+  let animations = 0;
+  function nativeKey() { f.current.incrementLocalClickCount(); animations++; }
+  nativeKey();
+  f.current.addLocalClickCount(100);
+  assert.equal(f.current.localClickCount, 10);
+  assert.equal(animations, 1);
+  f.current.setLocalClickCount(200);
+  f.current.spendClickCount(50);
+  assert.equal(f.current.localClickCount, 150);
+  assert.equal(f.a.clickPause.counting, true);
+  f.a.configure({ pause_clicks: false });
+  assert.equal(f.current.incrementLocalClickCount, increment);
+  assert.equal(f.current.addLocalClickCount, add);
+  nativeKey();
+  assert.equal(f.current.localClickCount, 151);
+});
+
+test('pause blocks only dedicated click reports and resolves ack without report success', () => {
+  const f = clickPauseFixture();
+  const socket = new f.Socket();
+  f.a.configure({ pause_clicks: true });
+  let success = 0, completed = 0;
+  socket.acks.set('0', response => { completed++; if (response?.c === 0) success++; });
+  socket.send('420["cr",{"num":100000001}]');
+  assert.equal(f.sent.length, 0);
+  f.flushAcks();
+  assert.equal(completed, 1);
+  assert.equal(success, 0);
+  assert.equal(socket.acks.size, 0);
+  assert.equal(f.current.localClickCount, 10);
+  assert.deepEqual(f.received, ['430[null]']);
+  for (const frame of ['2', '423["rj",{"r":"room"}]', '424["rl",{}]',
+    '42["ru",{}]', '42/other,1["cr",{"num":3}]', '42bad',
+    '425["cr",{"num":"invalid"}]']) socket.send(frame);
+  assert.equal(f.sent.length, 7);
+  assert.equal(f.a.clickPause.blockedReports, 1);
+  socket.send('42["cr",{"num":8}]');
+  assert.equal(f.sent.length, 7);
+  const other = new f.Socket('wss://example.invalid/chat');
+  other.send('421["cr",{"num":8}]');
+  assert.equal(f.sent.length, 8);
+  socket.readyState = 0;
+  socket.send('421["cr",{"num":8}]');
+  assert.equal(f.sent.length, 9);
+});
+
+test('pause applies to store replacement and restores transport after toggles and uninstall', () => {
+  const f = clickPauseFixture();
+  const send = f.Socket.prototype.send;
+  f.a.configure({ pause_clicks: true });
+  const previous = f.current;
+  f.replaceStore();
+  f.a.tick();
+  previous.incrementLocalClickCount();
+  f.current.incrementLocalClickCount();
+  assert.equal(previous.localClickCount, 11);
+  assert.equal(f.current.localClickCount, 10);
+  f.a.configure({ pause_clicks: false });
+  assert.equal(f.Socket.prototype.send, send);
+  const socket = new f.Socket();
+  socket.send('421["cr",{"num":8}]');
+  assert.equal(f.sent.length, 1);
+  f.a.configure({ pause_clicks: true });
+  f.a.uninstall();
+  assert.equal(f.Socket.prototype.send, send);
+  f.current.incrementLocalClickCount();
+  assert.equal(f.current.localClickCount, 11);
+  socket.send('422["cr",{"num":9}]');
+  assert.equal(f.sent.length, 2);
+});
+
+test('retained transport wrapper keeps working after another wrapper and a toggle', () => {
+  const f = clickPauseFixture();
+  f.a.configure({ pause_clicks: true });
+  const first = f.Socket.prototype.send;
+  const outer = function (data) { return first.call(this, data); };
+  f.Socket.prototype.send = outer;
+  f.a.configure({ pause_clicks: false });
+  assert.equal(f.Socket.prototype.send, outer);
+  f.a.configure({ pause_clicks: true });
+  new f.Socket().send('2');
+  assert.deepEqual(f.sent, ['2']);
+  f.a.uninstall();
+  assert.equal(f.Socket.prototype.send, outer);
+});
+
+
+test('black room bubble persists above balance and failure notices with balance reminders off', () => {
+  const f = fixture();
+  f.a.configure({ pause_clicks: true, bubble: true, balance_reminder: false, animation: false });
+  const host = f.elements.get('wut-alert-host');
+  assert.ok(host);
+  const text = '库爹我错了，我再也不刷点击数了T T';
+  assert.equal(host.spans['.wut-main'].textContent, text);
+  assert.equal(host.spans['.wut-cd'].textContent, '');
+  assert.equal(host.firstChild.style.animation, 'none');
+  f.a.notice = { text: '自动开箱失败', until: Infinity };
+  for (const balance of [500, 5000, null, 100000001]) {
+    f.a.updateAlert(balance, { now: Date.now(), left: 0, right: 0 });
+    assert.equal(f.elements.get('wut-alert-host'), host);
+    assert.equal(host.spans['.wut-main'].textContent, text);
+    assert.equal(host.style.display, 'block');
+  }
+  f.a.configure({ pause_clicks: true, bubble: true, balance_reminder: false, animation: true });
+  assert.equal(host.firstChild.style.animation, '');
+  f.a.configure({ pause_clicks: false, bubble: false });
+  assert.equal(f.elements.has('wut-alert-host'), false);
+});
+
+test('disabling black room mode restores ordinary reminders and uninstall removes its bubble', () => {
+  const f = fixture();
+  f.a.configure({ pause_clicks: true });
+  f.a.configure({ pause_clicks: false, bubble: true });
+  f.a.updateAlert(500, null);
+  assert.equal(f.elements.get('wut-alert-host').spans['.wut-main'].textContent, '不够开宝箱了');
+  f.a.updateAlert(5000, null);
+  assert.equal(f.elements.has('wut-alert-host'), false);
+  f.a.configure({ pause_clicks: true });
+  assert.ok(f.elements.get('wut-alert-host'));
+  f.a.uninstall();
+  assert.equal(f.elements.has('wut-alert-host'), false);
+});
+
+
+test('global bubble switch hides black room text without resuming clicks', () => {
+  const f = clickPauseFixture();
+  f.a.configure({ pause_clicks: true, bubble: false });
+  f.a.updateAlert(500, null);
+  assert.equal(f.elements.has('wut-alert-host'), false);
+  f.current.incrementLocalClickCount();
+  assert.equal(f.current.localClickCount, 10);
+  assert.equal(f.a.alert, 2);
+  f.a.configure({ pause_clicks: true, bubble: true });
+  assert.equal(f.elements.get('wut-alert-host').spans['.wut-main'].textContent,
+    '库爹我错了，我再也不刷点击数了T T');
+});
+
+test('balance reminder toggle hides only balance content and restores it', () => {
+  const f = fixture();
+  f.a.configure({ balance_reminder: false, bubble: true });
+  f.a.updateAlert(500, null);
+  assert.equal(f.a.alert, 0);
+  assert.equal(f.elements.has('wut-alert-host'), false);
+  f.a.notice = { text: '自动开箱失败', until: Infinity };
+  f.a.updateAlert(500, null);
+  assert.equal(f.elements.get('wut-alert-host').spans['.wut-main'].textContent, '自动开箱失败');
+  f.a.notice = null;
+  f.a.configure({ balance_reminder: true, bubble: true });
+  f.a.updateAlert(500, null);
+  assert.equal(f.a.alert, 2);
+  assert.equal(f.elements.get('wut-alert-host').spans['.wut-main'].textContent, '不够开宝箱了');
+});

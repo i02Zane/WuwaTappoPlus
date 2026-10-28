@@ -352,6 +352,9 @@ class Runner:
         The balance only falls when a chest is opened and rises when you type,
         so a level change is a real event rather than noise.
         """
+        if not self.cfg.balance_reminder:
+            self.alert_level = None
+            return
         if not snapshot:
             return
         # Hidden native chests have no timestamp. Only an unreadable wallet

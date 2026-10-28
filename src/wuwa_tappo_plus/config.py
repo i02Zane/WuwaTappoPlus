@@ -45,12 +45,18 @@ enabled = true
 # tiers are derived from it: low = min_balance + 1000, critical = min_balance.
 min_balance = 1000
 
+[clicks]
+# Pause new native clicks and the dedicated Socket.IO click report.
+pause = false
+
 [alerts]
+# Enable low-balance reminders independently of bubble visibility.
+balance = true
 # The reminder tiers follow [inject] min_balance: low is min_balance + 1000 and
 # critical is min_balance itself, so "not enough to open" is the critical tier.
 # Each tier fires once when the balance drops below it and re-arms after you
 # type your way back above.
-# Show a bouncing speech bubble over the pet while the balance is below a tier.
+# Show Plus bubbles, including balance reminders and black room mode.
 bubble = true
 # Animate the reminder bubble. False keeps a static reminder.
 animation = true
@@ -94,7 +100,8 @@ def _merge(base, over):
 BUILTIN = {
     "app": {"exe": "", "port": 9222, "host": "127.0.0.1"},
     "inject": {"enabled": True, "min_balance": 1000},
-    "alerts": {"bubble": True, "animation": True},
+    "clicks": {"pause": False},
+    "alerts": {"balance": True, "bubble": True, "animation": True},
     "panel": {"keep_open": True, "remember_screen": True},
     "rooms": {"history": 20},
     "daemon": {"heartbeat": 300, "max_runtime": 0, "watchdog_min": 1},
@@ -126,6 +133,8 @@ class Config:
         return {
             "version": __version__,
             "enabled": self.auto_open,
+            "pause_clicks": self.pause_clicks,
+            "balance_reminder": self.balance_reminder,
             "bubble": self.alert_bubble,
             "animation": self.alert_animation,
             # Timings are properties of the app, not preferences: they are
@@ -154,12 +163,20 @@ class Config:
         return self.min_balance
 
     @property
+    def balance_reminder(self):
+        return bool(self.get("alerts", "balance", True))
+
+    @property
     def alert_bubble(self):
         return bool(self.get("alerts", "bubble", True))
 
     @property
     def auto_open(self):
         return bool(self.get("inject", "enabled", True))
+
+    @property
+    def pause_clicks(self):
+        return bool(self.get("clicks", "pause", False))
 
     @property
     def alert_animation(self):
@@ -179,9 +196,11 @@ class Config:
 
     @property
     def preferences(self):
-        return {"auto_open": self.auto_open, "bubble": self.alert_bubble,
+        return {"auto_open": self.auto_open, "balance_reminder": self.balance_reminder,
+                "bubble": self.alert_bubble,
                 "animation": self.alert_animation, "keep_panel_open": self.panel_keep_open,
-                "remember_screen": self.panel_remember_screen}
+                "remember_screen": self.panel_remember_screen,
+                "pause_clicks": self.pause_clicks}
 
     @property
     def heartbeat(self):
@@ -365,10 +384,12 @@ def load():
 
 
 PREFERENCE_KEYS = {"auto_open": ("inject", "enabled"),
+                   "balance_reminder": ("alerts", "balance"),
                    "bubble": ("alerts", "bubble"),
                    "animation": ("alerts", "animation"),
                    "keep_panel_open": ("panel", "keep_open"),
-                   "remember_screen": ("panel", "remember_screen")}
+                   "remember_screen": ("panel", "remember_screen"),
+                   "pause_clicks": ("clicks", "pause")}
 
 
 def with_preferences(cfg, preferences):
