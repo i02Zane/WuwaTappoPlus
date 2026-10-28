@@ -22,3 +22,6 @@ dist/
 .build-python/
 .smoke-data/
 .local-backup/
+
+chests.json
+chests.tmp

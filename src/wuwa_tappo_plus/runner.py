@@ -16,6 +16,7 @@ from .reports import DailyReport
 from .rooms import RoomBridge, RoomHistory
 from .screens import ScreenKeeper
 from .toasts import ToastBridge
+from .chests import ChestCache
 
 POLL_JS = r"""
 (function(){
@@ -36,6 +37,7 @@ POLL_JS = r"""
                        balance: A.block.balance, attempts: A.block.attempts } : null,
     errors: (A.errors || []).slice(-5),
     clicks: (A.clicks || []).slice(-12),
+    chestCache: A.chestCache || null,
     state: s
   });
 })()
@@ -81,6 +83,7 @@ class Runner:
         self.history = RoomHistory(self.log, limit=self.cfg.room_history)
         self.toasts = ToastBridge(self.cfg.port, self.cfg.host, self.log)
         self.screens = ScreenKeeper(self.log)
+        self.chests = ChestCache(self.log)
         self.pending = deque(maxlen=400)
         # The page keeps its last 20 notes and hands back the last five on every
         # poll, so without this ledger one error would be written to the log once
@@ -175,6 +178,8 @@ class Runner:
 
     def inject_source(self):
         cfg = dict(self.cfg.inject_cfg)
+        if hasattr(self, "chests"):
+            cfg["chest_cache"] = self.chests.data
         src = INJECT_PATH.read_text(encoding="utf-8")
         return src.replace("__CFG__", json.dumps(cfg))
 
@@ -430,6 +435,7 @@ class Runner:
                         self.log.info("cdp connected -> %s" % self.session.target.get("url"))
 
                     payload = self.ensure_injected()
+                    self.chests.observe(payload.get("chestCache"))
                     snapshot = payload.get("state")
                     self.reports.observe(snapshot)
 

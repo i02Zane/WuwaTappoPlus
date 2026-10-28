@@ -281,7 +281,7 @@ def _purge_data():
     root = DATA_DIR.resolve()
     files = [root / name for name in
              ("config.toml", ".state.json", ".state.tmp", ".daemon.lock", ".stop", ".disabled",
-              "screen.json")]
+              "screen.json", "chests.json", "chests.tmp")]
     files.extend(root.glob(".plus-config-*.tmp"))
     for database in ("input.sqlite3", "rooms.sqlite3"):
         files.extend(root / "reports" / (database + suffix)

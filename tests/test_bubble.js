@@ -498,3 +498,92 @@ test('native open changing only local UI is not retried against stale userInfo',
   assert.equal(f.a.errors.length, 0);
   assert.equal(f.store.$state.userInfo.left_treasure_chest, 1);
 });
+
+
+function cachedChests() {
+  const f = nativeChests();
+  f.store.$state.userInfo.cuid = 'account-a';
+  let now = Date.now();
+  class Clock extends Date { static now() { return now; } }
+  f.context.Date = Clock;
+  const listeners = new Map();
+  f.context.document.addEventListener = (type, fn) => listeners.set(type, fn);
+  f.context.document.removeEventListener = (type, fn) => {
+    if (listeners.get(type) === fn) listeners.delete(type);
+  };
+  let action, stopped = false;
+  f.store.$onAction = fn => { action = fn; return () => { stopped = true; }; };
+  f.a.uninstall();
+  const source = fs.readFileSync(path.join(__dirname, '../src/wuwa_tappo_plus/scripts/inject.js'), 'utf8');
+  function install(seed) {
+    vm.runInNewContext(source.replace('__CFG__', JSON.stringify({ ...f.a.cfg,
+      chest_cache: seed })), f.context);
+    f.a = f.window.__WUT__;
+    f.a.snapshot();
+  }
+  install();
+  function capture(slot) {
+    const button = { closest: selector => selector === '.reward-anchor--' + slot ? {} : null };
+    listeners.get('click')({ target: { closest: () => button } });
+  }
+  function consume() {
+    let after;
+    action({ name: 'applyChestClickConsume', args: [1000], after: fn => { after = fn; } });
+    if (after) after();
+  }
+  return { f, capture, consume, install, listeners, stopped: () => stopped,
+    advance: ms => { now += ms; } };
+}
+
+test('only confirmed native consumption caches a clicked slot for hidden countdown', () => {
+  const c = cachedChests(), f = c.f;
+  c.capture('right');
+  assert.equal(f.a.snapshot().right, 0, 'a click alone is not success');
+  c.consume();
+  const s = f.a.snapshot();
+  assert.equal(s.right - s.now, 1800000);
+  assert.equal(s.left, 0);
+  assert.equal(f.a.chestCache.right.opened_at, s.now);
+  c.advance(5000);
+  assert.equal(f.a.snapshot().right - f.a.snapshot().now, 1795000);
+  f.a.tick();
+  assert.equal(f.a.clicks.length, 0, 'cached timers never click absent buttons');
+});
+
+test('confirmed cache survives reinjection but not an account switch or expiry', () => {
+  const c = cachedChests(), f = c.f;
+  c.capture('left'); c.consume();
+  const seed = JSON.parse(JSON.stringify(f.a.chestCache));
+  f.a.uninstall(); c.install(seed);
+  assert.ok(f.a.snapshot().left > 0);
+  c.advance(1800001);
+  assert.equal(f.a.snapshot().left, 0);
+  c.install(seed);
+  f.store.$state.userInfo.cuid = 'account-b';
+  assert.equal(f.a.snapshot().left, 0);
+  assert.equal(f.a.chestCache.account, 'account-b');
+});
+
+test('native button and visible countdown override estimates; logout hides estimates', () => {
+  const c = cachedChests(), f = c.f;
+  c.capture('left'); c.consume();
+  f.nodes.set('.reward-anchor--left .reward-countdown__text', { textContent: '12:00' });
+  assert.equal(f.a.snapshot().left - f.a.snapshot().now, 720000);
+  f.nodes.delete('.reward-anchor--left .reward-countdown__text');
+  assert.equal(f.a.snapshot().left, 0, 'contradicted cache must not reappear');
+  f.nodes.set('.reward-anchor--left .reward-btn', f.button(() => {}));
+  assert.equal(f.a.snapshot().left, f.a.snapshot().now);
+  f.store.isLoggedIn = false;
+  assert.equal(f.a.snapshot().left, 0);
+});
+
+test('unmatched consumption, late confirmation and uninstalled listeners cannot cache success', () => {
+  const c = cachedChests(), f = c.f;
+  c.consume();
+  assert.equal(f.a.chestCache.left, undefined);
+  c.capture('left'); c.advance(60001); c.consume();
+  assert.equal(f.a.chestCache.left, undefined);
+  f.a.uninstall();
+  assert.equal(c.listeners.size, 0);
+  assert.equal(c.stopped(), true);
+});

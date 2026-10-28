@@ -176,7 +176,7 @@ class PurgeDataTests(unittest.TestCase):
     def test_known_data_removed_but_source_exe_and_other_files_survive(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            removed = ["config.toml", ".state.json", ".state.tmp", ".daemon.lock",
+            removed = ["chests.json", "chests.tmp", "config.toml", ".state.json", ".state.tmp", ".daemon.lock",
                        ".stop", ".disabled", ".plus-config-sample.tmp", "logs/auto.log",
                        "logs/auto.log.1", "reports/input.sqlite3", "reports/input.sqlite3-wal",
                        "reports/rooms.sqlite3", "reports/rooms.sqlite3-shm"]

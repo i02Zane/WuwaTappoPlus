@@ -35,7 +35,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 
 设置页仅允许修改自动开箱、气泡显示、气泡动画、主窗口保持打开和屏幕记忆五个布尔值；由后台原子保存到配置，保存成功后才确认。保持打开使用原生外部点击控制接口，保留手动关闭，卸载时恢复原行为。屏幕记忆关闭时既不记录也不移动。暂停点击不停止后台，界面关闭或重建后必须能重新挂载。
 
-官方 1.0.2 开箱后使用组件内部计时，`userInfo.left_treasure_chest/right_treasure_chest` 可能保持旧值。宝箱状态以左右 `.reward-anchor--left/right` 内的原生按钮及 `.reward-countdown__text` 为准；隐藏的倒计时标记为未知，不用旧字段或余额变化推算。必须按目标槽选择按钮，保留各槽独立的重试预算；脚本卸载后的旧验证回调不得继续报错。CLI 与后台共用主注入的快照。
+官方 1.0.2 开箱后使用组件内部计时，`userInfo.left_treasure_chest/right_treasure_chest` 可能保持旧值。宝箱状态以左右 `.reward-anchor--left/right` 内的原生按钮及 `.reward-countdown__text` 为准；隐藏的倒计时优先使用本账户已确认开箱的本地缓存；无有效缓存时标记为未知，不用旧字段或余额变化推算。缓存只供提醒，不能作为点击授权。必须按目标槽选择按钮，保留各槽独立的重试预算；脚本卸载后的旧验证回调不得继续报错。CLI 与后台共用主注入的快照。
 
 ## 代码风格与命名约定
 
@@ -90,3 +90,5 @@ EXE 数据存放在 `%LOCALAPPDATA%\WuwaTappoPlus`，源码数据保留在仓库
 6. 发布后回读验证：`gh release view v<版本号> --json tagName,name,isDraft,isPrerelease,assets` 检查状态和附件；再用 `gh release download v<版本号> --dir <临时目录>` 重新下载 EXE，核对 SHA-256 与归档中的 `SHA256SUMS.txt` 一致。
 7. `dist/` 已整体被 Git 忽略，不为历史归档增加单独规则，不提交二进制历史。GitHub Release 只附 EXE 和校验文件，源码使用标签自动归档。
 8. 用户自行发布或登录权限不足时，Agent 仍须准备并归档上述文件，再提供下载路径和可直接粘贴的 Release Notes。
+
+宝箱时间缓存：主注入捕获原生宝箱点击，通过 Pinia `applyChestClickConsume` 成功动作确认开箱，按左右槽记录成功时间与30分钟冷却到期时间。后台原子保存到数据目录 `chests.json`，注入时恢复；账户切换隔离、过期记录忽略，原生按钮与可见倒计时优先。不得将按钮消失、余额下降或点击尝试记作成功；卸载脚本时移除监听与动作订阅，完整卸载清除缓存。

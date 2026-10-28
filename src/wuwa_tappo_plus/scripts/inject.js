@@ -99,6 +99,54 @@
   // The native slot UI is authoritative; hidden timers are unknown, not due.
   var chestUi = { left: { readyAt: 0 }, right: { readyAt: 0 } };
 
+  // Confirm opens through the native Pinia action, which runs only after the
+  // successful response starts its local cooldown. Never infer success from
+  // a disappearing button or a wallet delta.
+  var COOLDOWN_MS = 30 * 60 * 1000;
+  A.chestCache = CFG.chest_cache || { account: null };
+  var chestStore = null;
+  var chestAccount = null;
+  var stopChestAction = null;
+  var pendingChest = null;
+
+  function watchChests(store, account) {
+    chestAccount = account;
+    if (account && A.chestCache.account !== account) {
+      A.chestCache = { account: account };
+      pendingChest = null;
+    }
+    if (chestStore === store) return;
+    if (stopChestAction) stopChestAction();
+    chestStore = store;
+    pendingChest = null;
+    if (typeof store.$onAction !== 'function') return;
+    stopChestAction = store.$onAction(function (action) {
+      if (action.name !== 'applyChestClickConsume' || !pendingChest ||
+          !(Number(action.args[0]) > 0)) return;
+      var pending = pendingChest;
+      action.after(function () {
+        if (window.__WUT__ !== A || pendingChest !== pending ||
+            !store.isLoggedIn || !pending.account ||
+            String((store.$state.userInfo || {}).cuid || '') !== pending.account ||
+            A.chestCache.account !== pending.account ||
+            Date.now() - pending.at > 60000) return;
+        var now = Date.now();
+        A.chestCache[pending.slot] = { opened_at: now, ready_at: now + COOLDOWN_MS };
+        pendingChest = null;
+      });
+    }, true);
+  }
+
+  function captureChest(event) {
+    var target = event.target;
+    var button = target && target.closest && target.closest('.reward-btn');
+    if (!button || button.disabled || !chestStore || !chestStore.isLoggedIn || !chestAccount) return;
+    var slot = button.closest('.reward-anchor--left') ? 'left'
+      : button.closest('.reward-anchor--right') ? 'right' : null;
+    if (slot) pendingChest = { slot: slot, at: Date.now(), account: A.chestCache.account };
+  }
+  if (document.addEventListener) document.addEventListener('click', captureChest, true);
+
   function chestButton(name) {
     return document.querySelector('.reward-anchor--' + name + ' .reward-btn');
   }
@@ -106,6 +154,7 @@
   function chestTime(name, now, loggedIn) {
     var record = chestUi[name];
     if (loggedIn && chestButton(name)) {
+      delete A.chestCache[name];
       if (!record.readyAt) record.readyAt = now;
       return record.readyAt;
     }
@@ -114,8 +163,16 @@
     var text = document.querySelector('.reward-anchor--' + name
       + ' .reward-countdown__text');
     var match = text && /^(\d{1,3}):([0-5]\d)$/.exec((text.textContent || '').trim());
-    if (!match) return 0;
+    if (!match) {
+      var cached = A.chestCache[name];
+      return chestAccount && cached && Number.isFinite(cached.ready_at) && cached.ready_at > now &&
+        cached.ready_at <= now + COOLDOWN_MS ? cached.ready_at : 0;
+    }
     var seconds = Number(match[1]) * 60 + Number(match[2]);
+    var known = A.chestCache[name];
+    if (known && Math.abs(known.ready_at - now - seconds * 1000) > 2500) {
+      delete A.chestCache[name];
+    }
     // 00:00 alone does not authorize a click; wait for the native button.
     return seconds > 0 ? now + seconds * 1000 : 0;
   }
@@ -129,6 +186,8 @@
       var store = p && p._s && p._s.get('GlobalState');
       if (!store) return null;
       var u = store.$state.userInfo || {};
+      var account = store.isLoggedIn && u.cuid ? String(u.cuid) : null;
+      watchChests(store, account);
       var now = Date.now();
       return {
         now: now,
@@ -824,6 +883,9 @@
     clearInterval(A.timer);
     if (graceTimer) clearTimeout(graceTimer);
     A.obs.disconnect();
+    if (stopChestAction) stopChestAction();
+    if (document.removeEventListener) document.removeEventListener('click', captureChest, true);
+    pendingChest = null;
     try { dropBubble(); } catch (e) {}
     delete window.__WUT__;
   };
