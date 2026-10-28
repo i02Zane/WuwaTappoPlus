@@ -155,6 +155,30 @@ class BridgeTests(unittest.TestCase):
                              .removesuffix("); 1"))
         return result, payload
 
+    def test_export_is_a_separate_action_and_retries_do_not_duplicate_zip(self):
+        original = self.path.read_bytes()
+        with patch("wuwa_tappo_plus.settings.export_logs", return_value=Path("desktop/logs.zip")) as export:
+            cfg, update = self.sync_request({"id": "export", "action": "export_logs"})
+            self.bridge.session = None
+            self.bridge.last_scan = -10
+            self.sync_request({"id": "export", "action": "export_logs"})
+        export.assert_called_once()
+        self.assertEqual(export.call_args.kwargs["data_dir"], self.path.parent)
+        self.assertEqual(update["ack"], [{"id": "export", "action": "export_logs", "path": str(Path("desktop/logs.zip"))}])
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(cfg.preferences, Config({}).preferences)
+
+    def test_export_failure_acknowledges_error(self):
+        with patch("wuwa_tappo_plus.settings.export_logs", side_effect=PermissionError("denied")):
+            _, update = self.sync_request({"id": "export", "action": "export_logs"})
+        self.assertEqual(update["ack"], [{"id": "export", "action": "export_logs", "error": True}])
+
+    def test_unknown_action_cannot_save_preferences(self):
+        original = self.path.read_bytes()
+        _, update = self.sync_request({"id": "x", "action": "unknown", "key": "bubble", "value": False})
+        self.assertTrue(update["ack"][0]["error"])
+        self.assertEqual(self.path.read_bytes(), original)
+
     def test_change_is_persisted_before_acknowledgement(self):
         cfg, update = self.sync_request({"id": "one", "key": "auto_open", "value": False})
         self.assertFalse(cfg.auto_open)

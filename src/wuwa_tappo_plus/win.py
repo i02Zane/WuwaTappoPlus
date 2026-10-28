@@ -41,6 +41,17 @@ def _winreg():
     return winreg
 
 
+def desktop_directory():
+    """Resolve the Windows desktop, including OneDrive/redirection."""
+    if os.name != "nt":
+        return Path.home() / "Desktop"
+    folder = ctypes.create_unicode_buffer(32768)
+    result = ctypes.windll.shell32.SHGetFolderPathW(None, 0x10, None, 0, folder)
+    if result != 0 or not folder.value:
+        raise OSError("无法定位桌面，请检查 Windows 桌面路径。")
+    return Path(folder.value)
+
+
 def is_admin():
     try:
         return ctypes.windll.shell32.IsUserAnAdmin() != 0

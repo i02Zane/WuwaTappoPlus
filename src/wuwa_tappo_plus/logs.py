@@ -6,6 +6,7 @@ import time
 from .config import LOG_DIR
 
 LEVELS = ("DEBUG", "INFO", "WARN", "ERROR")
+MAX_ENTRY_BYTES = 16 * 1024
 
 
 class Log:
@@ -15,12 +16,14 @@ class Log:
         self.keep = max(1, int(keep))
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _rotate(self):
+    def _rotate(self, incoming=0):
         try:
-            if self.path.stat().st_size < self.max_bytes:
-                return
+            if self.path.stat().st_size + incoming <= self.max_bytes:
+                return True
+        except FileNotFoundError:
+            return True
         except OSError:
-            return
+            return False
 
         oldest = self.path.with_name(self.path.name + ".%d" % self.keep)
         if oldest.exists():
@@ -40,18 +43,24 @@ class Log:
 
         try:
             os.replace(self.path, self.path.with_name(self.path.name + ".1"))
+            return True
         except OSError:
-            pass
+            return False
 
     def write(self, message, level="INFO", echo=False):
-        self._rotate()
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
         line = "%s %-5s %s" % (stamp, level, message)
-        try:
-            with open(self.path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-        except OSError:
-            pass
+        encoded = line.encode("utf-8")
+        if len(encoded) + 1 > MAX_ENTRY_BYTES:
+            suffix = b"... [truncated]"
+            line = encoded[:MAX_ENTRY_BYTES - 1 - len(suffix)].decode("utf-8", errors="ignore") + suffix.decode()
+        encoded = (line + "\n").encode("utf-8")
+        if self._rotate(len(encoded)):
+            try:
+                with open(self.path, "ab") as f:
+                    f.write(encoded)
+            except OSError:
+                pass
         if echo:
             try:
                 print(line, flush=True)

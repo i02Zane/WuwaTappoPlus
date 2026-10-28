@@ -162,3 +162,48 @@ test('chart orders dates, scales bars, distinguishes missing/zero and keeps prec
   assert.equal(chart.children[5].children[0].textContent, '0');
   assert.equal(days[0].date, '2026-10-27'); // rendering must not reorder the payload
 });
+
+test('settings export queues one action, shows result, and permits retry after failure', () => {
+  const f = fixture();
+  const nodes = new Map();
+  function element() {
+    return { dataset: {}, style: {}, children: [], textContent: '',
+      setAttribute() {}, addEventListener(name, handler) { this[name] = handler; },
+      appendChild(child) { this.children.push(child); if (child.id) nodes.set(child.id, child); },
+      querySelectorAll() { return []; },
+      querySelector(selector) {
+        if (selector === '.wut-status') return this.children[0].children[1];
+        return null;
+      }
+    };
+  }
+  const container = element();
+  container.querySelector = () => null;
+  container.insertBefore = child => container.appendChild(child);
+  f.context.document.createElement = element;
+  f.context.document.head = element();
+  f.context.document.querySelector = () => container;
+  // Report internals are unrelated to the export control.
+  f.context.document.getElementById = id => id === 'wut-daily-report' ? null : nodes.get(id);
+  f.settings.update({ preferences: {}, ack: [] });
+  const button = nodes.get('wut-export-button');
+  const status = nodes.get('wut-export-status');
+  assert.equal(button.disabled, false);
+  button.click(); button.click();
+  assert.equal(f.settings.requests.length, 1);
+  assert.equal(f.settings.requests[0].action, 'export_logs');
+  assert.equal(button.disabled, true);
+  assert.match(status.textContent, /正在导出/);
+  let id = f.settings.requests[0].id;
+  f.settings.update({ preferences: {}, ack: [{ id, action: 'export_logs', error: true }] });
+  assert.match(status.textContent, /导出失败/);
+  assert.equal(button.disabled, false);
+  button.click();
+  id = f.settings.requests[0].id;
+  f.settings.update({ preferences: {}, ack: [{ id, action: 'export_logs', path: 'C:/Desktop/logs.zip' }] });
+  assert.match(status.textContent, /已导出：C:\/Desktop\/logs.zip/);
+  assert.equal(f.settings.requests.length, 0);
+  f.settings.beat = 0;
+  button.click();
+  assert.equal(f.settings.requests.length, 0);
+});

@@ -5,6 +5,7 @@
 
   var S = window.__WUT_SETTINGS__ = {
     version: VERSION, requests: [], beat: 0, panelError: null, report: null,
+    exportPath: null, exportError: false,
     preferences: { auto_open: true, balance_reminder: true, bubble: true, animation: true, keep_panel_open: true,
                    remember_screen: true, pause_clicks: false }
   };
@@ -64,6 +65,12 @@
         + '#wut-plus-settings .wut-status[data-error="true"]{color:#b4543c;}'
         + '#wut-plus-settings input:disabled+.setting-slider{opacity:.45;cursor:wait;}'
         + '#wut-plus-settings .setting-sub{max-width:420px;}'
+        + '#wut-plus-settings .wut-export{gap:18px;}'
+        + '#wut-plus-settings .wut-export .setting-label{min-width:0;}'
+        + '#wut-plus-settings .wut-export .setting-content{flex-shrink:0;}'
+        + '#wut-plus-settings .wut-export button{white-space:nowrap;}'
+        + '#wut-plus-settings .wut-export button:disabled{cursor:wait;opacity:.5;}'
+        + '#wut-export-status{overflow-wrap:anywhere;}'
         + '#wut-daily-report{padding:12px 18px;margin:12px 0;border-radius:8px;'
         + 'background:rgba(213,169,108,.09);color:#8e5e43;}'
         + '#wut-daily-report .wut-report-title{font-size:14px;}'
@@ -144,6 +151,36 @@
       + '<details open><summary>最近 7 天 · 点击数</summary>'
       + '<div class="wut-report-chart" role="list" aria-label="最近七天点击数"></div></details>';
     host.appendChild(report);
+    var exports = document.createElement('div');
+    exports.className = 'setting-item wut-export';
+    var exportLabel = document.createElement('div');
+    exportLabel.className = 'setting-label';
+    var exportTitle = document.createElement('div');
+    exportTitle.className = 'setting-title';
+    exportTitle.textContent = '诊断日志';
+    exportLabel.appendChild(exportTitle);
+    var exportContent = document.createElement('div');
+    exportContent.className = 'setting-content';
+    var exportButton = document.createElement('button');
+    exportButton.id = 'wut-export-button';
+    exportButton.type = 'button';
+    exportButton.className = 'setting-btn';
+    exportButton.textContent = '导出 Plus 日志';
+    exportButton.addEventListener('click', function () {
+      if (Date.now() - S.beat > 5000 || S.requests.some(function (r) { return r.action === 'export_logs'; })) return;
+      S.exportPath = null; S.exportError = false;
+      S.requests.push({ id: instance + '-' + (++serial), action: 'export_logs' });
+      render();
+    });
+    var exportStatus = document.createElement('span');
+    exportStatus.id = 'wut-export-status';
+    exportStatus.className = 'setting-sub';
+    exportStatus.setAttribute('role', 'status');
+    exportLabel.appendChild(exportStatus);
+    exportContent.appendChild(exportButton);
+    exports.appendChild(exportLabel);
+    exports.appendChild(exportContent);
+    host.appendChild(exports);
     reportKey = '';
     var anchor = container.querySelector('.btn-check-update');
     container.insertBefore(host, anchor ? anchor.closest('.setting-item') :
@@ -164,10 +201,18 @@
     var status = host.querySelector('.wut-status');
     var text = !online ? 'Plus 后台未连接，请安装或修复 Plus' :
       error ? error : S.panelError ? '主窗口保持打开功能暂不可用' :
-      S.requests.length ? '正在保存…' : saved ? '已保存 · 即时生效' : '即时生效 · 自动保存';
+      S.requests.some(function (r) { return !r.action; }) ? '正在保存…' : saved ? '已保存 · 即时生效' : '即时生效 · 自动保存';
     if (status.textContent !== text) status.textContent = text;
     status.dataset.error = error || S.panelError ? 'true' : 'false';
     renderReport();
+    var exportButton = document.getElementById('wut-export-button');
+    var exportStatus = document.getElementById('wut-export-status');
+    if (exportButton && exportStatus) {
+      var exporting = S.requests.some(function (r) { return r.action === 'export_logs'; });
+      exportButton.disabled = !online || exporting;
+      exportStatus.textContent = exporting ? '正在导出…' : S.exportError ? '导出失败，请检查桌面写入权限后重试。' :
+        S.exportPath ? '已导出：' + S.exportPath : '将 Plus 和 Wuwa Tappo 日志打包到桌面。';
+    }
   }
 
   function renderReport() {
@@ -223,6 +268,11 @@
     keepPanelOpen();
     (state.ack || []).forEach(function (ack) {
       S.requests = S.requests.filter(function (r) { return r.id !== ack.id; });
+      if (ack.action === 'export_logs') {
+        S.exportError = !!ack.error;
+        S.exportPath = ack.path || null;
+        return;
+      }
       if (ack.error) { error = '保存失败，已恢复原设置'; saved = false; }
       else if (!error) saved = true;
     });

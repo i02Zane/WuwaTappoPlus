@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 from . import __version__, cdp
 from .config import CONFIG_PATH, Config, save_preferences, with_preferences
+from .diagnostics import export_logs
 from .paths import SCRIPTS_DIR
 
 READ_JS = """JSON.stringify(window.__WUT_SETTINGS__ ? {
@@ -27,6 +28,7 @@ class SettingsBridge:
         self.source = (SCRIPTS_DIR / "settings.js").read_text(encoding="utf-8").replace(
             "__VERSION__", json.dumps(__version__))
         self.last_error = None
+        self.export_results = {}
 
     def sync(self, cfg, report=None):
         try:
@@ -67,6 +69,23 @@ class SettingsBridge:
                 if not isinstance(request, dict) or not isinstance(request.get("id"), str):
                     continue
                 result = {"id": request["id"]}
+                if request.get("action") == "export_logs":
+                    result = self.export_results.get(request["id"])
+                    if result is None:
+                        result = {"id": request["id"], "action": "export_logs"}
+                        try:
+                            result["path"] = str(export_logs(cfg, data_dir=self.config_path.parent))
+                        except (OSError, ValueError) as exc:
+                            result["error"] = True
+                            self._warn("log export: %s" % exc)
+                        self.export_results[request["id"]] = result
+                        if len(self.export_results) > 32:
+                            self.export_results.pop(next(iter(self.export_results)))
+                    ack.append(result)
+                    continue
+                if "action" in request:
+                    ack.append({"id": request["id"], "error": True})
+                    continue
                 try:
                     saved = save_preferences({request.get("key"): request.get("value")},
                                              path=self.config_path)
