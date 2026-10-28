@@ -80,6 +80,55 @@
   var pausedSend = null;
   A.clickPause = { counting: false, reporting: false, blockedReports: 0 };
 
+  // Reuse EmotionMenu's selection event: the native handler owns local bubbles,
+  // room delivery and telemetry. Never manufacture room socket messages.
+  A.autoEmote = { sent: 0, available: false, limited: 0 };
+  var emoteTimes = [];
+  var EMOTES_PER_SECOND = 20;
+  function sendRandomEmote() {
+    if (!CFG.auto_emote || window.__WUT__ !== A) return;
+    // A rolling window avoids a burst of 40 at a fixed second boundary.
+    // Keep this budget across switch toggles; excess taps are never queued.
+    var now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    while (emoteTimes.length && now - emoteTimes[0] >= 1000) emoteTimes.shift();
+    if (emoteTimes.length >= EMOTES_PER_SECOND) { A.autoEmote.limited++; return; }
+    try {
+      var root = document.querySelector('#app');
+      var queue = root && root._vnode ? [root._vnode] : [];
+      var seen = new Set();
+      var menu = null;
+      for (var i = 0; i < queue.length && i < 512; i++) {
+        var vnode = queue[i];
+        if (!vnode || typeof vnode !== 'object' || seen.has(vnode)) continue;
+        seen.add(vnode);
+        var component = vnode.component;
+        if (component) {
+          if (component.type && component.type.__name === 'EmotionMenu' && !component.isUnmounted) {
+            menu = component; break;
+          }
+          if (component.subTree) queue.push(component.subTree);
+        }
+        if (Array.isArray(vnode.children)) queue.push.apply(queue, vnode.children);
+        if (vnode.suspense && vnode.suspense.activeBranch) queue.push(vnode.suspense.activeBranch);
+      }
+      var props = menu && menu.props;
+      var items = props && Array.isArray(props.emoteItems) ? props.emoteItems.filter(function (item) {
+        return item && Number.isSafeInteger(item.id) && item.id > 0 && typeof item.name === 'string' && item.name.length > 0;
+      }) : [];
+      A.autoEmote.available = !!(items.length && typeof props.assetUrl === 'function' && typeof menu.emit === 'function');
+      if (!A.autoEmote.available) return;
+      var item = items[Math.floor(Math.random() * items.length)];
+      var src = props.assetUrl('emote/' + item.name);
+      if (typeof src !== 'string' || !src) return;
+      emoteTimes.push(now);
+      menu.emit('select', { id: item.id, src: src });
+      A.autoEmote.sent++;
+    } catch (e) {
+      // A changed native component must never interrupt the original tap.
+      A.autoEmote.available = false;
+    }
+  }
+
   function restoreClickActions() {
     clickActions.forEach(function (record) {
       if (clickStore[record.name] === record.wrapper) clickStore[record.name] = record.original;
@@ -95,20 +144,25 @@
       var app = document.querySelector('#app');
       store = app && app.__vue_app__.config.globalProperties.$pinia._s.get('GlobalState');
     } catch (e) {}
-    if (!CFG.pause_clicks || store !== clickStore) restoreClickActions();
-    if (CFG.pause_clicks && store && !clickStore) {
+    if ((!CFG.pause_clicks && !CFG.auto_emote) || store !== clickStore) restoreClickActions();
+    if ((CFG.pause_clicks || CFG.auto_emote) && store && !clickStore) {
       clickStore = store;
       ['incrementLocalClickCount', 'addLocalClickCount'].forEach(function (name) {
         var original = store[name];
         if (typeof original !== 'function') return;
         var wrapper = function () {
-          if (window.__WUT__ !== A || !CFG.pause_clicks) return original.apply(this, arguments);
+          if (window.__WUT__ !== A) return original.apply(this, arguments);
+          var result;
+          if (!CFG.pause_clicks) result = original.apply(this, arguments);
+          if (name === 'incrementLocalClickCount') sendRandomEmote();
+          return result;
         };
         store[name] = wrapper;
         clickActions.push({ name: name, original: original, wrapper: wrapper });
       });
-      A.clickPause.counting = clickActions.length === 2;
+      A.clickPause.counting = CFG.pause_clicks && clickActions.length === 2;
     }
+    A.clickPause.counting = CFG.pause_clicks && clickActions.length === 2;
     if (!CFG.pause_clicks) {
       restoreClickTransport();
       return;
@@ -973,6 +1027,7 @@
     var wasPaused = CFG.pause_clicks === true;
     var wasReminder = CFG.balance_reminder !== false;
     CFG.pause_clicks = next.pause_clicks === true;
+    CFG.auto_emote = next.auto_emote === true;
     syncClickPause();
     CFG.enabled = next.enabled !== false;
     CFG.balance_reminder = next.balance_reminder !== false;

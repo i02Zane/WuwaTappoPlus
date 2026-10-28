@@ -48,6 +48,8 @@ min_balance = 1000
 [clicks]
 # Pause new native clicks and the dedicated Socket.IO click report.
 pause = false
+# Send one random equipped emote after each native tap.
+auto_emote = false
 
 [alerts]
 # Enable low-balance reminders independently of bubble visibility.
@@ -100,7 +102,7 @@ def _merge(base, over):
 BUILTIN = {
     "app": {"exe": "", "port": 9222, "host": "127.0.0.1"},
     "inject": {"enabled": True, "min_balance": 1000},
-    "clicks": {"pause": False},
+    "clicks": {"pause": False, "auto_emote": False},
     "alerts": {"balance": True, "bubble": True, "animation": True},
     "panel": {"keep_open": True, "remember_screen": True},
     "rooms": {"history": 20},
@@ -134,6 +136,7 @@ class Config:
             "version": __version__,
             "enabled": self.auto_open,
             "pause_clicks": self.pause_clicks,
+            "auto_emote": self.auto_emote,
             "balance_reminder": self.balance_reminder,
             "bubble": self.alert_bubble,
             "animation": self.alert_animation,
@@ -179,6 +182,10 @@ class Config:
         return bool(self.get("clicks", "pause", False))
 
     @property
+    def auto_emote(self):
+        return bool(self.get("clicks", "auto_emote", False))
+
+    @property
     def alert_animation(self):
         return bool(self.get("alerts", "animation", True))
 
@@ -200,7 +207,7 @@ class Config:
                 "bubble": self.alert_bubble,
                 "animation": self.alert_animation, "keep_panel_open": self.panel_keep_open,
                 "remember_screen": self.panel_remember_screen,
-                "pause_clicks": self.pause_clicks}
+                "pause_clicks": self.pause_clicks, "auto_emote": self.auto_emote}
 
     @property
     def heartbeat(self):
@@ -389,7 +396,8 @@ PREFERENCE_KEYS = {"auto_open": ("inject", "enabled"),
                    "animation": ("alerts", "animation"),
                    "keep_panel_open": ("panel", "keep_open"),
                    "remember_screen": ("panel", "remember_screen"),
-                   "pause_clicks": ("clicks", "pause")}
+                   "pause_clicks": ("clicks", "pause"),
+                   "auto_emote": ("clicks", "auto_emote")}
 
 
 def with_preferences(cfg, preferences):

@@ -7,7 +7,7 @@
     version: VERSION, requests: [], beat: 0, panelError: null, report: null,
     exportPath: null, exportError: false,
     preferences: { auto_open: true, balance_reminder: true, bubble: true, animation: true, keep_panel_open: true,
-                   remember_screen: true, pause_clicks: false }
+                   remember_screen: true, auto_emote: false, pause_clicks: false }
   };
   var HOST = 'wut-plus-settings';
   var STYLE = 'wut-plus-settings-style';
@@ -39,6 +39,7 @@
   }
   var definitions = [
     ['auto_open', '自动开箱', '宝箱到期且余额充足时自动开启，关闭后仍显示倒计时。'],
+    ['auto_emote', '自动发表情', '桌宠会跟随敲击自动发送一个已装备的表情，每秒最多发送20次'],
     ['balance_reminder', '余额提醒', '余额不足时提醒，并显示宝箱倒计时；不影响其他气泡。'],
     ['bubble', '气泡显示', '显示 Plus 气泡，包括余额提醒和小黑屋模式文字。'],
     ['animation', '气泡动画', '让气泡轻轻跳动；关闭后保留静态气泡。'],

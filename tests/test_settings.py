@@ -25,7 +25,7 @@ class PreferenceTests(unittest.TestCase):
     def test_default_switches_keep_clicks_running(self):
         self.assertEqual(Config({}).preferences,
                          {"auto_open": True, "balance_reminder": True, "bubble": True, "animation": True,
-                          "keep_panel_open": True, "remember_screen": True, "pause_clicks": False})
+                          "keep_panel_open": True, "remember_screen": True, "pause_clicks": False, "auto_emote": False})
 
     def test_balance_reminder_and_bubble_are_saved_independently(self):
         saved = save_preferences({"balance_reminder": False, "bubble": True}, self.path)
@@ -43,6 +43,15 @@ class PreferenceTests(unittest.TestCase):
         self.assertTrue(saved.preferences["pause_clicks"])
         self.assertIs(tomllib.loads(self.path.read_text(encoding="utf-8"))["clicks"]["pause"], True)
         self.assertFalse(save_preferences({"pause_clicks": False}, self.path).pause_clicks)
+
+    def test_auto_emote_is_opt_in_persisted_and_reaches_injection(self):
+        self.assertFalse(Config({}).auto_emote)
+        saved = save_preferences({"auto_emote": True}, self.path)
+        self.assertTrue(saved.auto_emote)
+        self.assertTrue(saved.inject_cfg["auto_emote"])
+        self.assertTrue(saved.preferences["auto_emote"])
+        self.assertTrue(tomllib.loads(self.path.read_text(encoding="utf-8"))["clicks"]["auto_emote"])
+        self.assertFalse(save_preferences({"auto_emote": False}, self.path).auto_emote)
 
     def test_screen_memory_switch_is_saved_to_the_panel_section(self):
         saved = save_preferences({"remember_screen": False}, self.path)

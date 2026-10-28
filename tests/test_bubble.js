@@ -875,3 +875,95 @@ test('balance reminder toggle hides only balance content and restores it', () =>
   assert.equal(f.a.alert, 2);
   assert.equal(f.elements.get('wut-alert-host').spans['.wut-main'].textContent, '不够开宝箱了');
 });
+
+function emoteFixture() {
+  const f = clickPauseFixture();
+  const selected = [];
+  const menu = { type: { __name: 'EmotionMenu' }, props: {
+    emoteItems: Array.from({ length: 5 }, (_, i) => ({ id: 100 + i, name: `emote${i}.png` })),
+    assetUrl: name => `https://example.invalid/${name}`
+  }, emit(event, item) { selected.push({ event, ...item }); } };
+  const query = f.context.document.querySelector;
+  f.context.document.querySelector = selector => {
+    const found = query(selector);
+    return selector === '#app' ? { ...found, _vnode: { component: {
+      type: { __name: 'App' }, subTree: { children: [{ component: menu }] }
+    } } } : found;
+  };
+  return { ...f, selected, menu };
+}
+
+test('auto emotes are opt-in and single native taps select exactly one equipped emote', () => {
+  const f = emoteFixture();
+  f.current.incrementLocalClickCount(); assert.equal(f.selected.length, 0);
+  f.a.configure({ auto_emote: true });
+  for (let i = 0; i < 5; i++) {
+    f.context.Math = Object.create(Math); f.context.Math.random = () => (i + .1) / 5;
+    f.current.incrementLocalClickCount();
+    assert.equal(f.selected[i].id, 100 + i);
+    assert.equal(f.selected[i].src, `https://example.invalid/emote/emote${i}.png`);
+    assert.equal(f.selected[i].event, 'select');
+  }
+  assert.equal(f.selected.length, 5); assert.equal(f.current.localClickCount, 16);
+  f.current.addLocalClickCount(50); f.current.setLocalClickCount(200); f.current.spendClickCount(5);
+  assert.equal(f.selected.length, 5); assert.equal(f.a.clickPause.counting, false);
+});
+
+test('auto emotes coexist with pause mode and restore native actions after toggles and uninstall', () => {
+  const f = emoteFixture(); const original = f.current.incrementLocalClickCount;
+  f.a.configure({ auto_emote: true, pause_clicks: true });
+  f.current.incrementLocalClickCount(); assert.equal(f.selected.length, 1); assert.equal(f.current.localClickCount, 10);
+  f.a.configure({ auto_emote: true, pause_clicks: false });
+  f.current.incrementLocalClickCount(); assert.equal(f.selected.length, 2); assert.equal(f.current.localClickCount, 11);
+  f.a.configure({ auto_emote: false, pause_clicks: true });
+  f.current.incrementLocalClickCount(); assert.equal(f.selected.length, 2); assert.equal(f.current.localClickCount, 11);
+  f.a.configure({ auto_emote: false, pause_clicks: false });
+  assert.equal(f.current.incrementLocalClickCount, original);
+  f.a.configure({ auto_emote: true }); f.a.uninstall();
+  assert.equal(f.current.incrementLocalClickCount, original);
+  f.current.incrementLocalClickCount(); assert.equal(f.selected.length, 2);
+});
+
+test('missing, unmounted or changed emote components never interrupt native counting', () => {
+  const f = emoteFixture(); f.a.configure({ auto_emote: true });
+  f.menu.props.emoteItems = []; f.current.incrementLocalClickCount();
+  f.menu.props.emoteItems = [{ id: 12, name: 'new.png' }]; f.menu.isUnmounted = true;
+  f.current.incrementLocalClickCount(); f.menu.isUnmounted = false;
+  f.menu.props.assetUrl = () => { throw new Error('native component changed'); };
+  assert.doesNotThrow(() => f.current.incrementLocalClickCount());
+  assert.equal(f.current.localClickCount, 13); assert.equal(f.selected.length, 0);
+  f.menu.props.assetUrl = name => name;
+  f.current.incrementLocalClickCount(); assert.equal(f.selected[0].id, 12);
+});
+
+test('auto emotes cap bursts at 20 per rolling second without suppressing taps or queueing sends', () => {
+  const f = emoteFixture(); let now = 0;
+  f.context.performance = { now: () => now }; f.a.configure({ auto_emote: true });
+  for (let i = 0; i < 100; i++) f.current.incrementLocalClickCount();
+  assert.equal(f.selected.length, 20); assert.equal(f.current.localClickCount, 110);
+  assert.equal(f.a.autoEmote.limited, 80);
+  now = 999; f.current.incrementLocalClickCount(); assert.equal(f.selected.length, 20);
+  now = 1000; f.current.incrementLocalClickCount(); assert.equal(f.selected.length, 21);
+  assert.equal(f.timers.filter(t => t.ms === 1000).length, 0);
+});
+
+test('rolling emote budget expires each timestamp independently across second boundaries', () => {
+  const f = emoteFixture(); let now = 0;
+  f.context.performance = { now: () => now }; f.a.configure({ auto_emote: true });
+  for (let i = 0; i < 10; i++) f.current.incrementLocalClickCount();
+  now = 900; for (let i = 0; i < 10; i++) f.current.incrementLocalClickCount();
+  now = 1000; for (let i = 0; i < 20; i++) f.current.incrementLocalClickCount();
+  assert.equal(f.selected.length, 30);
+  now = 1899; f.current.incrementLocalClickCount(); assert.equal(f.selected.length, 30);
+  now = 1900; for (let i = 0; i < 20; i++) f.current.incrementLocalClickCount();
+  assert.equal(f.selected.length, 40);
+});
+
+test('auto emote toggles and pause mode changes do not reset the shared send budget', () => {
+  const f = emoteFixture(); f.context.performance = { now: () => 50 };
+  f.a.configure({ auto_emote: true });
+  for (let i = 0; i < 20; i++) f.current.incrementLocalClickCount();
+  f.a.configure({ auto_emote: false }); f.a.configure({ auto_emote: true, pause_clicks: true });
+  f.current.incrementLocalClickCount(); assert.equal(f.selected.length, 20);
+  assert.equal(f.current.localClickCount, 30); assert.equal(f.a.autoEmote.limited, 1);
+});

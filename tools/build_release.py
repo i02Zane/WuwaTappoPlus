@@ -132,6 +132,11 @@ def main(argv=None):
                     "--distpath", str(ROOT / "dist"), "--workpath", str(build / "pyinstaller"),
                     str(ROOT / "packaging/WuwaTappoPlus.spec")], cwd=ROOT, check=True)
     executable = ROOT / "dist/WuwaTappoPlus.exe"
+    # A workspace may carry an inheritable Low integrity label. Shipping that
+    # label makes the one-file bootloader unable to use a normal user's TEMP.
+    # Set an explicit Medium label before probing or emitting the checksum.
+    subprocess.run(["icacls", str(executable), "/setintegritylevel", "M"],
+                   check=True, capture_output=True)
     validate_executable(executable, build)
     checksum = ROOT / "dist/SHA256SUMS.txt"
     checksum.write_text("%s  %s\n" %
