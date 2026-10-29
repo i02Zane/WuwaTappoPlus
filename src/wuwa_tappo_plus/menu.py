@@ -336,6 +336,8 @@ def _run(title, handler):
     if rc not in (0, None):
         sys.stdout.write("  " + _paint(YELLOW, "返回码 %s" % rc) + "\n")
     sys.stdout.flush()
+    if title in ("卸载（保留数据）", "完整卸载（清除数据）") and rc == 0 and win.frozen():
+        return rc
     if title == "完整卸载（清除数据）" and rc == 0:
         _wait_key("按任意键退出面板...")
     else:
@@ -349,7 +351,7 @@ def _install():
 
 def _uninstall():
     # Cleanup is still needed when policy/startup exists but no process is alive.
-    _run("卸载（保留数据）", cli.cmd_uninstall)
+    return _run("卸载（保留数据）", cli.cmd_uninstall)
 
 
 def _uninstall_purge():
@@ -416,7 +418,7 @@ def main(argv):
             if entry is None:
                 continue
             result = entry[1]()
-            if key == "3" and result == 0:
+            if key in ("2", "3") and result == 0:
                 break
             sys.stdout.write("\x1b[2J\x1b[?25l")
             sys.stdout.flush()
@@ -448,7 +450,7 @@ def _plain_menu():
             continue
         try:
             result = entry[1]()
-            if choice == "3" and result == 0:
+            if choice in ("2", "3") and result == 0:
                 return 0
         except Exception:
             traceback.print_exc()

@@ -59,9 +59,14 @@ def is_admin():
         return False
 
 
+_launch_executable = None
+
+
 def relaunch_elevated(argv):
     """Re-run this process with a UAC prompt. Returns True if launched."""
-    command = command_args("--data-dir", str(ROOT), *argv)
+    from .installation import directory
+    command = [sys.executable] if frozen() else command_args()
+    command.extend(["--data-dir", str(ROOT), "--program-dir", str(directory()), *argv])
     params = subprocess.list2cmdline(command[1:])
     previous_reset = os.environ.get("PYINSTALLER_RESET_ENVIRONMENT")
     if frozen():
@@ -119,7 +124,7 @@ def interpreter_label():
 def command_args(*args, background=False):
     """Build the same application command in source and frozen distributions."""
     if frozen():
-        return [sys.executable, *map(str, args)]
+        return [str(_launch_executable or sys.executable), *map(str, args)]
     interpreter = pythonw() if background else sys.executable
     launcher = APP_DIR / "launch.py"
     entry = [str(launcher)] if launcher.is_file() else ["-m", "wuwa_tappo_plus"]
@@ -577,7 +582,7 @@ def _register_watchdog_ps(minutes):
     ) % (
         _ps(command_args("ensure", background=True)[0]),
         _ps(subprocess.list2cmdline(command_args("ensure", background=True)[1:])),
-        _ps(APP_DIR),
+        _ps(Path(command_args("ensure", background=True)[0]).resolve().parent if frozen() else APP_DIR),
         minutes,
         minutes,
         _ps(WATCHDOG_TASK),
@@ -708,7 +713,7 @@ def launch_detached(argv):
         [str(a) for a in argv],
         creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
         close_fds=True,
-        cwd=str(APP_DIR),
+        cwd=str(Path(argv[0]).resolve().parent if frozen() else APP_DIR),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

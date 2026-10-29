@@ -2,11 +2,12 @@
 
 import json
 import stat
+import subprocess
 import sys
 import time
 from datetime import datetime
 
-from . import __version__, cdp, win
+from . import __version__, cdp, win, installation
 from .config import (
     CONFIG_PATH,
     DISABLED_PATH,
@@ -184,6 +185,15 @@ def cmd_install(argv):
     rc = _stop_daemon([])
     if rc:
         return rc
+
+    try:
+        installed = installation.deploy()
+    except (OSError, subprocess.SubprocessError) as exc:
+        out(BAD + "程序安装失败：%s" % exc)
+        return 1
+    if installed:
+        win._launch_executable = installed
+        out(OK + "Plus 程序目录：%s" % installed.parent)
 
     _write_config_exe(exe)
     args = win.write_policy(cfg.port)
@@ -384,7 +394,18 @@ def cmd_uninstall(argv):
         except OSError as exc:
             out(BAD + "程序已卸载，但数据清理失败：%s" % exc)
             return 1
-        out("完整卸载完成，Plus 个人数据已清除。EXE 可手动删除。")
+        out("Plus 个人数据已清除。")
+    try:
+        removed = installation.remove_program()
+    except OSError as exc:
+        out(BAD + "程序文件清理失败：%s" % exc)
+        return 1
+    if removed == "deferred":
+        out(OK + "退出窗口后将自动删除安装目录中的程序文件。")
+    elif removed == "removed":
+        out(OK + "安装目录中的程序文件已删除。")
+    if purge:
+        out("完整卸载完成。")
     else:
         out("卸载完成（保留数据）。配置、统计、最近房间和日志继续保留。")
     return 0

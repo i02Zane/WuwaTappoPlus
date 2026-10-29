@@ -19,6 +19,7 @@ class LifecycleTests(unittest.TestCase):
         self.addCleanup(stack.close)
         targets = {
             "load": Config({}),
+            "installation.remove_program": "removed",
             "out": None,
             "_stop_daemon": 0,
             "win.is_admin": True,
@@ -137,6 +138,21 @@ class LifecycleTests(unittest.TestCase):
         self.cleanup_mocks()
         with patch.object(cli, "_purge_data", side_effect=PermissionError("locked")):
             self.assertEqual(cli.cmd_uninstall(["--purge", "--yes"]), 1)
+
+    def test_both_uninstall_modes_remove_installed_program_files(self):
+        mocks = self.cleanup_mocks()
+        for args in ([], ["--purge", "--yes"]):
+            with patch.object(cli, "_purge_data"):
+                self.assertEqual(cli.cmd_uninstall(args), 0)
+        self.assertEqual(mocks["installation.remove_program"].call_count, 2)
+
+    def test_regular_uninstall_menu_exits_after_success(self):
+        with patch.object(menu, "_collect", return_value={}) as collect, \
+                patch.object(menu, "_frame", return_value=[]), \
+                patch("builtins.input", return_value="2"), \
+                patch.dict(menu.ACTIONS, {"2": ("uninstall", lambda: 0)}):
+            self.assertEqual(menu._plain_menu(), 0)
+        collect.assert_called_once()
 
     def test_purge_menu_exits_without_recollecting_and_recreating_config(self):
         with patch.object(menu, "_collect", return_value={}) as collect, \

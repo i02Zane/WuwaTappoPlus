@@ -100,6 +100,18 @@ class EntryTests(unittest.TestCase):
         console.assert_called_once_with()
         dispatch.assert_called_once_with(["status"])
 
+    def test_uac_program_and_data_paths_are_consumed_before_dispatch(self):
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.dict(os.environ, {}, clear=False), \
+                patch.object(paths, "frozen", return_value=False), \
+                patch.object(cli, "main", return_value=0) as dispatch:
+            program = str(Path(temp) / "Programs" / "WuwaTappoPlus")
+            data = str(Path(temp) / "data")
+            self.assertEqual(entry.main(["--data-dir", data, "--program-dir", program, "install"]), 0)
+            self.assertEqual(os.environ["WUWA_TAPPO_PLUS_PROGRAM_DIR"], program)
+            self.assertEqual(os.environ["WUWA_TAPPO_PLUS_DATA_DIR"], data)
+            dispatch.assert_called_once_with(["install"])
+
     def test_background_entry_never_opens_a_console(self):
         for command in ("run", "ensure"):
             with patch.object(paths, "frozen", return_value=True), \

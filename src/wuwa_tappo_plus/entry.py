@@ -44,10 +44,11 @@ def probe():
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     # Keep the original data folder across UAC, even with a different admin account.
-    if argv[:1] == ["--data-dir"]:
+    while argv[:1] in (["--data-dir"], ["--program-dir"]):
         if len(argv) < 3 or not Path(argv[1]).is_absolute():
             return 2
-        os.environ["WUWA_TAPPO_PLUS_DATA_DIR"] = argv[1]
+        key = "WUWA_TAPPO_PLUS_DATA_DIR" if argv[0] == "--data-dir" else "WUWA_TAPPO_PLUS_PROGRAM_DIR"
+        os.environ[key] = argv[1]
         argv = argv[2:]
 
     from .paths import frozen
