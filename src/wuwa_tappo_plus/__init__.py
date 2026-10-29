@@ -2,4 +2,4 @@
 
 # The sole project and injected-script version. Bump it for every release that
 # changes a page script, so all WebViews replace their previous copy together.
-__version__ = "1.3.0"
+__version__ = "1.3.1"
