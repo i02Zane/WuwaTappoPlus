@@ -28,6 +28,7 @@ class SettingsBridge:
             "__VERSION__", json.dumps(__version__))
         self.last_error = None
         self.export_results = {}
+        self.pet_accessory = None
 
     @property
     def accessories_path(self):
@@ -112,6 +113,7 @@ class SettingsBridge:
                     self._warn(exc)
                 ack.append(result)
             payload = json.dumps({"preferences": cfg.preferences, "accessories": overrides,
+                                  "pet_accessory": self.pet_accessory,
                                   "ack": ack, "report": report})
             self.session.js("window.__WUT_SETTINGS__.update(%s); 1" % payload)
         except (cdp.CDPError, OSError, ValueError, TypeError) as exc:

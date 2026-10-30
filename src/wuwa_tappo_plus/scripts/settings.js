@@ -245,6 +245,7 @@
     S.beat = Date.now();
     S.preferences = state.preferences;
     S.accessories = state.accessories || S.accessories || {};
+    S.petAccessory = state.pet_accessory || null;
     S.report = state.report || null;
     (state.ack || []).forEach(function (ack) {
       S.requests = S.requests.filter(function (r) { return r.id !== ack.id; });
@@ -256,6 +257,11 @@
       if (ack.error) { error = '保存失败，已恢复原设置'; saved = false; }
       else if (!error) saved = true;
     });
+    var live = document.getElementById('wut-atlas-modal');
+    if (live && live.__wutAccessory && S.petAccessory &&
+        S.petAccessory.file === live.__wutAccessory.key) {
+      live.__wutAccessory.setBase(S.petAccessory.x, S.petAccessory.y, S.petAccessory.size);
+    }
     mount(); render();
   };
   function createAtlasView() {
@@ -475,7 +481,8 @@
       image.src = src;
       image.alt = '';
       image.draggable = false;
-      place(image, layer, 0.5);
+      // The app draws the head/body frames without their own transform.
+      image.style.transform = 'translate(-50%, -50%)';
       return image;
     }
 
@@ -522,10 +529,23 @@
       var stage = stageOf();
       stage.innerHTML = '';
       stage.classList.remove('wut-atlas-stage--character');
+      var key = fileOf(entry.url);
+      var petBase = S.petAccessory && S.petAccessory.file === key ? S.petAccessory : null;
+      var size = petBase && Number(petBase.size) > 0 ? Number(petBase.size) : 200;
+      var head = null;
+      var body = null;
+      // Draw at the pet's own CSS size so the accessory sits at the same place
+      // as on the real cat instead of only looking proportional.
+      stage.style.width = size + 'px';
+      stage.style.height = size + 'px';
       if (current) {
         stage.classList.add('wut-atlas-stage--character');
-        var head = addLayer('wut-atlas-head-layer', assetUrl(current.head1 && current.head1.url), current.head1);
-        var body = addLayer('wut-atlas-body-layer', assetUrl(current.body1 && current.body1.url), current.body1);
+        head = addLayer('wut-atlas-head-layer', assetUrl(current.head1 && current.head1.url), current.head1);
+        body = addLayer('wut-atlas-body-layer', assetUrl(current.body1 && current.body1.url), current.body1);
+        [head, body].forEach(function (image) {
+          image.style.width = size + 'px';
+          image.style.height = size + 'px';
+        });
         stage.appendChild(head);
         stage.appendChild(body);
         var frames = {
@@ -537,9 +557,10 @@
         };
         stage.addEventListener('click', function () { tapStage(stage, body, head, frames); });
       }
-      var baseX = (current ? Number(current.offset_x || 0) : 0) + Number(entry.offset_x || 0);
-      var baseY = (current ? Number(current.offset_y || 0) : 0) + Number(entry.offset_y || 0);
-      var key = fileOf(entry.url);
+      var baseX = petBase ? Number(petBase.x)
+        : (current ? Number(current.offset_x || 0) : 0) + Number(entry.offset_x || 0);
+      var baseY = petBase ? Number(petBase.y)
+        : (current ? Number(current.offset_y || 0) : 0) + Number(entry.offset_y || 0);
       var saved = (S.accessories && S.accessories[key]) || null;
       var ov = { x: saved ? Number(saved.x) : 0, y: saved ? Number(saved.y) : 0,
                  scale: saved ? Number(saved.scale) : 1,
@@ -549,15 +570,34 @@
       accessory.src = assetUrl(entry.url);
       accessory.alt = '';
       accessory.draggable = false;
+      accessory.style.width = size + 'px';
+      accessory.style.height = size + 'px';
       function apply() {
         accessory.style.transform = 'translate(-50%,-50%) translate(' +
-          ((baseX + ov.x) * 0.5) + 'px, ' + ((baseY + ov.y) * 0.5) + 'px)' +
+          (baseX + ov.x) + 'px, ' + (baseY + ov.y) + 'px)' +
           ' scale(' + ov.scale + ') rotate(' + ov.rotation + 'deg)';
       }
       apply();
       stage.appendChild(accessory);
       noteOf().textContent = '';
       accessoryControls(key, ov, apply);
+      if (modal) {
+        modal.__wutAccessory = { key: key, setBase: function (x, y, nextSize) {
+          baseX = Number(x); baseY = Number(y);
+          var want = Number(nextSize);
+          if (want > 0 && want !== size) {
+            size = want;
+            stage.style.width = size + 'px';
+            stage.style.height = size + 'px';
+            [head, body, accessory].forEach(function (image) {
+              if (!image) return;
+              image.style.width = size + 'px';
+              image.style.height = size + 'px';
+            });
+          }
+          apply();
+        } };
+      }
     }
 
     function accessoryControls(key, ov, apply) {

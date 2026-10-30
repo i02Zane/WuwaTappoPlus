@@ -1008,6 +1008,7 @@
     if (!layer) {
       if (accessoryObserver) { accessoryObserver.disconnect(); accessoryObserver = null; }
       accessoryLayer = null;
+      window.__WUT_ACCESSORY_BASE__ = null;
       accessoryState = { file: '', base: null, applied: '' };
       return;
     }
@@ -1022,6 +1023,8 @@
       if (accessoryState.applied && current === accessoryState.applied) {
         layer.style.transform = accessoryState.base || '';
       }
+      var plain = translateOf(current);
+      window.__WUT_ACCESSORY_BASE__ = { file: file, x: plain.x, y: plain.y };
       accessoryState = { file: '', base: null, applied: '' };
       return;
     }
@@ -1036,6 +1039,7 @@
       accessoryState.base = base;
     }
     var translate = translateOf(base);
+    window.__WUT_ACCESSORY_BASE__ = { file: file, x: translate.x, y: translate.y };
     var x = translate.x + Number(override.x || 0);
     var y = translate.y + Number(override.y || 0);
     var scale = Number(override.scale || 1);

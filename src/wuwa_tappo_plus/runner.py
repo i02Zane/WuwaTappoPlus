@@ -220,6 +220,20 @@ class Runner:
         self._accessory_key = key
         self._accessory_session = sid
 
+    def sync_accessory_base(self):
+        """Publish the pet's live accessory anchor so the preview matches it."""
+        raw = self.session.js(
+            "JSON.stringify((function(){var l=document.querySelector('.cat-stack__layer');"
+            "var c=document.querySelector('.cat-mainbox');"
+            "return {base:window.__WUT_ACCESSORY_BASE__||null,"
+            "size:c?c.getBoundingClientRect().width:null};})())")
+        data = json.loads(raw) if raw else {}
+        base = data.get("base")
+        if base and data.get("size"):
+            base = dict(base, size=data["size"])
+        if base != self.settings.pet_accessory:
+            self.settings.pet_accessory = base
+
     # ---------------------------------------------------------------- clicks
 
     def drain_clicks(self, clicks):
@@ -466,6 +480,11 @@ class Runner:
                         self.apply_accessories()
                     except Exception as exc:
                         self.log.warn("accessories: %s" % str(exc)[:160])
+
+                    try:
+                        self.sync_accessory_base()
+                    except Exception as exc:
+                        self.log.warn("accessory base: %s" % str(exc)[:160])
 
                     self.drain_clicks(payload.get("clicks"))
                     self.note_block(payload.get("block"), snapshot)
