@@ -10,7 +10,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 - `src/wuwa_tappo_plus/win.py`：Windows 注册表策略、进程、自启动与计划任务。
 - `src/wuwa_tappo_plus/scripts/inject.js`：页面检查、按钮点击与提醒气泡。
 - `src/wuwa_tappo_plus/config.py`：默认配置与 TOML 加载；`config.toml`：本地配置。
-- `src/wuwa_tappo_plus/settings.py`、`src/wuwa_tappo_plus/scripts/settings.js`：独立设置窗口中的 Plus 开关、配置持久化与运行状态同步。设置脚本同时在面板页挂载图鉴预览：未获得的角色、配件、表情点击弹窗查看；已获得的配件通过每个配件右上角的「预览」按钮打开。角色用外观目录的 `body1..3`/`head1..2` 帧做敲击与眨眼动画，配件叠加到当前角色上，表情原样展示。配件预览提供位置/缩放/旋转调节，保存到 `accessory_overrides.json`。外观目录从 IndexedDB 的 `wuwatappo_appearance_asset` 读取，图鉴图标通过 `height_light_id` 映射到真实外观条目，不额外请求服务器。
+- `src/wuwa_tappo_plus/settings.py`、`src/wuwa_tappo_plus/scripts/settings.js`：独立设置窗口中的 Plus 开关、配置持久化与运行状态同步。设置脚本同时在面板页挂载图鉴预览：未获得的角色、配件、表情点击弹窗查看；已获得的配件通过背包左上角预览上的「调整配件」按钮打开。角色用外观目录的 `body1..3`/`head1..2` 帧做敲击与眨眼动画，配件叠加到当前角色上，表情原样展示。配件预览提供位置/缩放/旋转调节，保存到 `accessory_overrides.json`。外观目录从 IndexedDB 的 `wuwatappo_appearance_asset` 读取，图鉴图标通过 `height_light_id` 映射到真实外观条目，不额外请求服务器。
 - `src/wuwa_tappo_plus/accessories.py`：本机配件显示覆盖（位置/缩放/旋转），保存在数据目录的 `accessory_overrides.json`；后台在图鉴保存后把映射推给桌宠页面，注入脚本按配件文件名给 `.cat-stack__layer` 追加 `translate/scale/rotate`。只影响本机显示，其他玩家看不到。
 - `src/wuwa_tappo_plus/rooms.py`、`src/wuwa_tappo_plus/scripts/rooms.js`：联机页的房间历史。页面自己解析房间号、渲染列表并完成回跳（填入真实输入框后点击「加入房间」），Python 只负责落库与回传列表；数据保存在 `reports/rooms.sqlite3`，默认保留 20 条未收藏房间。收藏（`pinned`）房间置顶显示、永不因数量上限被删除，上限同时由条数控制和 `config.toml` 的 `[rooms] history` 控制；旧库缺少该列时启动补列。房间号必须匹配 `[0-9A-Za-z]{4,16}`，写入前做校验；房主名字晚于房间号渲染时只补名字，不计新的一次进入。
 - `src/wuwa_tappo_plus/reports.py`：统计桌宠自身的累计点击数（`cumulativeClickCount`，即设置页显示的「累计点击数」）的每日增量；数据保存在 `reports/input.sqlite3`（文件名沿用历史命名）。首次采样只建基线，开箱、消费和旧开箱日志不能计入；缺失日期与已采样的零次须区分。仅保存计数和账户标识的哈希，不记录按键内容。

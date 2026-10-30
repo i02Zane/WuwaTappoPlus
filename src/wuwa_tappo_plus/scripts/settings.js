@@ -273,7 +273,7 @@
     var blinkTimer = null;
     var blinkClose = null;
     var controlTimer = null;
-    var decorateTimer = null;
+    var bagTimer = null;
     var tapTimers = [];
     var ATLAS_TYPES = { character_skin_atlas: 'character_skin',
                         accessory_atlas: 'accessory',
@@ -405,8 +405,8 @@
         + '#wut-atlas-modal .wut-atlas-actions button{border:1px solid rgba(142,94,67,.3);background:#fff6e9;color:#6a4f3a;border-radius:8px;padding:4px 12px;font-size:12px;cursor:pointer;}'
         + '#wut-atlas-modal .wut-atlas-actions button:disabled{opacity:.5;cursor:wait;}'
         + '#wut-atlas-modal .wut-atlas-hint{margin-top:6px;font-size:11px;color:#8e7b6a;text-align:center;}'
-        + '.wut-atlas-preview-btn{position:absolute;top:4px;right:4px;z-index:2;border:1px solid rgba(142,94,67,.35);background:rgba(255,250,243,.92);color:#6a4f3a;border-radius:999px;padding:1px 8px;font-size:11px;line-height:16px;cursor:pointer;}'
-        + '.wut-atlas-preview-btn:hover{background:#fff;color:#b4543c;}'
+        + '.wut-accessory-entry{position:absolute;left:6px;top:6px;z-index:3;border:1px solid rgba(142,94,67,.35);background:rgba(255,250,243,.92);color:#6a4f3a;border-radius:999px;padding:2px 10px;font-size:11px;line-height:16px;cursor:pointer;box-shadow:0 2px 6px rgba(60,35,20,.12);}'
+        + '.wut-accessory-entry:hover{background:#fff;color:#b4543c;}'
         + '#wut-atlas-modal .wut-atlas-loading{display:flex;align-items:center;justify-content:center;height:280px;color:#8e7b6a;font-size:13px;}';
       document.head.appendChild(style);
     }
@@ -725,31 +725,48 @@
       openPreview(kind, nameNode ? nameNode.textContent.trim() : '', image.src);
     }
 
-    // Owned accessories keep the app's click (equip); this small button opens our
-    // preview for them, which is also where the local transform is adjusted.
-    function decorate() {
-      document.querySelectorAll('.atlas-item--accessory, .atlas-item--accessory_atlas').forEach(function (item) {
-        if (item.querySelector('.wut-atlas-preview-btn')) return;
-        if (getComputedStyle(item).position === 'static') item.style.position = 'relative';
-        var button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'wut-atlas-preview-btn';
-        button.textContent = '预览';
-        item.appendChild(button);
+    function openEquippedAccessory() {
+      var file = S.petAccessory && S.petAccessory.file;
+      if (!file) return;
+      loadCatalog().then(function (data) {
+        var payload = data.payload;
+        var entry = null;
+        Object.keys(payload.accessory || {}).forEach(function (id) {
+          var item = payload.accessory[id];
+          if (!entry && item.url && fileOf(item.url) === file) entry = item;
+        });
+        if (!entry || !entry.url) return;
+        build('accessory', '配件预览');
+        accessoryMarkup(entry, currentCharacter(payload, currentUser()));
+      }).catch(function () {});
+    }
+
+    // The bag preview keeps a live look of the current cat; put the entry there
+    // instead of covering every atlas accessory tile.
+    function mountBagEntry() {
+      var preview = document.querySelector('.preset-preview');
+      var file = S.petAccessory && S.petAccessory.file;
+      var existing = preview && preview.querySelector('.wut-accessory-entry');
+      if (!preview || !file) {
+        if (existing) existing.remove();
+        return;
+      }
+      if (existing) return;
+      if (getComputedStyle(preview).position === 'static') preview.style.position = 'relative';
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'wut-accessory-entry';
+      button.textContent = '调整配件';
+      button.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        openEquippedAccessory();
       });
+      preview.appendChild(button);
     }
 
     function onClick(event) {
       var target = event.target;
-      var button = target && target.closest ? target.closest('.wut-atlas-preview-btn') : null;
-      if (button) {
-        var clicked = button.closest('.atlas-item');
-        if (!clicked || !clicked.closest('.atlas-module')) return;
-        event.preventDefault();
-        event.stopPropagation();
-        openItemPreview(clicked);
-        return;
-      }
       var item = target && target.closest ? target.closest('.atlas-item--unowned') : null;
       if (!item || !item.closest('.atlas-module')) return;
       if (event.button && event.button !== 0) return;
@@ -759,16 +776,20 @@
     }
 
     document.addEventListener('click', onClick, true);
-    decorate();
-    decorateTimer = setInterval(decorate, 800);
+    document.querySelectorAll('.wut-atlas-preview-btn').forEach(function (button) { button.remove(); });
+    mountBagEntry();
+    bagTimer = setInterval(mountBagEntry, 700);
     window.__WUT_ATLAS__ = {
       version: VERSION,
       _test: { fileOf: fileOf, findAtlas: findAtlas, actualOf: actualOf,
                currentCharacter: currentCharacter, offsetOf: offsetOf,
-               openPreview: openPreview, openItemPreview: openItemPreview },
+               openPreview: openPreview, openItemPreview: openItemPreview,
+               openEquippedAccessory: openEquippedAccessory },
       dispose: function () {
         document.removeEventListener('click', onClick, true);
-        if (decorateTimer) { clearInterval(decorateTimer); decorateTimer = null; }
+        if (bagTimer) { clearInterval(bagTimer); bagTimer = null; }
+        document.querySelectorAll('.wut-accessory-entry, .wut-atlas-preview-btn')
+          .forEach(function (button) { button.remove(); });
         close();
         var style = document.getElementById(styleId);
         if (style) style.remove();
