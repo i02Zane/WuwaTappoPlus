@@ -264,6 +264,7 @@
     var modal = null;
     var keyHandler = null;
     var blinkTimer = null;
+    var blinkClose = null;
     var tapTimers = [];
     var ATLAS_TYPES = { character_skin_atlas: 'character_skin',
                         accessory_atlas: 'accessory',
@@ -383,12 +384,9 @@
         + '#wut-atlas-modal .wut-atlas-kind{display:block;margin-top:2px;font-size:12px;color:#8e7b6a;}'
         + '#wut-atlas-modal .wut-atlas-close{border:0;background:transparent;color:#8e7b6a;font-size:22px;line-height:1;cursor:pointer;padding:0 2px;}'
         + '#wut-atlas-modal .wut-atlas-close:hover{color:#b4543c;}'
-        + '#wut-atlas-modal .wut-atlas-stage{position:relative;width:280px;height:280px;margin:12px auto 6px;border-radius:14px;background:radial-gradient(circle at 50% 42%,#fff 0%,#fdf3e6 55%,#f6e4cf 100%);overflow:hidden;}'
+        + '#wut-atlas-modal .wut-atlas-stage{position:relative;width:280px;height:280px;margin:12px auto 6px;border-radius:14px;background:transparent;overflow:hidden;}'
         + '#wut-atlas-modal .wut-atlas-layer{position:absolute;left:50%;top:50%;width:280px;height:280px;transform:translate(-50%,-50%);pointer-events:none;user-select:none;}'
         + '#wut-atlas-modal .wut-atlas-stage--character{cursor:pointer;}'
-        + '#wut-atlas-modal .wut-atlas-stage--character:active{transform:scale(.985);}'
-        + '#wut-atlas-modal .wut-atlas-tap{animation:wut-atlas-tap .34s ease;}'
-        + '@keyframes wut-atlas-tap{0%{transform:translateY(0) scale(1,1);}30%{transform:translateY(-9px) scale(.98,1.04);}55%{transform:translateY(0) scale(1.03,.97);}100%{transform:translateY(0) scale(1,1);}}'
         + '#wut-atlas-modal .wut-atlas-emote{display:block;max-width:250px;max-height:250px;margin:0 auto;}'
         + '#wut-atlas-modal .wut-atlas-note{margin-top:6px;font-size:12px;line-height:1.5;color:#8e7b6a;text-align:center;}'
         + '#wut-atlas-modal .wut-atlas-loading{display:flex;align-items:center;justify-content:center;height:280px;color:#8e7b6a;font-size:13px;}';
@@ -397,8 +395,18 @@
 
     function clearTimers() {
       if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
+      if (blinkClose) { clearTimeout(blinkClose); blinkClose = null; }
       tapTimers.forEach(function (id) { clearTimeout(id); });
       tapTimers = [];
+    }
+
+    function appFont() {
+      try {
+        var element = document.querySelector('.atlas-module') || document.querySelector('.panel-content') || document.body;
+        var font = getComputedStyle(element).fontFamily;
+        if (font) return font;
+      } catch (e) {}
+      return '"975MaruSC","Microsoft YaHei","Helvetica Neue",Helvetica,simSun,sans-serif';
     }
 
     function close() {
@@ -415,6 +423,7 @@
       modal.id = 'wut-atlas-modal';
       modal.setAttribute('role', 'dialog');
       modal.setAttribute('aria-modal', 'true');
+      modal.style.fontFamily = appFont();
       modal.innerHTML = '<div class="wut-atlas-card">'
         + '<div class="wut-atlas-head"><div><strong></strong><span class="wut-atlas-kind">'
         + KIND[kind] + '预览 · 未获得</span></div>'
@@ -457,26 +466,24 @@
       return image;
     }
 
-    function tapStage(stage, body, frames) {
+    function tapStage(stage, body, head, frames) {
+      if (blinkClose) { clearTimeout(blinkClose); blinkClose = null; }
+      if (head) head.src = frames.head1;
       tapTimers.forEach(function (id) { clearTimeout(id); });
       tapTimers = [];
-      stage.classList.remove('wut-atlas-tap');
-      void stage.offsetWidth;
-      stage.classList.add('wut-atlas-tap');
-      body.src = frames.body2;
-      tapTimers.push(setTimeout(function () { body.src = frames.body3; }, 110));
-      tapTimers.push(setTimeout(function () { body.src = frames.body1; }, 220));
-      tapTimers.push(setTimeout(function () { stage.classList.remove('wut-atlas-tap'); }, 360));
+      body.src = frames.body3;
+      tapTimers.push(setTimeout(function () { body.src = frames.body2; }, 60));
+      tapTimers.push(setTimeout(function () { body.src = frames.body1; }, 120));
     }
 
     function characterMarkup(entry) {
       var stage = stageOf();
       stage.innerHTML = '';
       stage.classList.add('wut-atlas-stage--character');
-      var body = addLayer('wut-atlas-body-layer', assetUrl(entry.body1 && entry.body1.url), entry.body1);
       var head = addLayer('wut-atlas-head-layer', assetUrl(entry.head1 && entry.head1.url), entry.head1);
-      stage.appendChild(body);
+      var body = addLayer('wut-atlas-body-layer', assetUrl(entry.body1 && entry.body1.url), entry.body1);
       stage.appendChild(head);
+      stage.appendChild(body);
       var frames = {
         body1: assetUrl(entry.body1 && entry.body1.url),
         body2: assetUrl((entry.body2 || entry.body1) && (entry.body2 || entry.body1).url),
@@ -485,12 +492,12 @@
         head1: assetUrl(entry.head1 && entry.head1.url),
         head2: assetUrl((entry.head2 || entry.head1) && (entry.head2 || entry.head1).url)
       };
-      stage.addEventListener('click', function () { tapStage(stage, body, frames); });
+      stage.addEventListener('click', function () { tapStage(stage, body, head, frames); });
       if (frames.head2 && frames.head2 !== frames.head1) {
         blinkTimer = setInterval(function () {
           head.src = frames.head2;
-          tapTimers.push(setTimeout(function () { head.src = frames.head1; }, 160));
-        }, 3200);
+          blinkClose = setTimeout(function () { head.src = frames.head1; blinkClose = null; }, 240);
+        }, 5000);
       }
       noteOf().textContent = '点一下角色试试敲击，眨眼会自动播放。';
     }
@@ -500,17 +507,18 @@
       stage.innerHTML = '';
       if (current) {
         stage.classList.add('wut-atlas-stage--character');
-        var body = addLayer('wut-atlas-body-layer', assetUrl(current.body1 && current.body1.url), current.body1);
         var head = addLayer('wut-atlas-head-layer', assetUrl(current.head1 && current.head1.url), current.head1);
-        stage.appendChild(body);
+        var body = addLayer('wut-atlas-body-layer', assetUrl(current.body1 && current.body1.url), current.body1);
         stage.appendChild(head);
+        stage.appendChild(body);
         var frames = {
           body1: assetUrl(current.body1 && current.body1.url),
           body2: assetUrl((current.body2 || current.body1) && (current.body2 || current.body1).url),
           body3: assetUrl((current.body3 || current.body2 || current.body1) &&
-                          (current.body3 || current.body2 || current.body1).url)
+                          (current.body3 || current.body2 || current.body1).url),
+          head1: assetUrl(current.head1 && current.head1.url)
         };
-        stage.addEventListener('click', function () { tapStage(stage, body, frames); });
+        stage.addEventListener('click', function () { tapStage(stage, body, head, frames); });
       }
       var accessory = addLayer('wut-atlas-accessory-layer', assetUrl(entry.url), entry);
       stage.appendChild(accessory);
