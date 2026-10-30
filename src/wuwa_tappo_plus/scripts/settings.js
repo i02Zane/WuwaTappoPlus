@@ -273,7 +273,7 @@
     var blinkTimer = null;
     var blinkClose = null;
     var controlTimer = null;
-    var bagTimer = null;
+    var entryTimer = null;
     var tapTimers = [];
     var ATLAS_TYPES = { character_skin_atlas: 'character_skin',
                         accessory_atlas: 'accessory',
@@ -405,8 +405,8 @@
         + '#wut-atlas-modal .wut-atlas-actions button{border:1px solid rgba(142,94,67,.3);background:#fff6e9;color:#6a4f3a;border-radius:8px;padding:4px 12px;font-size:12px;cursor:pointer;}'
         + '#wut-atlas-modal .wut-atlas-actions button:disabled{opacity:.5;cursor:wait;}'
         + '#wut-atlas-modal .wut-atlas-hint{margin-top:6px;font-size:11px;color:#8e7b6a;text-align:center;}'
-        + '.wut-accessory-entry{position:absolute;left:6px;top:6px;z-index:3;border:1px solid rgba(142,94,67,.35);background:rgba(255,250,243,.92);color:#6a4f3a;border-radius:999px;padding:2px 10px;font-size:11px;line-height:16px;cursor:pointer;box-shadow:0 2px 6px rgba(60,35,20,.12);}'
-        + '.wut-accessory-entry:hover{background:#fff;color:#b4543c;}'
+        + '.wut-accessory-position{position:absolute;right:0;top:50%;transform:translateY(-50%);height:30px;padding:0 16px;border:2px solid #ebce9b;border-radius:18px;background:#fef6dd;color:#8e7b6a;font-size:18px;line-height:26px;font-family:inherit;cursor:pointer;}'
+        + '.wut-accessory-position:hover{background:#fff;color:#b4543c;}'
         + '#wut-atlas-modal .wut-atlas-loading{display:flex;align-items:center;justify-content:center;height:280px;color:#8e7b6a;font-size:13px;}';
       document.head.appendChild(style);
     }
@@ -741,28 +741,35 @@
       }).catch(function () {});
     }
 
-    // The bag preview keeps a live look of the current cat; put the entry there
-    // instead of covering every atlas accessory tile.
-    function mountBagEntry() {
-      var preview = document.querySelector('.preset-preview');
+    // Put the accessory entry on the rarity-filter row of the accessories tab,
+    // at its far right, instead of covering the preview or every tile.
+    function mountAccessoryEntry() {
+      ensureStyle();
+      var button = document.querySelector('.wut-accessory-position');
+      var active = Array.from(document.querySelectorAll('.atlas-tab-item')).find(function (tab) {
+        return tab.classList.contains('atlas-tab-item--active') &&
+          tab.textContent.trim() === '配件';
+      });
+      var rarity = document.querySelector('.atlas-select .select-item--rarity');
+      var row = rarity ? rarity.closest('.atlas-select') : null;
       var file = S.petAccessory && S.petAccessory.file;
-      var existing = preview && preview.querySelector('.wut-accessory-entry');
-      if (!preview || !file) {
-        if (existing) existing.remove();
+      if (!active || !row || !file) {
+        if (button) button.remove();
         return;
       }
-      if (existing) return;
-      if (getComputedStyle(preview).position === 'static') preview.style.position = 'relative';
-      var button = document.createElement('button');
+      if (button && button.parentElement === row) return;
+      if (button) button.remove();
+      if (getComputedStyle(row).position === 'static') row.style.position = 'relative';
+      button = document.createElement('button');
       button.type = 'button';
-      button.className = 'wut-accessory-entry';
-      button.textContent = '调整配件';
+      button.className = 'wut-accessory-position';
+      button.textContent = '配件位置调整';
       button.addEventListener('click', function (event) {
         event.preventDefault();
         event.stopPropagation();
         openEquippedAccessory();
       });
-      preview.appendChild(button);
+      row.appendChild(button);
     }
 
     function onClick(event) {
@@ -776,9 +783,10 @@
     }
 
     document.addEventListener('click', onClick, true);
-    document.querySelectorAll('.wut-atlas-preview-btn').forEach(function (button) { button.remove(); });
-    mountBagEntry();
-    bagTimer = setInterval(mountBagEntry, 700);
+    document.querySelectorAll('.wut-accessory-entry, .wut-atlas-preview-btn')
+      .forEach(function (button) { button.remove(); });
+    mountAccessoryEntry();
+    entryTimer = setInterval(mountAccessoryEntry, 700);
     window.__WUT_ATLAS__ = {
       version: VERSION,
       _test: { fileOf: fileOf, findAtlas: findAtlas, actualOf: actualOf,
@@ -787,8 +795,8 @@
                openEquippedAccessory: openEquippedAccessory },
       dispose: function () {
         document.removeEventListener('click', onClick, true);
-        if (bagTimer) { clearInterval(bagTimer); bagTimer = null; }
-        document.querySelectorAll('.wut-accessory-entry, .wut-atlas-preview-btn')
+        if (entryTimer) { clearInterval(entryTimer); entryTimer = null; }
+        document.querySelectorAll('.wut-accessory-entry, .wut-accessory-position, .wut-atlas-preview-btn')
           .forEach(function (button) { button.remove(); });
         close();
         var style = document.getElementById(styleId);

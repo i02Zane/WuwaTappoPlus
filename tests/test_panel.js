@@ -6,8 +6,10 @@ const { test } = require('node:test');
 function fixture(preferences = {}) {
   const context = {
     window: { addEventListener() {}, removeEventListener() {} },
-    document: { body: {}, querySelector: () => null, querySelectorAll: () => [],
-      getElementById: () => null, addEventListener() {}, removeEventListener() {} },
+    document: { body: {}, head: { appendChild() {} }, querySelector: () => null,
+      querySelectorAll: () => [], getElementById: () => null,
+      createElement: () => ({ style: {}, setAttribute() {}, appendChild() {} }),
+      addEventListener() {}, removeEventListener() {} },
     MutationObserver: class { observe() {} disconnect() {} },
     setInterval: () => 1, clearInterval() {}, Date, Math, Promise
   };
