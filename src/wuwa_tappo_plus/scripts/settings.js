@@ -377,7 +377,7 @@
       if (document.getElementById(styleId)) return;
       var style = document.createElement('style');
       style.id = styleId;
-      style.textContent = '#wut-atlas-modal{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;background:rgba(46,29,19,.38);}'
+      style.textContent = '#wut-atlas-modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2147483000;background:none;}'
         + '#wut-atlas-modal .wut-atlas-card{width:340px;max-width:calc(100vw - 32px);background:#fffaf3;border:1px solid rgba(142,94,67,.25);border-radius:16px;box-shadow:0 20px 50px rgba(60,35,20,.28);padding:16px 18px 14px;color:#5b4433;}'
         + '#wut-atlas-modal .wut-atlas-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}'
         + '#wut-atlas-modal .wut-atlas-head strong{font-size:17px;color:#5b4433;}'
@@ -432,7 +432,6 @@
         + '<div class="wut-atlas-note"></div></div>';
       modal.querySelector('.wut-atlas-head strong').textContent = name || '未命名';
       modal.querySelector('.wut-atlas-close').addEventListener('click', close);
-      modal.addEventListener('click', function (event) { if (event.target === modal) close(); });
       keyHandler = function (event) { if (event.key === 'Escape') close(); };
       document.addEventListener('keydown', keyHandler);
       document.body.appendChild(modal);
@@ -466,14 +465,17 @@
       return image;
     }
 
+    var tapHand = 'left';
+
     function tapStage(stage, body, head, frames) {
       if (blinkClose) { clearTimeout(blinkClose); blinkClose = null; }
       if (head) head.src = frames.head1;
+      var hand = tapHand;
+      tapHand = hand === 'left' ? 'right' : 'left';
       tapTimers.forEach(function (id) { clearTimeout(id); });
       tapTimers = [];
-      body.src = frames.body3;
-      tapTimers.push(setTimeout(function () { body.src = frames.body2; }, 60));
-      tapTimers.push(setTimeout(function () { body.src = frames.body1; }, 120));
+      body.src = hand === 'left' ? frames.body2 : frames.body3;
+      tapTimers.push(setTimeout(function () { body.src = frames.body1; }, 220));
     }
 
     function characterMarkup(entry) {
