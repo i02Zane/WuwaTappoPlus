@@ -5,7 +5,7 @@ import time
 import tomllib
 from urllib.parse import urlparse
 
-from . import __version__, cdp
+from . import __version__, accessories, cdp
 from .config import CONFIG_PATH, Config, save_preferences, with_preferences
 from .diagnostics import export_logs
 from .paths import SCRIPTS_DIR
@@ -29,7 +29,15 @@ class SettingsBridge:
         self.last_error = None
         self.export_results = {}
 
+    @property
+    def accessories_path(self):
+        return self.config_path.parent / accessories.FILE_NAME
+
     def sync(self, cfg, report=None):
+        try:
+            overrides = accessories.load(self.accessories_path)
+        except OSError:
+            overrides = {}
         try:
             # utf-8-sig: a BOM written by a Windows editor must not look like a
             # broken config, or the switches silently stop applying.
@@ -80,6 +88,18 @@ class SettingsBridge:
                             self.export_results.pop(next(iter(self.export_results)))
                     ack.append(result)
                     continue
+                if request.get("action") == "save_accessory":
+                    try:
+                        overrides = accessories.set_override(
+                            self.accessories_path, request.get("file"),
+                            request.get("x", 0), request.get("y", 0),
+                            request.get("scale", 1), request.get("rotation", 0))
+                        result["action"] = "save_accessory"
+                    except (OSError, TypeError, ValueError) as exc:
+                        result["error"] = True
+                        self._warn("accessory override: %s" % exc)
+                    ack.append(result)
+                    continue
                 if "action" in request:
                     ack.append({"id": request["id"], "error": True})
                     continue
@@ -91,7 +111,8 @@ class SettingsBridge:
                     result["error"] = True
                     self._warn(exc)
                 ack.append(result)
-            payload = json.dumps({"preferences": cfg.preferences, "ack": ack, "report": report})
+            payload = json.dumps({"preferences": cfg.preferences, "accessories": overrides,
+                                  "ack": ack, "report": report})
             self.session.js("window.__WUT_SETTINGS__.update(%s); 1" % payload)
         except (cdp.CDPError, OSError, ValueError, TypeError) as exc:
             self._warn(exc)

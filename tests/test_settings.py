@@ -212,6 +212,17 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(update["ack"], [{"id": "panel"}])
         self.assertFalse(update["preferences"]["remember_screen"])
 
+    def test_accessory_override_is_saved_and_returned(self):
+        _, update = self.sync_request({"id": "acc", "action": "save_accessory",
+                                       "file": "84e5d107.png", "x": 4, "y": -2,
+                                       "scale": 1.2, "rotation": 15})
+        self.assertEqual(update["ack"], [{"id": "acc", "action": "save_accessory"}])
+        path = self.path.parent / "accessory_overrides.json"
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(saved, {"84e5d107.png": {"x": 4.0, "y": -2.0,
+                                                  "scale": 1.2, "rotation": 15.0}})
+        self.assertEqual(update["accessories"], saved)
+
     def test_panel_disconnect_does_not_stop_main_daemon(self):
         self.bridge.session = Mock(target=self.target)
         self.bridge.session.js.side_effect = cdp.CDPError("closed")

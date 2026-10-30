@@ -5,7 +5,7 @@
 
   var S = window.__WUT_SETTINGS__ = {
     version: VERSION, requests: [], beat: 0, report: null,
-    exportPath: null, exportError: false,
+    exportPath: null, exportError: false, accessories: {},
     preferences: { auto_open: true, balance_reminder: true, bubble: true, animation: true,
                    remember_screen: true, auto_emote: false, pause_clicks: false }
   };
@@ -244,6 +244,7 @@
   S.update = function (state) {
     S.beat = Date.now();
     S.preferences = state.preferences;
+    S.accessories = state.accessories || S.accessories || {};
     S.report = state.report || null;
     (state.ack || []).forEach(function (ack) {
       S.requests = S.requests.filter(function (r) { return r.id !== ack.id; });
@@ -265,6 +266,8 @@
     var keyHandler = null;
     var blinkTimer = null;
     var blinkClose = null;
+    var controlTimer = null;
+    var decorateTimer = null;
     var tapTimers = [];
     var ATLAS_TYPES = { character_skin_atlas: 'character_skin',
                         accessory_atlas: 'accessory',
@@ -387,6 +390,17 @@
         + '#wut-atlas-modal .wut-atlas-stage--character{cursor:pointer;}'
         + '#wut-atlas-modal .wut-atlas-emote{display:block;max-width:250px;max-height:250px;margin:0 auto;}'
         + '#wut-atlas-modal .wut-atlas-note{margin-top:6px;font-size:12px;line-height:1.5;color:#8e7b6a;text-align:center;}'
+        + '#wut-atlas-modal .wut-atlas-controls{margin-top:8px;border-top:1px solid rgba(142,94,67,.16);padding-top:8px;}'
+        + '#wut-atlas-modal .wut-atlas-control{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12px;color:#8e7b6a;}'
+        + '#wut-atlas-modal .wut-atlas-control label{flex:none;width:30px;}'
+        + '#wut-atlas-modal .wut-atlas-control input[type=range]{flex:1;min-width:0;accent-color:#b98a5e;}'
+        + '#wut-atlas-modal .wut-atlas-value{flex:none;width:44px;text-align:right;font-variant-numeric:tabular-nums;}'
+        + '#wut-atlas-modal .wut-atlas-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px;}'
+        + '#wut-atlas-modal .wut-atlas-actions button{border:1px solid rgba(142,94,67,.3);background:#fff6e9;color:#6a4f3a;border-radius:8px;padding:4px 12px;font-size:12px;cursor:pointer;}'
+        + '#wut-atlas-modal .wut-atlas-actions button:disabled{opacity:.5;cursor:wait;}'
+        + '#wut-atlas-modal .wut-atlas-hint{margin-top:6px;font-size:11px;color:#8e7b6a;text-align:center;}'
+        + '.wut-atlas-preview-btn{position:absolute;top:4px;right:4px;z-index:2;border:1px solid rgba(142,94,67,.35);background:rgba(255,250,243,.92);color:#6a4f3a;border-radius:999px;padding:1px 8px;font-size:11px;line-height:16px;cursor:pointer;}'
+        + '.wut-atlas-preview-btn:hover{background:#fff;color:#b4543c;}'
         + '#wut-atlas-modal .wut-atlas-loading{display:flex;align-items:center;justify-content:center;height:280px;color:#8e7b6a;font-size:13px;}';
       document.head.appendChild(style);
     }
@@ -394,6 +408,7 @@
     function clearTimers() {
       if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
       if (blinkClose) { clearTimeout(blinkClose); blinkClose = null; }
+      if (controlTimer) { clearInterval(controlTimer); controlTimer = null; }
       tapTimers.forEach(function (id) { clearTimeout(id); });
       tapTimers = [];
     }
@@ -506,6 +521,7 @@
     function accessoryMarkup(entry, current) {
       var stage = stageOf();
       stage.innerHTML = '';
+      stage.classList.remove('wut-atlas-stage--character');
       if (current) {
         stage.classList.add('wut-atlas-stage--character');
         var head = addLayer('wut-atlas-head-layer', assetUrl(current.head1 && current.head1.url), current.head1);
@@ -521,9 +537,109 @@
         };
         stage.addEventListener('click', function () { tapStage(stage, body, head, frames); });
       }
-      var accessory = addLayer('wut-atlas-accessory-layer', assetUrl(entry.url), entry);
+      var baseX = (current ? Number(current.offset_x || 0) : 0) + Number(entry.offset_x || 0);
+      var baseY = (current ? Number(current.offset_y || 0) : 0) + Number(entry.offset_y || 0);
+      var key = fileOf(entry.url);
+      var saved = (S.accessories && S.accessories[key]) || null;
+      var ov = { x: saved ? Number(saved.x) : 0, y: saved ? Number(saved.y) : 0,
+                 scale: saved ? Number(saved.scale) : 1,
+                 rotation: saved ? Number(saved.rotation) : 0 };
+      var accessory = document.createElement('img');
+      accessory.className = 'wut-atlas-layer wut-atlas-accessory-layer';
+      accessory.src = assetUrl(entry.url);
+      accessory.alt = '';
+      accessory.draggable = false;
+      function apply() {
+        accessory.style.transform = 'translate(-50%,-50%) translate(' +
+          ((baseX + ov.x) * 0.5) + 'px, ' + ((baseY + ov.y) * 0.5) + 'px)' +
+          ' scale(' + ov.scale + ') rotate(' + ov.rotation + 'deg)';
+      }
+      apply();
       stage.appendChild(accessory);
       noteOf().textContent = '';
+      accessoryControls(key, ov, apply);
+    }
+
+    function accessoryControls(key, ov, apply) {
+      var card = modal && modal.querySelector('.wut-atlas-card');
+      if (!card) return;
+      var box = document.createElement('div');
+      box.className = 'wut-atlas-controls';
+      var fields = [['x', 'X', -200, 200, 1], ['y', 'Y', -200, 200, 1],
+                    ['scale', '缩放', 0.5, 2, 0.01], ['rotation', '旋转', -180, 180, 1]];
+      var inputs = {};
+      fields.forEach(function (field) {
+        var row = document.createElement('div');
+        row.className = 'wut-atlas-control';
+        var label = document.createElement('label');
+        label.textContent = field[1];
+        var input = document.createElement('input');
+        input.type = 'range';
+        input.min = field[2];
+        input.max = field[3];
+        input.step = field[4];
+        input.value = String(ov[field[0]]);
+        var value = document.createElement('span');
+        value.className = 'wut-atlas-value';
+        value.textContent = formatAccessoryValue(field[0], ov[field[0]]);
+        input.addEventListener('input', function () {
+          ov[field[0]] = Number(input.value);
+          value.textContent = formatAccessoryValue(field[0], ov[field[0]]);
+          apply();
+        });
+        inputs[field[0]] = { input: input, value: value };
+        row.appendChild(label);
+        row.appendChild(input);
+        row.appendChild(value);
+        box.appendChild(row);
+      });
+      var hint = document.createElement('div');
+      hint.className = 'wut-atlas-hint';
+      hint.textContent = '仅影响本机显示；保存后桌宠上的同一个配件也会应用。';
+      box.appendChild(hint);
+      var actions = document.createElement('div');
+      actions.className = 'wut-atlas-actions';
+      var reset = document.createElement('button');
+      reset.type = 'button';
+      reset.textContent = '恢复默认';
+      var save = document.createElement('button');
+      save.type = 'button';
+      save.textContent = '保存';
+      reset.addEventListener('click', function () {
+        ov.x = 0; ov.y = 0; ov.scale = 1; ov.rotation = 0;
+        Object.keys(inputs).forEach(function (name) {
+          inputs[name].input.value = String(ov[name]);
+          inputs[name].value.textContent = formatAccessoryValue(name, ov[name]);
+        });
+        apply();
+        pushAccessorySave(key, ov);
+      });
+      save.addEventListener('click', function () { pushAccessorySave(key, ov); });
+      actions.appendChild(reset);
+      actions.appendChild(save);
+      box.appendChild(actions);
+      card.appendChild(box);
+      if (controlTimer) { clearInterval(controlTimer); controlTimer = null; }
+      controlTimer = setInterval(function () {
+        var pending = S.requests.some(function (request) {
+          return request.action === 'save_accessory' && request.file === key;
+        });
+        save.disabled = pending;
+        save.textContent = pending ? '保存中…' : '保存';
+      }, 300);
+    }
+
+    function formatAccessoryValue(name, value) {
+      if (name === 'scale') return Number(value).toFixed(2);
+      if (name === 'rotation') return String(Math.round(value)) + '°';
+      return String(Math.round(value));
+    }
+
+    function pushAccessorySave(key, ov) {
+      S.requests.push({ id: instance + '-' + (++serial), action: 'save_accessory',
+                        file: key, x: ov.x, y: ov.y, scale: ov.scale, rotation: ov.rotation });
+      error = '';
+      saved = false;
     }
 
     function emoteMarkup(entry) {
@@ -559,13 +675,7 @@
       });
     }
 
-    function onClick(event) {
-      var target = event.target;
-      var item = target && target.closest ? target.closest('.atlas-item--unowned') : null;
-      if (!item || !item.closest('.atlas-module')) return;
-      if (event.button && event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
+    function openItemPreview(item) {
       var classes = item.className;
       var kind = /character_skin/.test(classes) ? 'character'
         : /accessory/.test(classes) ? 'accessory' : 'emote';
@@ -575,14 +685,50 @@
       openPreview(kind, nameNode ? nameNode.textContent.trim() : '', image.src);
     }
 
+    // Owned accessories keep the app's click (equip); this small button opens our
+    // preview for them, which is also where the local transform is adjusted.
+    function decorate() {
+      document.querySelectorAll('.atlas-item--accessory, .atlas-item--accessory_atlas').forEach(function (item) {
+        if (item.querySelector('.wut-atlas-preview-btn')) return;
+        if (getComputedStyle(item).position === 'static') item.style.position = 'relative';
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'wut-atlas-preview-btn';
+        button.textContent = '预览';
+        item.appendChild(button);
+      });
+    }
+
+    function onClick(event) {
+      var target = event.target;
+      var button = target && target.closest ? target.closest('.wut-atlas-preview-btn') : null;
+      if (button) {
+        var clicked = button.closest('.atlas-item');
+        if (!clicked || !clicked.closest('.atlas-module')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        openItemPreview(clicked);
+        return;
+      }
+      var item = target && target.closest ? target.closest('.atlas-item--unowned') : null;
+      if (!item || !item.closest('.atlas-module')) return;
+      if (event.button && event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openItemPreview(item);
+    }
+
     document.addEventListener('click', onClick, true);
+    decorate();
+    decorateTimer = setInterval(decorate, 800);
     window.__WUT_ATLAS__ = {
       version: VERSION,
       _test: { fileOf: fileOf, findAtlas: findAtlas, actualOf: actualOf,
                currentCharacter: currentCharacter, offsetOf: offsetOf,
-               openPreview: openPreview },
+               openPreview: openPreview, openItemPreview: openItemPreview },
       dispose: function () {
         document.removeEventListener('click', onClick, true);
+        if (decorateTimer) { clearInterval(decorateTimer); decorateTimer = null; }
         close();
         var style = document.getElementById(styleId);
         if (style) style.remove();

@@ -979,10 +979,79 @@
   }
 
   // Always re-arm the grace wake-up, whichever path the step took.
+  var accessoryState = { file: '', base: null, applied: '' };
+  var accessoryObserver = null;
+  var accessoryLayer = null;
+
+  function observeAccessory(layer) {
+    if (accessoryLayer === layer && accessoryObserver) return;
+    if (accessoryObserver) accessoryObserver.disconnect();
+    accessoryLayer = layer;
+    accessoryObserver = new MutationObserver(function () { applyAccessoryOverride(); });
+    accessoryObserver.observe(layer, { attributes: true, attributeFilter: ['style', 'src'] });
+  }
+
+  function accessoryFile(url) {
+    var parts = String(url || '').split('?')[0].split('/');
+    return (parts[parts.length - 1] || '').toLowerCase();
+  }
+
+  function translateOf(style) {
+    var match = /translate\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px\s*\)/.exec(String(style || ''));
+    return match ? { x: parseFloat(match[1]), y: parseFloat(match[2]) } : { x: 0, y: 0 };
+  }
+
+  // The app positions the accessory with the character's own offset; these local
+  // overrides add to it and only change what this computer draws.
+  function applyAccessoryOverride() {
+    var layer = document.querySelector('.cat-stack__layer');
+    if (!layer) {
+      if (accessoryObserver) { accessoryObserver.disconnect(); accessoryObserver = null; }
+      accessoryLayer = null;
+      accessoryState = { file: '', base: null, applied: '' };
+      return;
+    }
+    // The app rewrites the layer's inline transform several times a second, so
+    // watching it is the only way the custom transform survives.
+    observeAccessory(layer);
+    var overrides = window.__WUT_ACCESSORY_OVERRIDES__ || {};
+    var file = accessoryFile(layer.src);
+    var override = overrides[file];
+    var current = String(layer.style.transform || '');
+    if (!override) {
+      if (accessoryState.applied && current === accessoryState.applied) {
+        layer.style.transform = accessoryState.base || '';
+      }
+      accessoryState = { file: '', base: null, applied: '' };
+      return;
+    }
+    var base;
+    if (accessoryState.file === file && accessoryState.applied &&
+        current === accessoryState.applied) {
+      base = accessoryState.base || '';
+    } else {
+      // The app rewrote the layer (character/accessory change): adopt its base.
+      base = current;
+      accessoryState.file = file;
+      accessoryState.base = base;
+    }
+    var translate = translateOf(base);
+    var x = translate.x + Number(override.x || 0);
+    var y = translate.y + Number(override.y || 0);
+    var scale = Number(override.scale || 1);
+    var rotation = Number(override.rotation || 0);
+    var next = 'translate(' + x + 'px, ' + y + 'px)';
+    if (scale !== 1) next += ' scale(' + scale + ')';
+    if (rotation) next += ' rotate(' + rotation + 'deg)';
+    if (current !== next) layer.style.transform = next;
+    accessoryState.applied = next;
+  }
+
   function tick() {
     syncClickPause();
     step();
     planGrace();
+    applyAccessoryOverride();
   }
 
   // Wake exactly when the earliest due chest clears its grace window, so the
@@ -1048,6 +1117,8 @@
     restoreClickActions();
     restoreClickTransport();
     clearInterval(A.timer);
+    if (accessoryObserver) { accessoryObserver.disconnect(); accessoryObserver = null; }
+    accessoryLayer = null;
     if (graceTimer) clearTimeout(graceTimer);
     A.obs.disconnect();
     if (stopChestAction) stopChestAction();

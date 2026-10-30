@@ -8,7 +8,7 @@ import traceback
 from collections import deque
 from datetime import datetime
 
-from . import __version__, cdp, win
+from . import __version__, accessories, cdp, win
 from .config import INJECT_PATH, LOG_DIR, LOCK_PATH, STATE_PATH, load
 from .logs import Log
 from .settings import SettingsBridge
@@ -102,6 +102,8 @@ class Runner:
         self.alert_level = None
         self._lock_handle = None
         self._stop = False
+        self._accessory_key = None
+        self._accessory_session = None
 
     # ------------------------------------------------------------- plumbing
 
@@ -199,6 +201,24 @@ class Runner:
         if payload.get("inject") != want:
             raise cdp.CDPError("injection did not take effect")
         return payload
+
+    def apply_accessories(self):
+        """Push saved accessory transforms to the pet page when they change."""
+        path = self.settings.accessories_path
+        try:
+            stat = path.stat()
+            key = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            key = None
+        session = self.session
+        sid = id(session) if session is not None else None
+        if key == self._accessory_key and sid == self._accessory_session:
+            return
+        overrides = accessories.load(path) if key is not None else {}
+        session.js("window.__WUT_ACCESSORY_OVERRIDES__ = %s; 1"
+                   % json.dumps(overrides, ensure_ascii=False))
+        self._accessory_key = key
+        self._accessory_session = sid
 
     # ---------------------------------------------------------------- clicks
 
@@ -441,6 +461,11 @@ class Runner:
                     self.chests.observe(payload.get("chestCache"))
                     snapshot = payload.get("state")
                     self.reports.observe(snapshot)
+
+                    try:
+                        self.apply_accessories()
+                    except Exception as exc:
+                        self.log.warn("accessories: %s" % str(exc)[:160])
 
                     self.drain_clicks(payload.get("clicks"))
                     self.note_block(payload.get("block"), snapshot)
