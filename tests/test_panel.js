@@ -6,7 +6,8 @@ const { test } = require('node:test');
 function fixture(preferences = {}) {
   const context = {
     window: { addEventListener() {}, removeEventListener() {} },
-    document: { body: {}, querySelector: () => null, getElementById: () => null },
+    document: { body: {}, querySelector: () => null, getElementById: () => null,
+      addEventListener() {}, removeEventListener() {} },
     MutationObserver: class { observe() {} disconnect() {} },
     setInterval: () => 1, clearInterval() {}, Date, Math, Promise
   };
@@ -29,6 +30,35 @@ test('settings use the product version and replace different script versions onl
   assert.equal(uninstalled, 1);
   assert.equal(f.context.window.__WUT_SETTINGS__.version, version);
   assert.notEqual(f.context.window.__WUT_SETTINGS__, old);
+});
+
+test('atlas preview maps an icon file to the real appearance entry', () => {
+  const f = fixture();
+  const atlas = f.context.window.__WUT_ATLAS__;
+  assert.ok(atlas);
+  const payload = {
+    character_skin_atlas: { 1123: { url: 'character_atlas/a.png?v=1', height_light_id: 8 } },
+    character_skin: { 8: { game_role_id: 1107,
+      body1: { url: 'character/b1.png' }, body2: { url: 'character/b2.png' },
+      body3: { url: 'character/b3.png' }, head1: { url: 'character/h1.png' },
+      head2: { url: 'character/h2.png' } } },
+    accessory_atlas: { 1390: { url: 'accessory_atlas/x.png', height_light_id: 1345 } },
+    accessory: { 1345: { url: 'accessory/x.png' } },
+    emote_atlas: { 1774: { url: 'emote_atlas/e.png', height_light_id: 1615 } },
+    emote: { 1615: { url: 'emote/e.png' } }
+  };
+  const found = atlas._test.findAtlas(payload, 'http://host/character_atlas/a.png?t=2');
+  assert.equal(found.actualType, 'character_skin');
+  assert.equal(found.height, 8);
+  assert.equal(atlas._test.actualOf(payload, found).game_role_id, 1107);
+  const acc = atlas._test.findAtlas(payload, 'http://host/accessory_atlas/x.png');
+  assert.equal(atlas._test.actualOf(payload, acc).url, 'accessory/x.png');
+  const emote = atlas._test.findAtlas(payload, 'http://host/emote_atlas/e.png');
+  assert.equal(atlas._test.actualOf(payload, emote).url, 'emote/e.png');
+  const current = atlas._test.currentCharacter(payload, { role_id: '1107', character: { name: 'h1.png' } });
+  assert.equal(current.game_role_id, 1107);
+  assert.equal(atlas._test.offsetOf({ my_offset_x: 2, my_offset_y: 3 }).join(','), '2,3');
+  assert.equal(atlas._test.offsetOf({ offset_x: -2, offset_y: 16 }).join(','), '-2,16');
 });
 
 test('daily report renders zero, missing history and unavailable storage distinctly', () => {

@@ -257,10 +257,337 @@
     });
     mount(); render();
   };
+  function createAtlasView() {
+    var styleId = 'wut-atlas-style';
+    var catalog = null;
+    var loading = null;
+    var modal = null;
+    var keyHandler = null;
+    var blinkTimer = null;
+    var tapTimers = [];
+    var ATLAS_TYPES = { character_skin_atlas: 'character_skin',
+                        accessory_atlas: 'accessory',
+                        emote_atlas: 'emote' };
+    var KIND = { character: '角色', accessory: '配件', emote: '表情' };
+
+    function fileOf(url) {
+      var text = String(url || '').split('?')[0];
+      var parts = text.split('/');
+      return (parts.length ? parts[parts.length - 1] : text).toLowerCase();
+    }
+
+    function offsetOf(layer) {
+      if (!layer) return [0, 0];
+      var x = Number(layer.my_offset_x || 0);
+      var y = Number(layer.my_offset_y || 0);
+      if (!x && !y) { x = Number(layer.offset_x || 0); y = Number(layer.offset_y || 0); }
+      return [x, y];
+    }
+
+    function place(image, layer, scale) {
+      var offset = offsetOf(layer);
+      image.style.transform = 'translate(-50%, -50%) translate(' +
+        (offset[0] * scale) + 'px, ' + (offset[1] * scale) + 'px)';
+    }
+
+    function assetUrl(rel) {
+      var text = String(rel || '').trim();
+      if (!text) return '';
+      if (/^https?:\/\//i.test(text)) return text;
+      var host = String(catalog && catalog.host || '').replace(/\/+$/, '');
+      return host ? host + '/' + text.replace(/^\/+/, '') : text;
+    }
+
+    function loadCatalog() {
+      if (catalog) return Promise.resolve(catalog);
+      if (loading) return loading;
+      loading = new Promise(function (resolve, reject) {
+        var request;
+        try { request = indexedDB.open('wuwatappo_appearance_asset', 1); }
+        catch (e) { reject(e); return; }
+        request.onerror = function () { reject(request.error || new Error('indexedDB error')); };
+        request.onsuccess = function () {
+          var db = request.result;
+          try {
+            var tx = db.transaction('catalog', 'readonly');
+            var get = tx.objectStore('catalog').get('appearance_asset_catalog_v1');
+            get.onsuccess = function () {
+              var record = get.result;
+              if (!record || !record.payload) { reject(new Error('外观数据未缓存')); return; }
+              catalog = { payload: record.payload, host: record.assets_host || '' };
+              resolve(catalog);
+            };
+            get.onerror = function () { reject(get.error || new Error('外观数据读取失败')); };
+          } catch (e) { reject(e); }
+        };
+      });
+      return loading;
+    }
+
+    function findAtlas(payload, iconUrl) {
+      var file = fileOf(iconUrl);
+      var found = null;
+      Object.keys(ATLAS_TYPES).forEach(function (type) {
+        var map = payload[type] || {};
+        Object.keys(map).forEach(function (id) {
+          var entry = map[id];
+          if (!found && entry && entry.url && fileOf(entry.url) === file) {
+            found = { atlasType: type, actualType: ATLAS_TYPES[type], atlasId: id,
+                      height: entry.height_light_id, entry: entry };
+          }
+        });
+      });
+      return found;
+    }
+
+    function actualOf(payload, atlas) {
+      if (!atlas || !atlas.height) return null;
+      return (payload[atlas.actualType] || {})[String(atlas.height)] || null;
+    }
+
+    function currentCharacter(payload, user) {
+      if (!payload || !payload.character_skin) return null;
+      var name = user && user.character && user.character.name ? fileOf(user.character.name) : '';
+      var role = user && user.role_id ? String(user.role_id) : '';
+      var byName = null;
+      var byRole = null;
+      Object.keys(payload.character_skin).forEach(function (id) {
+        var entry = payload.character_skin[id];
+        if (!entry) return;
+        if (!byRole && role && String(entry.game_role_id) === role) byRole = entry;
+        if (name && (fileOf(entry.url) === name ||
+            (entry.body1 && fileOf(entry.body1.url) === name) ||
+            (entry.head1 && fileOf(entry.head1.url) === name))) byName = entry;
+      });
+      return byName || byRole;
+    }
+
+    function currentUser() {
+      try {
+        var root = document.querySelector('#app');
+        var app = root && root.__vue_app__;
+        var pinia = app && app.config.globalProperties.$pinia;
+        var state = pinia && pinia._s.get('GlobalState');
+        return state && state.$state ? state.$state.userInfo : null;
+      } catch (e) { return null; }
+    }
+
+    function ensureStyle() {
+      if (document.getElementById(styleId)) return;
+      var style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = '#wut-atlas-modal{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;background:rgba(46,29,19,.38);}'
+        + '#wut-atlas-modal .wut-atlas-card{width:340px;max-width:calc(100vw - 32px);background:#fffaf3;border:1px solid rgba(142,94,67,.25);border-radius:16px;box-shadow:0 20px 50px rgba(60,35,20,.28);padding:16px 18px 14px;color:#5b4433;}'
+        + '#wut-atlas-modal .wut-atlas-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}'
+        + '#wut-atlas-modal .wut-atlas-head strong{font-size:17px;color:#5b4433;}'
+        + '#wut-atlas-modal .wut-atlas-kind{display:block;margin-top:2px;font-size:12px;color:#8e7b6a;}'
+        + '#wut-atlas-modal .wut-atlas-close{border:0;background:transparent;color:#8e7b6a;font-size:22px;line-height:1;cursor:pointer;padding:0 2px;}'
+        + '#wut-atlas-modal .wut-atlas-close:hover{color:#b4543c;}'
+        + '#wut-atlas-modal .wut-atlas-stage{position:relative;width:280px;height:280px;margin:12px auto 6px;border-radius:14px;background:radial-gradient(circle at 50% 42%,#fff 0%,#fdf3e6 55%,#f6e4cf 100%);overflow:hidden;}'
+        + '#wut-atlas-modal .wut-atlas-layer{position:absolute;left:50%;top:50%;width:280px;height:280px;transform:translate(-50%,-50%);pointer-events:none;user-select:none;}'
+        + '#wut-atlas-modal .wut-atlas-stage--character{cursor:pointer;}'
+        + '#wut-atlas-modal .wut-atlas-stage--character:active{transform:scale(.985);}'
+        + '#wut-atlas-modal .wut-atlas-tap{animation:wut-atlas-tap .34s ease;}'
+        + '@keyframes wut-atlas-tap{0%{transform:translateY(0) scale(1,1);}30%{transform:translateY(-9px) scale(.98,1.04);}55%{transform:translateY(0) scale(1.03,.97);}100%{transform:translateY(0) scale(1,1);}}'
+        + '#wut-atlas-modal .wut-atlas-emote{display:block;max-width:250px;max-height:250px;margin:0 auto;}'
+        + '#wut-atlas-modal .wut-atlas-note{margin-top:6px;font-size:12px;line-height:1.5;color:#8e7b6a;text-align:center;}'
+        + '#wut-atlas-modal .wut-atlas-loading{display:flex;align-items:center;justify-content:center;height:280px;color:#8e7b6a;font-size:13px;}';
+      document.head.appendChild(style);
+    }
+
+    function clearTimers() {
+      if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null; }
+      tapTimers.forEach(function (id) { clearTimeout(id); });
+      tapTimers = [];
+    }
+
+    function close() {
+      clearTimers();
+      if (keyHandler) { document.removeEventListener('keydown', keyHandler); keyHandler = null; }
+      if (modal && modal.parentNode) modal.parentNode.removeChild(modal);
+      modal = null;
+    }
+
+    function build(kind, name) {
+      close();
+      ensureStyle();
+      modal = document.createElement('div');
+      modal.id = 'wut-atlas-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      modal.innerHTML = '<div class="wut-atlas-card">'
+        + '<div class="wut-atlas-head"><div><strong></strong><span class="wut-atlas-kind">'
+        + KIND[kind] + '预览 · 未获得</span></div>'
+        + '<button type="button" class="wut-atlas-close" aria-label="关闭">×</button></div>'
+        + '<div class="wut-atlas-stage"><div class="wut-atlas-loading">正在加载预览…</div></div>'
+        + '<div class="wut-atlas-note"></div></div>';
+      modal.querySelector('.wut-atlas-head strong').textContent = name || '未命名';
+      modal.querySelector('.wut-atlas-close').addEventListener('click', close);
+      modal.addEventListener('click', function (event) { if (event.target === modal) close(); });
+      keyHandler = function (event) { if (event.key === 'Escape') close(); };
+      document.addEventListener('keydown', keyHandler);
+      document.body.appendChild(modal);
+      return modal;
+    }
+
+    function stageOf() { return modal && modal.querySelector('.wut-atlas-stage'); }
+    function noteOf() { return modal && modal.querySelector('.wut-atlas-note'); }
+
+    function fallback(iconSrc, text) {
+      var stage = stageOf();
+      if (!stage) return;
+      stage.innerHTML = '';
+      stage.classList.remove('wut-atlas-stage--character');
+      var image = document.createElement('img');
+      image.className = 'wut-atlas-emote';
+      image.src = iconSrc;
+      image.alt = '';
+      image.draggable = false;
+      stage.appendChild(image);
+      noteOf().textContent = text;
+    }
+
+    function addLayer(className, src, layer) {
+      var image = document.createElement('img');
+      image.className = 'wut-atlas-layer ' + className;
+      image.src = src;
+      image.alt = '';
+      image.draggable = false;
+      place(image, layer, 0.5);
+      return image;
+    }
+
+    function tapStage(stage, body, frames) {
+      tapTimers.forEach(function (id) { clearTimeout(id); });
+      tapTimers = [];
+      stage.classList.remove('wut-atlas-tap');
+      void stage.offsetWidth;
+      stage.classList.add('wut-atlas-tap');
+      body.src = frames.body2;
+      tapTimers.push(setTimeout(function () { body.src = frames.body3; }, 110));
+      tapTimers.push(setTimeout(function () { body.src = frames.body1; }, 220));
+      tapTimers.push(setTimeout(function () { stage.classList.remove('wut-atlas-tap'); }, 360));
+    }
+
+    function characterMarkup(entry) {
+      var stage = stageOf();
+      stage.innerHTML = '';
+      stage.classList.add('wut-atlas-stage--character');
+      var body = addLayer('wut-atlas-body-layer', assetUrl(entry.body1 && entry.body1.url), entry.body1);
+      var head = addLayer('wut-atlas-head-layer', assetUrl(entry.head1 && entry.head1.url), entry.head1);
+      stage.appendChild(body);
+      stage.appendChild(head);
+      var frames = {
+        body1: assetUrl(entry.body1 && entry.body1.url),
+        body2: assetUrl((entry.body2 || entry.body1) && (entry.body2 || entry.body1).url),
+        body3: assetUrl((entry.body3 || entry.body2 || entry.body1) &&
+                        (entry.body3 || entry.body2 || entry.body1).url),
+        head1: assetUrl(entry.head1 && entry.head1.url),
+        head2: assetUrl((entry.head2 || entry.head1) && (entry.head2 || entry.head1).url)
+      };
+      stage.addEventListener('click', function () { tapStage(stage, body, frames); });
+      if (frames.head2 && frames.head2 !== frames.head1) {
+        blinkTimer = setInterval(function () {
+          head.src = frames.head2;
+          tapTimers.push(setTimeout(function () { head.src = frames.head1; }, 160));
+        }, 3200);
+      }
+      noteOf().textContent = '点一下角色试试敲击，眨眼会自动播放。';
+    }
+
+    function accessoryMarkup(entry, current) {
+      var stage = stageOf();
+      stage.innerHTML = '';
+      if (current) {
+        stage.classList.add('wut-atlas-stage--character');
+        var body = addLayer('wut-atlas-body-layer', assetUrl(current.body1 && current.body1.url), current.body1);
+        var head = addLayer('wut-atlas-head-layer', assetUrl(current.head1 && current.head1.url), current.head1);
+        stage.appendChild(body);
+        stage.appendChild(head);
+        var frames = {
+          body1: assetUrl(current.body1 && current.body1.url),
+          body2: assetUrl((current.body2 || current.body1) && (current.body2 || current.body1).url),
+          body3: assetUrl((current.body3 || current.body2 || current.body1) &&
+                          (current.body3 || current.body2 || current.body1).url)
+        };
+        stage.addEventListener('click', function () { tapStage(stage, body, frames); });
+      }
+      var accessory = addLayer('wut-atlas-accessory-layer', assetUrl(entry.url), entry);
+      stage.appendChild(accessory);
+      noteOf().textContent = current ? '已叠加到当前角色。' : '未找到当前角色，仅显示配件。';
+    }
+
+    function emoteMarkup(entry) {
+      var stage = stageOf();
+      stage.innerHTML = '';
+      stage.classList.remove('wut-atlas-stage--character');
+      var image = document.createElement('img');
+      image.className = 'wut-atlas-emote';
+      image.src = assetUrl(entry.url);
+      image.alt = '';
+      image.draggable = false;
+      stage.appendChild(image);
+      noteOf().textContent = '表情原样展示。';
+    }
+
+    function openPreview(kind, name, iconSrc) {
+      build(kind, name);
+      loadCatalog().then(function (data) {
+        var atlas = findAtlas(data.payload, iconSrc);
+        var entry = actualOf(data.payload, atlas);
+        if (kind === 'character') {
+          if (entry && entry.body1 && entry.head1) characterMarkup(entry);
+          else fallback(iconSrc, '暂无全身素材，显示图鉴图标。');
+        } else if (kind === 'accessory') {
+          if (entry && entry.url) accessoryMarkup(entry, currentCharacter(data.payload, currentUser()));
+          else fallback(iconSrc, '暂无配件素材，显示图鉴图标。');
+        } else {
+          if (entry && entry.url) emoteMarkup(entry);
+          else fallback(iconSrc, '暂无表情素材，显示图鉴图标。');
+        }
+      }).catch(function () {
+        fallback(iconSrc, '外观数据暂不可用，显示图鉴图标。');
+      });
+    }
+
+    function onClick(event) {
+      var target = event.target;
+      var item = target && target.closest ? target.closest('.atlas-item--unowned') : null;
+      if (!item || !item.closest('.atlas-module')) return;
+      if (event.button && event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      var classes = item.className;
+      var kind = /character_skin/.test(classes) ? 'character'
+        : /accessory/.test(classes) ? 'accessory' : 'emote';
+      var nameNode = item.querySelector('.atlas-name');
+      var image = item.querySelector('.atlas-thumb img') || item.querySelector('img');
+      if (!image || !image.src) return;
+      openPreview(kind, nameNode ? nameNode.textContent.trim() : '', image.src);
+    }
+
+    document.addEventListener('click', onClick, true);
+    window.__WUT_ATLAS__ = {
+      version: VERSION,
+      _test: { fileOf: fileOf, findAtlas: findAtlas, actualOf: actualOf,
+               currentCharacter: currentCharacter, offsetOf: offsetOf,
+               openPreview: openPreview },
+      dispose: function () {
+        document.removeEventListener('click', onClick, true);
+        close();
+        var style = document.getElementById(styleId);
+        if (style) style.remove();
+        delete window.__WUT_ATLAS__;
+      }
+    };
+    return window.__WUT_ATLAS__;
+  }
+  var atlasView = createAtlasView();
   var observer = new MutationObserver(mount);
   observer.observe(document.body, { childList: true, subtree: true });
   var timer = setInterval(function () { mount(); render(); }, 1000);
   S.uninstall = function () {
+    atlasView.dispose();
     observer.disconnect(); clearInterval(timer);
     [HOST, STYLE].forEach(function (id) {
       var element = document.getElementById(id);
