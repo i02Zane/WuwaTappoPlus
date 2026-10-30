@@ -269,7 +269,6 @@
     var ATLAS_TYPES = { character_skin_atlas: 'character_skin',
                         accessory_atlas: 'accessory',
                         emote_atlas: 'emote' };
-    var KIND = { character: '角色', accessory: '配件', emote: '表情' };
 
     function fileOf(url) {
       var text = String(url || '').split('?')[0];
@@ -377,11 +376,10 @@
       if (document.getElementById(styleId)) return;
       var style = document.createElement('style');
       style.id = styleId;
-      style.textContent = '#wut-atlas-modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2147483000;background:none;}'
+      style.textContent = '#wut-atlas-modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2147483000;background:none;user-select:none;-webkit-user-select:none;}'
         + '#wut-atlas-modal .wut-atlas-card{width:340px;max-width:calc(100vw - 32px);background:#fffaf3;border:1px solid rgba(142,94,67,.25);border-radius:16px;box-shadow:0 20px 50px rgba(60,35,20,.28);padding:16px 18px 14px;color:#5b4433;}'
         + '#wut-atlas-modal .wut-atlas-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}'
         + '#wut-atlas-modal .wut-atlas-head strong{font-size:17px;color:#5b4433;}'
-        + '#wut-atlas-modal .wut-atlas-kind{display:block;margin-top:2px;font-size:12px;color:#8e7b6a;}'
         + '#wut-atlas-modal .wut-atlas-close{border:0;background:transparent;color:#8e7b6a;font-size:22px;line-height:1;cursor:pointer;padding:0 2px;}'
         + '#wut-atlas-modal .wut-atlas-close:hover{color:#b4543c;}'
         + '#wut-atlas-modal .wut-atlas-stage{position:relative;width:280px;height:280px;margin:12px auto 6px;border-radius:14px;background:transparent;overflow:hidden;}'
@@ -425,8 +423,7 @@
       modal.setAttribute('aria-modal', 'true');
       modal.style.fontFamily = appFont();
       modal.innerHTML = '<div class="wut-atlas-card">'
-        + '<div class="wut-atlas-head"><div><strong></strong><span class="wut-atlas-kind">'
-        + KIND[kind] + '预览 · 未获得</span></div>'
+        + '<div class="wut-atlas-head"><div><strong></strong></div>'
         + '<button type="button" class="wut-atlas-close" aria-label="关闭">×</button></div>'
         + '<div class="wut-atlas-stage"><div class="wut-atlas-loading">正在加载预览…</div></div>'
         + '<div class="wut-atlas-note"></div></div>';
@@ -501,7 +498,7 @@
           blinkClose = setTimeout(function () { head.src = frames.head1; blinkClose = null; }, 240);
         }, 5000);
       }
-      noteOf().textContent = '点一下角色试试敲击，眨眼会自动播放。';
+      noteOf().textContent = '点击预览敲击动画';
     }
 
     function accessoryMarkup(entry, current) {
@@ -524,7 +521,7 @@
       }
       var accessory = addLayer('wut-atlas-accessory-layer', assetUrl(entry.url), entry);
       stage.appendChild(accessory);
-      noteOf().textContent = current ? '已叠加到当前角色。' : '未找到当前角色，仅显示配件。';
+      noteOf().textContent = '';
     }
 
     function emoteMarkup(entry) {
@@ -537,7 +534,7 @@
       image.alt = '';
       image.draggable = false;
       stage.appendChild(image);
-      noteOf().textContent = '表情原样展示。';
+      noteOf().textContent = '';
     }
 
     function openPreview(kind, name, iconSrc) {
