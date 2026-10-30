@@ -3,33 +3,17 @@ const vm = require('node:vm');
 const { version, loadScript } = require('./scripts');
 const { test } = require('node:test');
 
-function fixture(invoke, preferences = { keep_panel_open: true }) {
-  const calls = [];
-  const listeners = new Map();
+function fixture(preferences = {}) {
   const context = {
-    window: { addEventListener(name, callback) { listeners.set(name, callback); },
-      removeEventListener(name) { listeners.delete(name); },
-      __TAURI_INTERNALS__: { invoke(command, args) {
-      calls.push({ command, args: JSON.parse(JSON.stringify(args)) });
-      return invoke ? invoke(command, args) : Promise.resolve();
-    }}},
+    window: { addEventListener() {}, removeEventListener() {} },
     document: { body: {}, querySelector: () => null, getElementById: () => null },
     MutationObserver: class { observe() {} disconnect() {} },
     setInterval: () => 1, clearInterval() {}, Date, Math, Promise
   };
   vm.runInNewContext(loadScript('settings.js'), context);
   context.window.__WUT_SETTINGS__.update({ preferences, ack: [] });
-  return { calls, settings: context.window.__WUT_SETTINGS__, context, listeners };
+  return { settings: context.window.__WUT_SETTINGS__, context };
 }
-
-test('panel uses native outside-click control without reopening or stealing focus', async () => {
-  const f = fixture();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(f.calls, [{ command: 'set_skip_panel_outside_click_close', args: { skip: true } }]);
-  f.settings.update({ preferences: {}, ack: [] });
-  f.settings.update({ preferences: {}, ack: [] });
-  assert.equal(f.calls.length, 1);
-});
 
 test('settings use the product version and replace different script versions only once', () => {
   const f = fixture();
@@ -45,62 +29,6 @@ test('settings use the product version and replace different script versions onl
   assert.equal(uninstalled, 1);
   assert.equal(f.context.window.__WUT_SETTINGS__.version, version);
   assert.notEqual(f.context.window.__WUT_SETTINGS__, old);
-});
-
-test('removing Plus restores the original outside-click behavior', async () => {
-  const f = fixture();
-  await new Promise(resolve => setImmediate(resolve));
-  f.settings.uninstall();
-  assert.deepEqual(f.calls.at(-1), {
-    command: 'set_skip_panel_outside_click_close', args: { skip: false }
-  });
-  assert.equal(f.context.window.__WUT_SETTINGS__, undefined);
-});
-
-test('unsupported native command is reported and can retry without breaking settings', async () => {
-  let attempts = 0;
-  const f = fixture(() => ++attempts === 1 ? Promise.reject('unavailable') : Promise.resolve());
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(f.settings.panelError, 'unavailable');
-  f.settings.update({ preferences: {}, ack: [] });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(f.calls.length, 2);
-  assert.equal(f.settings.panelError, null);
-});
-
-test('synchronous native errors do not break mounting settings', async () => {
-  const f = fixture(() => { throw new Error('bridge not ready'); });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.match(f.settings.panelError, /bridge not ready/);
-  assert.equal(typeof f.settings.update, 'function');
-});
-
-test('saved disabled preference is applied without briefly enabling keep-open', async () => {
-  const f = fixture(undefined, { keep_panel_open: false });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(f.calls, [{ command: 'set_skip_panel_outside_click_close', args: { skip: false } }]);
-});
-
-test('toggle can enable and disable native keep-open without touching manual close', async () => {
-  const f = fixture();
-  await new Promise(resolve => setImmediate(resolve));
-  f.settings.update({ preferences: { keep_panel_open: false }, ack: [] });
-  await new Promise(resolve => setImmediate(resolve));
-  f.settings.update({ preferences: { keep_panel_open: true }, ack: [] });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(f.calls.map(call => call.args.skip), [true, false, true]);
-  assert.ok(f.calls.every(call => call.command === 'set_skip_panel_outside_click_close'));
-});
-
-test('refocusing a reopened panel reapplies its preference and uninstall removes listener', async () => {
-  const f = fixture();
-  await new Promise(resolve => setImmediate(resolve));
-  f.listeners.get('focus')();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(f.calls.length, 2);
-  assert.equal(f.calls[1].args.skip, true);
-  f.settings.uninstall();
-  assert.equal(f.listeners.has('focus'), false);
 });
 
 test('daily report renders zero, missing history and unavailable storage distinctly', () => {

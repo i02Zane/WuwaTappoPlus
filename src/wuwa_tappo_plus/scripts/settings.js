@@ -4,9 +4,9 @@
   if (window.__WUT_SETTINGS__) window.__WUT_SETTINGS__.uninstall();
 
   var S = window.__WUT_SETTINGS__ = {
-    version: VERSION, requests: [], beat: 0, panelError: null, report: null,
+    version: VERSION, requests: [], beat: 0, report: null,
     exportPath: null, exportError: false,
-    preferences: { auto_open: true, balance_reminder: true, bubble: true, animation: true, keep_panel_open: true,
+    preferences: { auto_open: true, balance_reminder: true, bubble: true, animation: true,
                    remember_screen: true, auto_emote: false, pause_clicks: false }
   };
   var HOST = 'wut-plus-settings';
@@ -16,34 +16,13 @@
   var error = '';
   var saved = false;
   var reportKey = '';
-  var nativePinned = null;
-  var pinPending = false;
-  var disposed = false;
 
-  function keepPanelOpen() {
-    var desired = S.preferences.keep_panel_open !== false;
-    if (disposed || nativePinned === desired || pinPending) return;
-    pinPending = true;
-    var request;
-    try {
-      request = window.__TAURI_INTERNALS__.invoke(
-        'set_skip_panel_outside_click_close', { skip: desired }
-      );
-    } catch (e) { request = Promise.reject(e); }
-    Promise.resolve(request).then(function () {
-      nativePinned = desired;
-      S.panelError = null;
-    }, function (e) { S.panelError = String(e); }).then(function () {
-      pinPending = false;
-    });
-  }
   var definitions = [
     ['auto_open', '自动开箱', '宝箱到期且余额充足时自动开启，关闭后仍显示倒计时。'],
     ['auto_emote', '自动发表情', '桌宠会跟随敲击自动发送一个已装备的表情，每秒最多发送20次'],
     ['balance_reminder', '余额提醒', '余额不足时提醒，并显示宝箱倒计时；不影响其他气泡。'],
     ['bubble', '气泡显示', '显示 Plus 气泡，包括余额提醒和小黑屋模式文字。'],
     ['animation', '气泡动画', '让气泡轻轻跳动；关闭后保留静态气泡。'],
-    ['keep_panel_open', '主窗口保持打开', '点击其他窗口时不自动收起，仍可使用关闭按钮手动关闭。'],
     ['remember_screen', '屏幕记忆', '记住桌宠所在的显示器，重启后自动回到该屏幕；显示器不可用时保持原样。'],
     ['pause_clicks', '小黑屋模式', '暂停累积和上报新的点击，但仍保留桌宠敲击动画']
   ];
@@ -201,10 +180,10 @@
     });
     var status = host.querySelector('.wut-status');
     var text = !online ? 'Plus 后台未连接，请安装或修复 Plus' :
-      error ? error : S.panelError ? '主窗口保持打开功能暂不可用' :
+      error ? error :
       S.requests.some(function (r) { return !r.action; }) ? '正在保存…' : saved ? '已保存 · 即时生效' : '即时生效 · 自动保存';
     if (status.textContent !== text) status.textContent = text;
-    status.dataset.error = error || S.panelError ? 'true' : 'false';
+    status.dataset.error = error ? 'true' : 'false';
     renderReport();
     var exportButton = document.getElementById('wut-export-button');
     var exportStatus = document.getElementById('wut-export-status');
@@ -266,7 +245,6 @@
     S.beat = Date.now();
     S.preferences = state.preferences;
     S.report = state.report || null;
-    keepPanelOpen();
     (state.ack || []).forEach(function (ack) {
       S.requests = S.requests.filter(function (r) { return r.id !== ack.id; });
       if (ack.action === 'export_logs') {
@@ -282,21 +260,8 @@
   var observer = new MutationObserver(mount);
   observer.observe(document.body, { childList: true, subtree: true });
   var timer = setInterval(function () { mount(); render(); }, 1000);
-  function refreshPanelBehavior() {
-    nativePinned = null;
-    if (S.beat) keepPanelOpen();
-  }
-  window.addEventListener('focus', refreshPanelBehavior);
   S.uninstall = function () {
-    disposed = true;
     observer.disconnect(); clearInterval(timer);
-    window.removeEventListener('focus', refreshPanelBehavior);
-    // Restore the app's original behavior when Plus removes its injection.
-    try {
-      Promise.resolve(window.__TAURI_INTERNALS__.invoke(
-        'set_skip_panel_outside_click_close', { skip: false }
-      )).catch(function () {});
-    } catch (e) {}
     [HOST, STYLE].forEach(function (id) {
       var element = document.getElementById(id);
       if (element) element.remove();

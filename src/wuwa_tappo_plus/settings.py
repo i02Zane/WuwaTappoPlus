@@ -12,7 +12,6 @@ from .paths import SCRIPTS_DIR
 
 READ_JS = """JSON.stringify(window.__WUT_SETTINGS__ ? {
   version: window.__WUT_SETTINGS__.version,
-  panelError: window.__WUT_SETTINGS__.panelError,
   requests: window.__WUT_SETTINGS__.requests
 } : null)"""
 
@@ -62,8 +61,6 @@ class SettingsBridge:
             if not state or state.get("version") != __version__:
                 self.session.js(self.source)
                 state = json.loads(self.session.js(READ_JS))
-            if state and state.get("panelError"):
-                self._warn("keep panel open: %s" % state["panelError"])
             ack = []
             for request in (state or {}).get("requests", [])[:10]:
                 if not isinstance(request, dict) or not isinstance(request.get("id"), str):

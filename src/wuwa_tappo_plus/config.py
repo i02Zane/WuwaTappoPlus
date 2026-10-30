@@ -64,8 +64,6 @@ bubble = true
 animation = true
 
 [panel]
-# Keep the main panel open when clicking outside; manual close still works.
-keep_open = true
 # Remember which monitor the pet is on and put it back after the app restarts.
 remember_screen = true
 
@@ -104,7 +102,7 @@ BUILTIN = {
     "inject": {"enabled": True, "min_balance": 1000},
     "clicks": {"pause": False, "auto_emote": False},
     "alerts": {"balance": True, "bubble": True, "animation": True},
-    "panel": {"keep_open": True, "remember_screen": True},
+    "panel": {"remember_screen": True},
     "rooms": {"history": 20},
     "daemon": {"heartbeat": 300, "max_runtime": 0, "watchdog_min": 1},
     "log": {"max_bytes": 1048576, "keep": 3},
@@ -190,10 +188,6 @@ class Config:
         return bool(self.get("alerts", "animation", True))
 
     @property
-    def panel_keep_open(self):
-        return bool(self.get("panel", "keep_open", True))
-
-    @property
     def panel_remember_screen(self):
         return bool(self.get("panel", "remember_screen", True))
 
@@ -205,7 +199,7 @@ class Config:
     def preferences(self):
         return {"auto_open": self.auto_open, "balance_reminder": self.balance_reminder,
                 "bubble": self.alert_bubble,
-                "animation": self.alert_animation, "keep_panel_open": self.panel_keep_open,
+                "animation": self.alert_animation,
                 "remember_screen": self.panel_remember_screen,
                 "pause_clicks": self.pause_clicks, "auto_emote": self.auto_emote}
 
@@ -394,7 +388,6 @@ PREFERENCE_KEYS = {"auto_open": ("inject", "enabled"),
                    "balance_reminder": ("alerts", "balance"),
                    "bubble": ("alerts", "bubble"),
                    "animation": ("alerts", "animation"),
-                   "keep_panel_open": ("panel", "keep_open"),
                    "remember_screen": ("panel", "remember_screen"),
                    "pause_clicks": ("clicks", "pause"),
                    "auto_emote": ("clicks", "auto_emote")}

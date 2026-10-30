@@ -25,7 +25,7 @@ class PreferenceTests(unittest.TestCase):
     def test_default_switches_keep_clicks_running(self):
         self.assertEqual(Config({}).preferences,
                          {"auto_open": True, "balance_reminder": True, "bubble": True, "animation": True,
-                          "keep_panel_open": True, "remember_screen": True, "pause_clicks": False, "auto_emote": False})
+                          "remember_screen": True, "pause_clicks": False, "auto_emote": False})
 
     def test_balance_reminder_and_bubble_are_saved_independently(self):
         saved = save_preferences({"balance_reminder": False, "bubble": True}, self.path)
@@ -58,7 +58,7 @@ class PreferenceTests(unittest.TestCase):
         self.assertFalse(saved.panel_remember_screen)
         parsed = tomllib.loads(self.path.read_text(encoding="utf-8"))
         self.assertIs(parsed["panel"]["remember_screen"], False)
-        self.assertTrue(parsed["panel"]["keep_open"])
+        self.assertNotIn("keep_open", parsed["panel"])
 
     def test_save_keeps_other_values_and_comments(self):
         source = "# keep this\n[app]\nexe = 'D:\\Pets\\WuwaTappo.exe'\nport = 9223\n"
@@ -132,13 +132,6 @@ class PreferenceTests(unittest.TestCase):
         self.assertTrue(before.auto_open)
         self.assertFalse(after.auto_open)
         self.assertEqual(after.port, 9223)
-
-    def test_panel_preference_is_persisted_and_reloaded(self):
-        saved = save_preferences({"keep_panel_open": False}, self.path)
-        self.assertFalse(saved.panel_keep_open)
-        reloaded = Config(tomllib.loads(self.path.read_text(encoding="utf-8")))
-        self.assertFalse(reloaded.preferences["keep_panel_open"])
-        self.assertTrue(reloaded.auto_open)
 
 
 class BridgeTests(unittest.TestCase):
@@ -214,10 +207,10 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(cfg.alert_animation)
 
     def test_panel_toggle_uses_same_save_and_acknowledgement_path(self):
-        cfg, update = self.sync_request({"id": "panel", "key": "keep_panel_open", "value": False})
-        self.assertFalse(cfg.panel_keep_open)
+        cfg, update = self.sync_request({"id": "panel", "key": "remember_screen", "value": False})
+        self.assertFalse(cfg.panel_remember_screen)
         self.assertEqual(update["ack"], [{"id": "panel"}])
-        self.assertFalse(update["preferences"]["keep_panel_open"])
+        self.assertFalse(update["preferences"]["remember_screen"])
 
     def test_panel_disconnect_does_not_stop_main_daemon(self):
         self.bridge.session = Mock(target=self.target)
@@ -282,6 +275,7 @@ class ConfigSyncTests(unittest.TestCase):
         self.assertNotIn("poll_ms", text)
         self.assertNotIn("low =", text)
         self.assertNotIn("# old tier comment", text)
+        self.assertNotIn("keep_open", text)
 
         parsed = tomllib.loads(text)
         self.assertEqual(parsed["app"]["port"], 9333)
