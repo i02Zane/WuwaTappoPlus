@@ -431,9 +431,7 @@
       modal.querySelector('.wut-atlas-close').addEventListener('click', close);
       keyHandler = function (event) { if (event.key === 'Escape') close(); };
       document.addEventListener('keydown', keyHandler);
-      var host = document.querySelector('.module-block.atlas-module .panel-content')
-        || document.querySelector('.panel-content') || document.body;
-      host.appendChild(modal);
+      document.body.appendChild(modal);
       return modal;
     }
 
