@@ -192,12 +192,13 @@ class PurgeDataTests(unittest.TestCase):
     def test_known_data_removed_but_source_exe_and_other_files_survive(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            removed = ["chests.json", "chests.tmp", "config.toml", ".state.json", ".state.tmp", ".daemon.lock",
+            removed = ["accessory_overrides.json", ".plus-accessories-sample.tmp",
+                       "chests.json", "chests.tmp", "config.toml", ".state.json", ".state.tmp", ".daemon.lock",
                        ".stop", ".disabled", ".plus-config-sample.tmp", "logs/auto.log",
                        "logs/auto.log.1", "reports/input.sqlite3", "reports/input.sqlite3-wal",
                        "reports/rooms.sqlite3", "reports/rooms.sqlite3-shm"]
             kept = ["launch.py", "WuwaTappoPlus.exe", "src/code.py",
-                    "logs/notes.txt", "reports/unrelated.sqlite3"]
+                    "logs/notes.txt", "reports/unrelated.sqlite3", "unrelated.tmp"]
             for name in removed + kept:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -214,6 +215,7 @@ class PurgeDataTests(unittest.TestCase):
             root = Path(folder) / "data"
             root.mkdir()
             (root / "config.toml").write_text("test", encoding="utf-8")
+            (root / "accessory_overrides.json").write_text("{}", encoding="utf-8")
             with patch.object(cli, "DATA_DIR", root), \
                     patch.object(cli, "daemon_status", return_value=({}, None)), \
                     patch.object(cli, "_lock_held", return_value=False):
@@ -259,6 +261,20 @@ class PurgeDataTests(unittest.TestCase):
                     cli._purge_data()
             self.assertTrue((root / "config.toml").exists())
 
+
+    def test_linked_accessory_data_is_rejected_before_any_deletion(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            config = root / "config.toml"
+            config.write_text("keep", encoding="utf-8")
+            with patch.object(cli, "DATA_DIR", root), \
+                    patch.object(cli, "daemon_status", return_value=({}, None)), \
+                    patch.object(cli, "_lock_held", return_value=False), \
+                    patch.object(Path, "is_symlink", autospec=True,
+                                 side_effect=lambda path: path == root / "accessory_overrides.json"):
+                with self.assertRaises(OSError):
+                    cli._purge_data()
+            self.assertEqual(config.read_text(encoding="utf-8"), "keep")
 
     def test_real_junction_cannot_delete_external_data(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -7,7 +7,7 @@ import sys
 import time
 from datetime import datetime
 
-from . import __version__, cdp, win, installation
+from . import __version__, accessories, cdp, win, installation
 from .config import (
     CONFIG_PATH,
     DISABLED_PATH,
@@ -291,8 +291,9 @@ def _purge_data():
     root = DATA_DIR.resolve()
     files = [root / name for name in
              ("config.toml", ".state.json", ".state.tmp", ".daemon.lock", ".stop", ".disabled",
-              "screen.json", "chests.json", "chests.tmp")]
+              "screen.json", "chests.json", "chests.tmp", accessories.FILE_NAME)]
     files.extend(root.glob(".plus-config-*.tmp"))
+    files.extend(root.glob(".plus-accessories-*.tmp"))
     for database in ("input.sqlite3", "rooms.sqlite3"):
         files.extend(root / "reports" / (database + suffix)
                      for suffix in ("", "-wal", "-shm", "-journal"))
