@@ -193,6 +193,9 @@ class Runner:
         want = self.cfg.inject_cfg["version"]
         if payload.get("inject") == want:
             return payload
+        # A new page can reuse the same CDP Session object. Its globals need
+        # restoring even when the saved accessory file has not changed.
+        self._accessory_session = None
         have = payload.get("inject")
         if have:
             self.log.info("replacing injection v%s with v%s" % (have, want))

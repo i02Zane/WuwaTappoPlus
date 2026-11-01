@@ -1,13 +1,15 @@
 """Daemon-side decisions that were previously only visible in the log file."""
 
 import json
+import tempfile
 import time
 import tomllib
 import unittest
 from collections import deque
+from pathlib import Path
 from unittest.mock import Mock
 
-from wuwa_tappo_plus import __version__, config
+from wuwa_tappo_plus import __version__, accessories, cdp, config
 from wuwa_tappo_plus.config import Config
 from wuwa_tappo_plus.runner import Runner, _remaining
 
@@ -42,6 +44,54 @@ class ReinjectionTests(unittest.TestCase):
         runner = self.runner(self.installed)
         runner.ensure_injected()
         self.assertEqual(runner.session.js.call_count, 1)
+
+
+class AccessoryReconnectTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / accessories.FILE_NAME
+        self.overrides = accessories.set_override(self.path, "hat.png", 10, -2, 1.2, 15)
+        self.runner = bare_runner()
+        self.runner.settings = Mock(accessories_path=self.path)
+        self.runner._accessory_key = None
+        self.runner._accessory_session = None
+        self.runner.apply_accessories()
+        self.runner.session.js.reset_mock()
+
+    def test_unchanged_page_does_not_resend_overrides(self):
+        self.runner.session.js.return_value = json.dumps({"inject": __version__})
+        self.runner.ensure_injected()
+        self.runner.session.js.reset_mock()
+        self.runner.apply_accessories()
+        self.runner.session.js.assert_not_called()
+
+    def test_restarted_page_receives_overrides_with_the_same_session(self):
+        session = self.runner.session
+        # Restart/reload cleared the page globals, but connect() reused Session.
+        session.js.side_effect = [json.dumps({"inject": 0}), "installed",
+                                  json.dumps({"inject": __version__})]
+        self.runner.ensure_injected()
+        session.js.side_effect = None
+        session.js.reset_mock()
+        self.runner.apply_accessories()
+        self.assertIs(self.runner.session, session)
+        session.js.assert_called_once_with(
+            "window.__WUT_ACCESSORY_OVERRIDES__ = %s; 1"
+            % json.dumps(self.overrides, ensure_ascii=False))
+        session.js.reset_mock()
+        self.runner.apply_accessories()
+        session.js.assert_not_called()
+
+    def test_failed_restore_is_retried(self):
+        self.runner._accessory_session = None
+        self.runner.session.js.side_effect = cdp.CDPError("disconnected")
+        with self.assertRaises(cdp.CDPError):
+            self.runner.apply_accessories()
+        self.runner.session.js.side_effect = None
+        self.runner.session.js.reset_mock()
+        self.runner.apply_accessories()
+        self.runner.session.js.assert_called_once()
 
 
 class PageErrorTests(unittest.TestCase):
