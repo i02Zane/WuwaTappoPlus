@@ -127,7 +127,7 @@ test('settings export queues one action, shows result, and permits retry after f
   const f = fixture();
   const nodes = new Map();
   function element() {
-    return { dataset: {}, style: {}, children: [], textContent: '',
+    return { dataset: {}, style: { setProperty() {} }, children: [], textContent: '',
       setAttribute() {}, addEventListener(name, handler) { this[name] = handler; },
       appendChild(child) { this.children.push(child); if (child.id) nodes.set(child.id, child); },
       querySelectorAll() { return []; },

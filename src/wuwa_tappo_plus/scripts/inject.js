@@ -1051,11 +1051,92 @@
     accessoryState.applied = next;
   }
 
+  function gameModeEnabled() {
+    try {
+      var settings = JSON.parse(localStorage.getItem('wuwatappo-settings') || '{}');
+      return !!settings && settings.gameMode === true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function gameModeOpacityFrom(value) {
+    var number = Number(value);
+    if (!isFinite(number)) number = 30;
+    return Math.max(0, Math.min(100, Math.round(number)));
+  }
+
+  function gameModeOpacity() {
+    return gameModeOpacityFrom(CFG.game_mode_opacity);
+  }
+
+  // The pet is drawn inside .pet-dock; its normal opacity comes from the app's
+  // --window-opacity CSS variable and hover rule. While game mode is active an
+  // inline opacity overrides both; removing it restores the app's own setting.
+  var previewGameOpacity = null;
+  var previewUntil = 0;
+  var gamePreviewEventId = null;
+
+  function syncGameModeOpacity() {
+    if (previewGameOpacity !== null && Date.now() > previewUntil) previewGameOpacity = null;
+    var mode = gameModeEnabled();
+    var value = previewGameOpacity !== null ? previewGameOpacity :
+      (mode ? gameModeOpacity() : null);
+    var targets = [document.querySelector('.pet-dock'), document.querySelector('.room-cats-shell')];
+    targets.forEach(function (target) {
+      if (!target) return;
+      if (value !== null) {
+        var desired = String(value / 100);
+        if (target.dataset.wutGameOpacity !== desired) {
+          if (!target.dataset.wutGameOpacity) target.dataset.wutBaseOpacity = target.style.opacity || '';
+          if (target.classList.contains('room-cats-shell') && !target.style.transition) {
+            target.style.transition = 'opacity .35s ease';
+          }
+          target.style.opacity = desired;
+          target.dataset.wutGameOpacity = desired;
+        }
+      } else if (target.dataset.wutGameOpacity) {
+        target.style.opacity = target.dataset.wutBaseOpacity || '';
+        delete target.dataset.wutGameOpacity;
+        delete target.dataset.wutBaseOpacity;
+      }
+    });
+  }
+
+  // The settings page sends this while the slider is dragged so the pet previews
+  // the value without waiting for the config round trip. Payload: {value, done}.
+  function installGameOpacityPreview() {
+    if (!window.__TAURI_INTERNALS__ || !window.__TAURI_INTERNALS__.invoke ||
+        !window.__TAURI_INTERNALS__.transformCallback) return;
+    try {
+      var handler = window.__TAURI_INTERNALS__.transformCallback(function (event) {
+        var payload = event && event.payload || {};
+        if (payload.done === true) {
+          previewGameOpacity = null;
+        } else {
+          var value = Number(payload.value);
+          if (!isFinite(value)) return;
+          previewGameOpacity = Math.max(0, Math.min(100, Math.round(value)));
+          previewUntil = Date.now() + 8000;
+        }
+        syncGameModeOpacity();
+      });
+      Promise.resolve(window.__TAURI_INTERNALS__.invoke('plugin:event|listen', {
+        event: 'wut-game-opacity-preview',
+        target: { kind: 'AnyLabel', label: 'main' },
+        handler: handler
+      })).then(function (id) {
+        gamePreviewEventId = id;
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
   function tick() {
     syncClickPause();
     step();
     planGrace();
     applyAccessoryOverride();
+    syncGameModeOpacity();
   }
 
   // Wake exactly when the earliest due chest clears its grace window, so the
@@ -1106,6 +1187,8 @@
     CFG.balance_reminder = next.balance_reminder !== false;
     CFG.bubble = next.bubble !== false;
     CFG.animation = next.animation !== false;
+    CFG.game_mode_opacity = gameModeOpacityFrom(next.game_mode_opacity);
+    syncGameModeOpacity();
     if (!CFG.enabled) A.lowBalance = null;
     if (!CFG.bubble && bubble) dropBubble();
     if (bubble) bubble.box.style.animation = CFG.animation ? '' : 'none';
@@ -1123,6 +1206,15 @@
     clearInterval(A.timer);
     if (accessoryObserver) { accessoryObserver.disconnect(); accessoryObserver = null; }
     accessoryLayer = null;
+    if (gamePreviewEventId != null && window.__TAURI_INTERNALS__) {
+      try {
+        Promise.resolve(window.__TAURI_INTERNALS__.invoke('plugin:event|unlisten', {
+          event: 'wut-game-opacity-preview',
+          eventId: gamePreviewEventId
+        })).catch(function () {});
+      } catch (e) {}
+    }
+    gamePreviewEventId = null;
     if (graceTimer) clearTimeout(graceTimer);
     A.obs.disconnect();
     if (stopChestAction) stopChestAction();
@@ -1133,6 +1225,7 @@
   };
 
   syncClickPause();
+  installGameOpacityPreview();
   if (CFG.pause_clicks) updateAlert(null, null);
   return 'installed v' + V;
 })()

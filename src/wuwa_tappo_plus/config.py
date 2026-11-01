@@ -67,6 +67,11 @@ animation = true
 # Remember which monitor the pet is on and put it back after the app restarts.
 remember_screen = true
 
+[appearance]
+# Pet opacity while the app is in game mode, in percent (0-100). On exit the
+# normal opacity from the app's own setting is restored.
+game_mode_opacity = 30
+
 [rooms]
 # How many visited rooms the multiplayer tab remembers. Pinned rooms are kept
 # on top and do not count against this limit.
@@ -103,6 +108,7 @@ BUILTIN = {
     "clicks": {"pause": False, "auto_emote": False},
     "alerts": {"balance": True, "bubble": True, "animation": True},
     "panel": {"remember_screen": True},
+    "appearance": {"game_mode_opacity": 30},
     "rooms": {"history": 20},
     "daemon": {"heartbeat": 300, "max_runtime": 0, "watchdog_min": 1},
     "log": {"max_bytes": 1048576, "keep": 3},
@@ -138,6 +144,7 @@ class Config:
             "balance_reminder": self.balance_reminder,
             "bubble": self.alert_bubble,
             "animation": self.alert_animation,
+            "game_mode_opacity": self.game_mode_opacity,
             # Timings are properties of the app, not preferences: they are
             # constants now, and a leftover key in config.toml is ignored.
             "poll_ms": POLL_MS,
@@ -192,6 +199,14 @@ class Config:
         return bool(self.get("panel", "remember_screen", True))
 
     @property
+    def game_mode_opacity(self):
+        try:
+            value = int(round(float(self.get("appearance", "game_mode_opacity", 30))))
+        except (TypeError, ValueError):
+            value = 30
+        return max(0, min(100, value))
+
+    @property
     def room_history(self):
         return max(1, int(self.get("rooms", "history", 20)))
 
@@ -201,7 +216,8 @@ class Config:
                 "bubble": self.alert_bubble,
                 "animation": self.alert_animation,
                 "remember_screen": self.panel_remember_screen,
-                "pause_clicks": self.pause_clicks, "auto_emote": self.auto_emote}
+                "pause_clicks": self.pause_clicks, "auto_emote": self.auto_emote,
+                "game_mode_opacity": self.game_mode_opacity}
 
     @property
     def heartbeat(self):
@@ -390,14 +406,21 @@ PREFERENCE_KEYS = {"auto_open": ("inject", "enabled"),
                    "animation": ("alerts", "animation"),
                    "remember_screen": ("panel", "remember_screen"),
                    "pause_clicks": ("clicks", "pause"),
-                   "auto_emote": ("clicks", "auto_emote")}
+                   "auto_emote": ("clicks", "auto_emote"),
+                   "game_mode_opacity": ("appearance", "game_mode_opacity")}
 
 
 def with_preferences(cfg, preferences):
     """Copy only the live settings; connection and timing changes need restart."""
     data = copy.deepcopy(cfg.data)
     for name, value in preferences.items():
-        if name not in PREFERENCE_KEYS or type(value) is not bool:
+        if name not in PREFERENCE_KEYS:
+            raise ValueError("invalid Plus preference")
+        if name == "game_mode_opacity":
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("invalid Plus preference")
+            value = max(0, min(100, int(round(value))))
+        elif type(value) is not bool:
             raise ValueError("invalid Plus preference")
         section, key = PREFERENCE_KEYS[name]
         data.setdefault(section, {})[key] = value
@@ -405,19 +428,23 @@ def with_preferences(cfg, preferences):
 
 
 def save_preferences(preferences, path=None):
-    """Atomically update whitelisted booleans, preserving other TOML values."""
+    """Atomically update whitelisted preferences, preserving other TOML values."""
     path = Path(path) if path is not None else CONFIG_PATH
-    with_preferences(Config({}), preferences)  # validate before reading/writing
+    validated = with_preferences(Config({}), preferences)  # validate before reading/writing
     # Reading with utf-8-sig drops a BOM; writing below always produces none.
     text = path.read_text(encoding="utf-8-sig")
     expected = tomllib.loads(text)
     sections = re.compile(r"(?m)^[ \t]*\[([a-zA-Z0-9_]+)\][ \t]*(?:#[^\n]*)?$")
     for name, value in preferences.items():
         section, key = PREFERENCE_KEYS[name]
+        value = validated.get(section, key)
         expected.setdefault(section, {})[key] = value
         headers = list(sections.finditer(text))
         header = next((m for m in headers if m.group(1) == section), None)
-        line = "%s = %s" % (key, "true" if value else "false")
+        if isinstance(value, bool):
+            line = "%s = %s" % (key, "true" if value else "false")
+        else:
+            line = "%s = %s" % (key, value)
         if header is None:
             text = text.rstrip() + "\n\n[%s]\n%s\n" % (section, line)
             continue

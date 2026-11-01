@@ -25,7 +25,18 @@ class PreferenceTests(unittest.TestCase):
     def test_default_switches_keep_clicks_running(self):
         self.assertEqual(Config({}).preferences,
                          {"auto_open": True, "balance_reminder": True, "bubble": True, "animation": True,
-                          "remember_screen": True, "pause_clicks": False, "auto_emote": False})
+                          "remember_screen": True, "pause_clicks": False, "auto_emote": False,
+                          "game_mode_opacity": 30})
+
+    def test_game_mode_opacity_is_saved_as_a_bounded_percent(self):
+        saved = save_preferences({"game_mode_opacity": 150}, self.path)
+        self.assertEqual(saved.game_mode_opacity, 100)
+        self.assertEqual(saved.inject_cfg["game_mode_opacity"], 100)
+        self.assertIn("game_mode_opacity = 100", self.path.read_text(encoding="utf-8"))
+        saved = save_preferences({"game_mode_opacity": -5}, self.path)
+        self.assertEqual(saved.game_mode_opacity, 0)
+        with self.assertRaises(ValueError):
+            save_preferences({"game_mode_opacity": "50"}, self.path)
 
     def test_balance_reminder_and_bubble_are_saved_independently(self):
         saved = save_preferences({"balance_reminder": False, "bubble": True}, self.path)

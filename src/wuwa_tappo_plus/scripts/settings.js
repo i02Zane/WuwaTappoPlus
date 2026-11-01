@@ -7,7 +7,8 @@
     version: VERSION, requests: [], beat: 0, report: null,
     exportPath: null, exportError: false, accessories: {},
     preferences: { auto_open: true, balance_reminder: true, bubble: true, animation: true,
-                   remember_screen: true, auto_emote: false, pause_clicks: false }
+                   remember_screen: true, auto_emote: false, pause_clicks: false,
+                   game_mode_opacity: 30 }
   };
   var HOST = 'wut-plus-settings';
   var STYLE = 'wut-plus-settings-style';
@@ -16,6 +17,7 @@
   var error = '';
   var saved = false;
   var reportKey = '';
+  var gameRangeInitialized = false;
 
   var definitions = [
     ['auto_open', '自动开箱', '宝箱到期且余额充足时自动开启，关闭后仍显示倒计时。'],
@@ -26,6 +28,18 @@
     ['remember_screen', '屏幕记忆', '记住桌宠所在的显示器，重启后自动回到该屏幕；显示器不可用时保持原样。'],
     ['pause_clicks', '小黑屋模式', '暂停累积和上报新的点击，但仍保留桌宠敲击动画']
   ];
+
+  function emitGameOpacityPreview(value, done) {
+    try {
+      var internals = window.__TAURI_INTERNALS__;
+      if (!internals || !internals.invoke) return;
+      internals.invoke('plugin:event|emit_to', {
+        event: 'wut-game-opacity-preview',
+        target: { kind: 'AnyLabel', label: 'main' },
+        payload: { value: Number(value), done: !!done }
+      }).catch(function () {});
+    } catch (e) {}
+  }
 
   function mount() {
     var container = document.querySelector('.settings-module .panel-content');
@@ -123,9 +137,69 @@
       row.appendChild(content);
       host.appendChild(row);
     });
+    var gameRow = document.createElement('div');
+    gameRow.className = 'setting-item';
+    var gameLabel = document.createElement('div');
+    gameLabel.className = 'setting-label';
+    var gameName = document.createElement('div');
+    gameName.className = 'setting-title';
+    gameName.id = 'wut-setting-game-mode-opacity';
+    gameName.textContent = '游戏模式透明度';
+    var gameDesc = document.createElement('div');
+    gameDesc.className = 'setting-sub';
+    gameDesc.textContent = '进入游戏模式时的桌宠透明度；退出游戏模式后恢复官方选项的透明度';
+    gameLabel.appendChild(gameName);
+    gameLabel.appendChild(gameDesc);
+    var gameContent = document.createElement('div');
+    gameContent.className = 'setting-content';
+    var gameRange = document.createElement('input');
+    gameRange.type = 'range';
+    gameRange.min = '0';
+    gameRange.max = '100';
+    gameRange.step = '1';
+    gameRange.className = 'setting-range';
+    gameRange.dataset.preference = 'game_mode_opacity';
+    gameRange.setAttribute('aria-labelledby', gameName.id);
+    gameRangeInitialized = false;
+    var initialOpacity = Number(S.preferences.game_mode_opacity);
+    if (!isFinite(initialOpacity)) initialOpacity = 30;
+    gameRange.value = String(initialOpacity);
+    gameRange.style.setProperty('--range-progress', initialOpacity + '%');
+    var gameValue = document.createElement('span');
+    gameValue.className = 'setting-value setting-value-opacity';
+    gameValue.textContent = initialOpacity + '%';
+    gameRange.addEventListener('pointerdown', function () {
+      gameRangeInitialized = true;
+      gameRange.dataset.editing = 'true';
+    });
+    gameRange.addEventListener('input', function () {
+      gameRangeInitialized = true;
+      gameRange.dataset.editing = 'true';
+      gameRange.style.setProperty('--range-progress', gameRange.value + '%');
+      gameValue.textContent = gameRange.value + '%';
+      emitGameOpacityPreview(gameRange.value, false);
+    });
+    gameRange.addEventListener('change', function () {
+      gameRange.dataset.editing = 'false';
+      emitGameOpacityPreview(gameRange.value, true);
+      if (Date.now() - S.beat > 5000) { render(); return; }
+      S.requests.push({ id: instance + '-' + (++serial), key: 'game_mode_opacity',
+                        value: Number(gameRange.value) });
+      error = ''; saved = false;
+      render();
+    });
+    gameRange.addEventListener('blur', function () {
+      gameRange.dataset.editing = 'false';
+      emitGameOpacityPreview(gameRange.value, true);
+      render();
+    });
+    gameContent.appendChild(gameRange);
+    gameContent.appendChild(gameValue);
+    gameRow.appendChild(gameLabel);
+    gameRow.appendChild(gameContent);
+    host.appendChild(gameRow);
     var report = document.createElement('div');
-    report.id = 'wut-daily-report';
-    report.innerHTML = '<div class="wut-report-title">昨日点击数</div>'
+    report.id = 'wut-daily-report';    report.innerHTML = '<div class="wut-report-title">昨日点击数</div>'
       + '<div><span class="wut-report-count">—</span>次</div>'
       + '<div class="wut-report-note"></div>'
       + '<details open><summary>最近 7 天 · 点击数</summary>'
@@ -175,7 +249,20 @@
     host.querySelectorAll('input[data-preference]').forEach(function (input) {
       var key = input.dataset.preference;
       var pending = S.requests.find(function (r) { return r.key === key; });
-      input.checked = pending ? pending.value : S.preferences[key];
+      if (input.type === 'range') {
+        if (!gameRangeInitialized && S.beat > 0) {
+          var initial = S.preferences[key];
+          input.value = String(initial);
+          input.style.setProperty('--range-progress', initial + '%');
+          var valueNode = input.parentElement && input.parentElement.querySelector('.setting-value');
+          if (valueNode) valueNode.textContent = initial + '%';
+          gameRangeInitialized = true;
+        }
+        input.disabled = !online;
+        return;
+      }
+      var current = pending ? pending.value : S.preferences[key];
+      input.checked = current;
       input.disabled = !online || !!pending;
     });
     var status = host.querySelector('.wut-status');
