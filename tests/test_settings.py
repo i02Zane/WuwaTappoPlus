@@ -26,7 +26,13 @@ class PreferenceTests(unittest.TestCase):
         self.assertEqual(Config({}).preferences,
                          {"auto_open": True, "balance_reminder": True, "bubble": True, "animation": True,
                           "remember_screen": True, "pause_clicks": False, "auto_emote": False,
-                          "game_mode_opacity": 30})
+                          "game_mode_plus": True, "game_mode_opacity": 30})
+
+    def test_game_mode_plus_switch_is_saved(self):
+        saved = save_preferences({"game_mode_plus": False}, self.path)
+        self.assertFalse(saved.game_mode_plus)
+        self.assertFalse(saved.preferences["game_mode_plus"])
+        self.assertIn("game_mode_plus = false", self.path.read_text(encoding="utf-8"))
 
     def test_game_mode_opacity_is_saved_as_a_bounded_percent(self):
         saved = save_preferences({"game_mode_opacity": 150}, self.path)

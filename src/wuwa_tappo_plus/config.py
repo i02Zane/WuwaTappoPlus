@@ -71,6 +71,8 @@ remember_screen = true
 # Pet opacity while the app is in game mode, in percent (0-100). On exit the
 # normal opacity from the app's own setting is restored.
 game_mode_opacity = 30
+# Treat a windowed/borderless foreground window as game mode too.
+game_mode_plus = true
 
 [rooms]
 # How many visited rooms the multiplayer tab remembers. Pinned rooms are kept
@@ -108,7 +110,7 @@ BUILTIN = {
     "clicks": {"pause": False, "auto_emote": False},
     "alerts": {"balance": True, "bubble": True, "animation": True},
     "panel": {"remember_screen": True},
-    "appearance": {"game_mode_opacity": 30},
+    "appearance": {"game_mode_opacity": 30, "game_mode_plus": True},
     "rooms": {"history": 20},
     "daemon": {"heartbeat": 300, "max_runtime": 0, "watchdog_min": 1},
     "log": {"max_bytes": 1048576, "keep": 3},
@@ -207,6 +209,10 @@ class Config:
         return max(0, min(100, value))
 
     @property
+    def game_mode_plus(self):
+        return bool(self.get("appearance", "game_mode_plus", True))
+
+    @property
     def room_history(self):
         return max(1, int(self.get("rooms", "history", 20)))
 
@@ -217,6 +223,7 @@ class Config:
                 "animation": self.alert_animation,
                 "remember_screen": self.panel_remember_screen,
                 "pause_clicks": self.pause_clicks, "auto_emote": self.auto_emote,
+                "game_mode_plus": self.game_mode_plus,
                 "game_mode_opacity": self.game_mode_opacity}
 
     @property
@@ -407,6 +414,7 @@ PREFERENCE_KEYS = {"auto_open": ("inject", "enabled"),
                    "remember_screen": ("panel", "remember_screen"),
                    "pause_clicks": ("clicks", "pause"),
                    "auto_emote": ("clicks", "auto_emote"),
+                   "game_mode_plus": ("appearance", "game_mode_plus"),
                    "game_mode_opacity": ("appearance", "game_mode_opacity")}
 
 

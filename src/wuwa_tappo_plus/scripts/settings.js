@@ -8,7 +8,7 @@
     exportPath: null, exportError: false, accessories: {},
     preferences: { auto_open: true, balance_reminder: true, bubble: true, animation: true,
                    remember_screen: true, auto_emote: false, pause_clicks: false,
-                   game_mode_opacity: 30 }
+                   game_mode_plus: true, game_mode_opacity: 30 }
   };
   var HOST = 'wut-plus-settings';
   var STYLE = 'wut-plus-settings-style';
@@ -26,8 +26,50 @@
     ['bubble', '气泡显示', '显示 Plus 气泡，包括余额提醒和小黑屋模式文字。'],
     ['animation', '气泡动画', '让气泡轻轻跳动；关闭后保留静态气泡。'],
     ['remember_screen', '屏幕记忆', '记住桌宠所在的显示器，重启后自动回到该屏幕；显示器不可用时保持原样。'],
-    ['pause_clicks', '小黑屋模式', '暂停累积和上报新的点击，但仍保留桌宠敲击动画']
+    ['pause_clicks', '小黑屋模式', '暂停累积和上报新的点击，但仍保留桌宠敲击动画'],
+    ['game_mode_plus', '全屏进入游戏模式·Plus', '开启后由 Plus 接管全屏自动进入游戏模式：窗口化/无边框全屏也生效，官方全屏开关会暂时关闭；关闭后恢复官方设置。']
   ];
+
+  var AUTO_FULLSCREEN_TITLES = ['全屏进入游戏模式', 'Enter Game Mode in Fullscreen'];
+  var AUTO_FULLSCREEN_BACKUP = 'wut-plus-auto-fullscreen-backup';
+
+  // While Plus owns automatic game mode, turn the app's own fullscreen switch
+  // off and remember it; restore it when Plus is switched off again.
+  function officialAutoInput() {
+    var container = document.querySelector('.settings-module .panel-content');
+    if (!container) return null;
+    var host = document.getElementById(HOST);
+    var rows = container.querySelectorAll('.setting-item');
+    for (var i = 0; i < rows.length; i += 1) {
+      var row = rows[i];
+      if (host && host.contains(row)) continue;
+      var title = row.querySelector('.setting-title');
+      if (!title || AUTO_FULLSCREEN_TITLES.indexOf(title.textContent.trim()) < 0) continue;
+      var input = row.querySelector('.setting-switch input[type="checkbox"]');
+      if (input) return input;
+    }
+    return null;
+  }
+
+  function syncOfficialAutoFullscreen() {
+    var input = officialAutoInput();
+    if (!input) return;
+    var plus = !!(S.preferences && S.preferences.game_mode_plus);
+    var stored = null;
+    try {
+      stored = window.localStorage ? localStorage.getItem(AUTO_FULLSCREEN_BACKUP) : null;
+    } catch (e) {}
+    if (plus) {
+      if (stored === null) {
+        try { localStorage.setItem(AUTO_FULLSCREEN_BACKUP, input.checked ? '1' : '0'); } catch (e) {}
+      }
+      if (input.checked) input.click();
+    } else if (stored !== null) {
+      var want = stored === '1';
+      if (input.checked !== want) input.click();
+      try { localStorage.removeItem(AUTO_FULLSCREEN_BACKUP); } catch (e) {}
+    }
+  }
 
   function emitGameOpacityPreview(value, done) {
     try {
@@ -265,6 +307,7 @@
       input.checked = current;
       input.disabled = !online || !!pending;
     });
+    syncOfficialAutoFullscreen();
     var status = host.querySelector('.wut-status');
     var text = !online ? 'Plus 后台未连接，请安装或修复 Plus' :
       error ? error :
