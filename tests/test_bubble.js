@@ -12,6 +12,11 @@ function fixture() {
   const frames = [];
   const timers = [];
   const pet = { left: 400, top: 300, width: 150, height: 150, bottom: 450 };
+  const petDock = {
+    style: {}, dataset: {},
+    classList: { contains: name => name === 'pet-dock' },
+    getBoundingClientRect: () => pet
+  };
   const original = {
     regions: [{ left: 400, top: 300, width: 150, height: 160 }],
     inputRegions: [{ left: 410, top: 310, width: 100, height: 100 }],
@@ -64,8 +69,7 @@ function fixture() {
       createElement: node,
       getElementById: id => elements.get(id),
       querySelectorAll: () => [],
-      querySelector: selector => selector.includes('.pet-dock') ?
-        { getBoundingClientRect: () => pet } : null
+      querySelector: selector => selector.includes('.pet-dock') ? petDock : null
     },
     MutationObserver: class { observe() {} disconnect() {} },
     setInterval: () => 1, clearInterval() {},
@@ -79,7 +83,7 @@ function fixture() {
     .replace('__CFG__', JSON.stringify(cfg)), context);
   const a = window.__WUT__;
   a.updateAlert(500, { now: 1, left: 30000, right: 60000 });
-  return { a, window, calls, posts, frames, elements, pet, original, originalFetch, originalPost, context, timers };
+  return { a, window, calls, posts, frames, elements, pet, original, originalFetch, originalPost, context, timers, petDock };
 }
 
 test('bubble stays above the pet with no gap', () => {
@@ -966,4 +970,40 @@ test('auto emote toggles and pause mode changes do not reset the shared send bud
   f.a.configure({ auto_emote: false }); f.a.configure({ auto_emote: true, pause_clicks: true });
   f.current.incrementLocalClickCount(); assert.equal(f.selected.length, 20);
   assert.equal(f.current.localClickCount, 30); assert.equal(f.a.autoEmote.limited, 1);
+});
+
+
+test('game mode opacity restores the existing inline opacity on exit', () => {
+  const f = fixture();
+  f.petDock.style.opacity = '0.8';
+  f.window.__WUT_EFFECTIVE_FULLSCREEN__ = true;
+  f.a.configure({ ...f.a.cfg, game_mode_opacity: 30 });
+  assert.equal(f.petDock.style.opacity, '0.3');
+  f.a.configure({ ...f.a.cfg, game_mode_opacity: 45 });
+  assert.equal(f.petDock.style.opacity, '0.45');
+  f.window.__WUT_EFFECTIVE_FULLSCREEN__ = false;
+  f.a.configure(f.a.cfg);
+  assert.equal(f.petDock.style.opacity, '0.8');
+  assert.equal(f.petDock.dataset.wutGameOpacity, undefined);
+  assert.equal(f.petDock.dataset.wutBaseOpacity, undefined);
+});
+
+test('game mode opacity also affects room pets and restores CSS-controlled opacity', () => {
+  const f = fixture();
+  const room = {
+    style: {}, dataset: {},
+    classList: { contains: name => name === 'room-cats-shell' }
+  };
+  const query = f.context.document.querySelector;
+  f.context.document.querySelector = selector =>
+    selector === '.room-cats-shell' ? room : query(selector);
+  f.window.__WUT_EFFECTIVE_FULLSCREEN__ = true;
+  f.a.configure({ ...f.a.cfg, game_mode_opacity: 0 });
+  assert.equal(f.petDock.style.opacity, '0');
+  assert.equal(room.style.opacity, '0');
+  f.window.__WUT_EFFECTIVE_FULLSCREEN__ = false;
+  f.a.configure(f.a.cfg);
+  assert.equal(f.petDock.style.opacity, '');
+  assert.equal(room.style.opacity, '');
+  assert.equal(room.dataset.wutGameOpacity, undefined);
 });
