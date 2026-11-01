@@ -10,7 +10,7 @@ from pathlib import Path
 
 def probe():
     """Read-only packaging smoke check; never modifies the installed desktop pet."""
-    from . import __version__
+    from . import __version__, game_mode
     from .config import Config
     from .paths import APP_DIR, DATA_DIR, SCRIPTS_DIR, frozen
     from .rooms import RoomBridge
@@ -23,7 +23,7 @@ def probe():
 
     runner = object.__new__(Runner)
     runner.cfg = Config({})
-    sources = {"pet": runner.inject_source(),
+    sources = {"game_mode": game_mode.source(), "pet": runner.inject_source(),
                "settings": SettingsBridge(9222, "127.0.0.1", QuietLog()).source,
                "rooms": RoomBridge(9222, "127.0.0.1", QuietLog()).source,
                "toast": ToastBridge(9222, "127.0.0.1", QuietLog()).source}

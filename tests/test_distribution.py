@@ -139,5 +139,5 @@ class EntryTests(unittest.TestCase):
         with patch.object(cli, "load") as load:
             result = entry.probe()
         load.assert_not_called()
-        self.assertEqual(set(result["scripts"]), {"pet", "settings", "rooms", "toast"})
+        self.assertEqual(set(result["scripts"]), {"pet", "settings", "rooms", "toast", "game_mode"})
         self.assertTrue(all(v == __version__ for v in result["scripts"].values()))

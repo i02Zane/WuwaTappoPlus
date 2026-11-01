@@ -167,3 +167,22 @@ test('settings export queues one action, shows result, and permits retry after f
   button.click();
   assert.equal(f.settings.requests.length, 0);
 });
+
+
+test('panel cleanup reflects restored native game settings before removing Plus', () => {
+  const f = fixture();
+  const auto = { checked: false, click() { this.checked = !this.checked; } };
+  const mode = { checked: true, click() { this.checked = !this.checked; } };
+  const row = (title, input) => ({ querySelector: selector =>
+    selector === '.setting-title' ? { textContent: title } : input });
+  f.context.localStorage = { getItem: () => JSON.stringify({
+    gameMode: false, autoGameModeOnFullscreen: true
+  }) };
+  f.context.document.querySelector = selector =>
+    selector === '.settings-module .panel-content' ? {
+      querySelectorAll: () => [row('全屏进入游戏模式', auto), row('游戏模式', mode)]
+    } : null;
+  f.settings.uninstall();
+  assert.equal(auto.checked, true);
+  assert.equal(mode.checked, false);
+});

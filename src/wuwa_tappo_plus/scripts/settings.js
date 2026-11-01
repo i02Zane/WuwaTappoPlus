@@ -27,48 +27,29 @@
     ['animation', '气泡动画', '让气泡轻轻跳动；关闭后保留静态气泡。'],
     ['remember_screen', '屏幕记忆', '记住桌宠所在的显示器，重启后自动回到该屏幕；显示器不可用时保持原样。'],
     ['pause_clicks', '小黑屋模式', '暂停累积和上报新的点击，但仍保留桌宠敲击动画'],
-    ['game_mode_plus', '全屏进入游戏模式·Plus', '开启后由 Plus 接管全屏自动进入游戏模式：窗口化/无边框全屏也生效，官方全屏开关会暂时关闭；关闭后恢复官方设置。']
+    ['game_mode_plus', '全屏进入游戏模式·Plus', '开启后由 Plus 接管全屏自动进入游戏模式：窗口化/无边框全屏也生效，官方全屏开关会暂时关闭；关闭后恢复官方设置；手动退出后，本次全屏期间不再自动进入。']
   ];
 
-  var AUTO_FULLSCREEN_TITLES = ['全屏进入游戏模式', 'Enter Game Mode in Fullscreen'];
-  var AUTO_FULLSCREEN_BACKUP = 'wut-plus-auto-fullscreen-backup';
-
-  // While Plus owns automatic game mode, turn the app's own fullscreen switch
-  // off and remember it; restore it when Plus is switched off again.
-  function officialAutoInput() {
+  // Reflect values already confirmed by the daemon. The panel never owns the
+  // takeover/backup, and may be closed throughout the operation.
+  function syncOfficialGameSettings() {
     var container = document.querySelector('.settings-module .panel-content');
-    if (!container) return null;
+    if (!container) return;
+    var settings;
+    try { settings = JSON.parse(localStorage.getItem('wuwatappo-settings') || '{}'); }
+    catch (e) { return; }
     var host = document.getElementById(HOST);
-    var rows = container.querySelectorAll('.setting-item');
-    for (var i = 0; i < rows.length; i += 1) {
-      var row = rows[i];
-      if (host && host.contains(row)) continue;
+    var titles = { '全屏进入游戏模式': 'autoGameModeOnFullscreen',
+                   'Enter Game Mode in Fullscreen': 'autoGameModeOnFullscreen',
+                   '游戏模式': 'gameMode', 'Game Mode': 'gameMode' };
+    container.querySelectorAll('.setting-item').forEach(function (row) {
+      if (host && host.contains(row)) return;
       var title = row.querySelector('.setting-title');
-      if (!title || AUTO_FULLSCREEN_TITLES.indexOf(title.textContent.trim()) < 0) continue;
+      var key = title && titles[title.textContent.trim()];
+      if (!key || typeof settings[key] !== 'boolean') return;
       var input = row.querySelector('.setting-switch input[type="checkbox"]');
-      if (input) return input;
-    }
-    return null;
-  }
-
-  function syncOfficialAutoFullscreen() {
-    var input = officialAutoInput();
-    if (!input) return;
-    var plus = !!(S.preferences && S.preferences.game_mode_plus);
-    var stored = null;
-    try {
-      stored = window.localStorage ? localStorage.getItem(AUTO_FULLSCREEN_BACKUP) : null;
-    } catch (e) {}
-    if (plus) {
-      if (stored === null) {
-        try { localStorage.setItem(AUTO_FULLSCREEN_BACKUP, input.checked ? '1' : '0'); } catch (e) {}
-      }
-      if (input.checked) input.click();
-    } else if (stored !== null) {
-      var want = stored === '1';
-      if (input.checked !== want) input.click();
-      try { localStorage.removeItem(AUTO_FULLSCREEN_BACKUP); } catch (e) {}
-    }
+      if (input && input.checked !== settings[key]) input.click();
+    });
   }
 
   function emitGameOpacityPreview(value, done) {
@@ -307,7 +288,7 @@
       input.checked = current;
       input.disabled = !online || !!pending;
     });
-    syncOfficialAutoFullscreen();
+    syncOfficialGameSettings();
     var status = host.querySelector('.wut-status');
     var text = !online ? 'Plus 后台未连接，请安装或修复 Plus' :
       error ? error :
@@ -941,6 +922,7 @@
   observer.observe(document.body, { childList: true, subtree: true });
   var timer = setInterval(function () { mount(); render(); }, 1000);
   S.uninstall = function () {
+    syncOfficialGameSettings();
     atlasView.dispose();
     observer.disconnect(); clearInterval(timer);
     [HOST, STYLE].forEach(function (id) {

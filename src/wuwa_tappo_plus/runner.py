@@ -8,7 +8,7 @@ import traceback
 from collections import deque
 from datetime import datetime
 
-from . import __version__, accessories, cdp, fullscreen, win
+from . import __version__, accessories, cdp, game_mode, win
 from .config import INJECT_PATH, LOG_DIR, LOCK_PATH, STATE_PATH, load
 from .logs import Log
 from .settings import SettingsBridge
@@ -104,8 +104,7 @@ class Runner:
         self._stop = False
         self._accessory_key = None
         self._accessory_session = None
-        self._effective_fullscreen = None
-        self._plus_game_mode = False
+        self.game_mode = game_mode.GameModeController(self.log)
 
     # ------------------------------------------------------------- plumbing
 
@@ -240,46 +239,7 @@ class Runner:
             self.settings.pet_accessory = base
 
     def apply_effective_fullscreen(self):
-        """Enter/leave the app's game mode for windowed/borderless fullscreen."""
-        if not self.cfg.game_mode_plus:
-            if self._plus_game_mode:
-                if self._app_game_mode():
-                    self._toggle_app_game_mode()
-                self._plus_game_mode = False
-            if self._effective_fullscreen is not False:
-                self._effective_fullscreen = False
-                self.session.js(
-                    "window.__WUT_EFFECTIVE_FULLSCREEN__ = false;"
-                    "if(window.__WUT__&&window.__WUT__.tick)window.__WUT__.tick();1")
-            return
-        now = fullscreen.foreground_client_covers_monitor()
-        if now != self._effective_fullscreen:
-            self._effective_fullscreen = now
-            self.session.js(
-                "window.__WUT_EFFECTIVE_FULLSCREEN__ = %s;"
-                "if(window.__WUT__&&window.__WUT__.tick)window.__WUT__.tick();1"
-                % ("true" if now else "false"))
-        game_mode = self._app_game_mode()
-        if now:
-            if not game_mode:
-                self._toggle_app_game_mode()
-                self._plus_game_mode = True
-        elif self._plus_game_mode:
-            if game_mode:
-                self._toggle_app_game_mode()
-            self._plus_game_mode = False
-
-    def _app_game_mode(self):
-        raw = self.session.js(
-            "JSON.stringify(JSON.parse(localStorage.getItem('wuwatappo-settings')"
-            "||'{}').gameMode===true)")
-        return raw == "true"
-
-    def _toggle_app_game_mode(self):
-        self.session.js(
-            "if(window.__TAURI_INTERNALS__)window.__TAURI_INTERNALS__.invoke("
-            "'plugin:event|emit',{event:'tray-toggle-game-mode',payload:null})"
-            ".catch(function(){});1")
+        self.game_mode.tick(self.session, self.cfg.game_mode_plus)
 
     # ---------------------------------------------------------------- clicks
 
@@ -597,6 +557,11 @@ class Runner:
             self.log.error("FATAL " + traceback.format_exc().replace("\n", " | "))
             return 1
         finally:
+            if self.session.ws is not None:
+                try:
+                    self.game_mode.release(self.session)
+                except Exception as exc:
+                    self.log.warn("game mode restore pending: %s" % str(exc)[:160])
             self.settings.close()
             self.reports.close()
             self.rooms.close()

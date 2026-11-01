@@ -2,8 +2,8 @@
 
 The official app compares the window frame, so a windowed game whose client
 area covers the monitor (title bar above the screen, or a borderless window)
-is not counted as fullscreen. The game-mode opacity uses this client-area
-check instead; it does not change the app's own game-mode state.
+is not counted as fullscreen. Plus uses this client-area check to drive the native game-mode setting.
+API failures return None so they cannot be mistaken for leaving fullscreen.
 """
 
 import ctypes
@@ -86,14 +86,14 @@ def foreground_client_covers_monitor(tolerance=2):
     try:
         return window_client_covers_monitor(user32.GetForegroundWindow(), tolerance)
     except (OSError, ValueError):
-        return False
+        return None
 
 
 def window_client_covers_monitor(hwnd, tolerance=2):
     """Check one window's client area against the monitor it belongs to."""
     try:
         if not hwnd:
-            return False
+            return None
         hwnd = user32.GetAncestor(hwnd, GA_ROOT) or hwnd
         if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
             return False
@@ -103,27 +103,30 @@ def window_client_covers_monitor(hwnd, tolerance=2):
             return False
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        if _process_name(pid.value).lower() in EXCLUDED_PROCESSES:
+        name = _process_name(pid.value).lower()
+        if not name:
+            return None
+        if name in EXCLUDED_PROCESSES:
             return False
         client = wintypes.RECT()
         if not user32.GetClientRect(hwnd, ctypes.byref(client)):
-            return False
+            return None
         if client.right <= 0 or client.bottom <= 0:
             return False
         origin = wintypes.POINT(0, 0)
         if not user32.ClientToScreen(hwnd, ctypes.byref(origin)):
-            return False
+            return None
         monitor = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
         if not monitor:
-            return False
+            return None
         info = _MONITORINFO()
         info.cbSize = ctypes.sizeof(info)
         if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
-            return False
+            return None
         client_rect = (origin.x, origin.y,
                        origin.x + client.right, origin.y + client.bottom)
         monitor_rect = (info.rcMonitor.left, info.rcMonitor.top,
                         info.rcMonitor.right, info.rcMonitor.bottom)
         return client_covers_monitor(client_rect, monitor_rect, tolerance)
     except (OSError, ValueError):
-        return False
+        return None

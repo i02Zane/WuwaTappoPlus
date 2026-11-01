@@ -42,7 +42,7 @@ def validate_executable(executable, build):
     payload = json.loads(report.read_text(encoding="utf-8"))
     if (not payload.get("frozen") or payload.get("version") != __version__
             or payload.get("scripts") != dict.fromkeys(
-                ("pet", "settings", "rooms", "toast"), __version__)
+                ("pet", "settings", "rooms", "toast", "game_mode"), __version__)
             or len(payload.get("licenses", [])) != 6):
         raise RuntimeError("Packaged EXE returned inconsistent release metadata; see %s" % report)
 

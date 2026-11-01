@@ -18,7 +18,7 @@ Wuwa Tappo 的第三方本地增强工具，提供自动开箱、余额提醒、
 | 图鉴预览 | 未获得的角色、配件、表情在「图鉴」里点一下即可预览；角色可敲击、会眨眼，配件叠加在当前角色上，表情原样展示 |
 | 配件自定义 | 在背包 → 配件的稀有度筛选行最右侧点「配件位置调整」，调位置、缩放和旋转；保存后本机桌宠的同一个配件也会应用，其他玩家看不到 |
 | 游戏模式透明度 | 桌宠进入游戏模式（含窗口化/无边框全屏）时降到 Plus 设置里指定的透明度，并自动进入应用游戏模式避免挡点击；退出后恢复官方透明度 |
-| 全屏进入游戏模式·Plus | 接管官方全屏自动逻辑：窗口化/无边框全屏也进入游戏模式并应用透明度；开启时暂时关闭官方全屏开关，关闭后恢复 |
+| 全屏进入游戏模式·Plus | 接管官方全屏自动逻辑：窗口化/无边框全屏也进入游戏模式并应用透明度；开启时暂时关闭官方全屏开关，关闭或卸载时恢复；全屏变化稳定两秒后生效，手动退出后本次全屏不再自动进入 |
 | 屏幕记忆 | 记住桌宠所在的显示器，重启后自动移回；显示器不可用时保持原样 |
 
 自动开箱调用页面里的按钮，不构造奖励接口请求，不修改应用二进制文件或宝箱冷却时间。房间历史同样只填入真实输入框并点击「加入房间」按钮。
@@ -245,7 +245,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[build]"
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m compileall -q src tests tools launch.py
-node --test tests/test_bubble.js tests/test_panel.js tests/test_rooms.js tests/test_toast.js
+node --test tests/test_game_mode.js tests/test_bubble.js tests/test_panel.js tests/test_rooms.js tests/test_toast.js
 ```
 
 不安装开发依赖也可运行 `python tools/run_tests.py`。运行项目本身仅依赖 Python 标准库；构建 EXE 才需要 PyInstaller。

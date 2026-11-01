@@ -20,6 +20,7 @@ class LifecycleTests(unittest.TestCase):
         targets = {
             "load": Config({}),
             "installation.remove_program": "removed",
+            "game_mode.restore": None,
             "out": None,
             "_stop_daemon": 0,
             "win.is_admin": True,
@@ -41,14 +42,21 @@ class LifecycleTests(unittest.TestCase):
     def test_uninstall_cleans_setup_then_restarts_app(self):
         mocks = self.cleanup_mocks()
         events = []
-        for name in ("_stop_daemon", "win.remove_policy", "win.disable_autostart",
+        for name in ("_stop_daemon", "game_mode.restore", "win.remove_policy", "win.disable_autostart",
                      "win.remove_watchdog", "win.restart_app"):
             value = mocks[name].return_value
             mocks[name].side_effect = lambda *a, n=name, v=value: events.append(n) or v
         self.assertEqual(cli.cmd_uninstall([]), 0)
-        self.assertEqual(events, ["_stop_daemon", "win.remove_policy",
+        self.assertEqual(events, ["_stop_daemon", "game_mode.restore", "win.remove_policy",
                                   "win.disable_autostart", "win.remove_watchdog",
                                   "win.restart_app"])
+
+    def test_game_mode_restore_failure_keeps_debug_policy_for_retry(self):
+        mocks = self.cleanup_mocks()
+        mocks["game_mode.restore"].side_effect = OSError("unreachable")
+        self.assertEqual(cli.cmd_uninstall([]), 1)
+        mocks["win.remove_policy"].assert_not_called()
+        mocks["installation.remove_program"].assert_not_called()
 
     def test_uninstall_does_not_launch_an_app_that_was_closed(self):
         mocks = self.cleanup_mocks(app_running=False)

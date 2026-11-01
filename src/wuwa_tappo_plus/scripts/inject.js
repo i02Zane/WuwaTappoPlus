@@ -1052,12 +1052,11 @@
   }
 
   function gameModeEnabled() {
-    var effective = window.__WUT_EFFECTIVE_FULLSCREEN__ === true;
     try {
       var settings = JSON.parse(localStorage.getItem('wuwatappo-settings') || '{}');
-      return effective || (!!settings && settings.gameMode === true);
+      return !!settings && settings.gameMode === true;
     } catch (e) {
-      return effective;
+      return false;
     }
   }
 

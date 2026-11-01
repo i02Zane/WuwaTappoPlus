@@ -8,8 +8,9 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 - `src/wuwa_tappo_plus/runner.py`：守护进程生命周期、心跳与状态发布。
 - `src/wuwa_tappo_plus/cdp.py`、`src/wuwa_tappo_plus/ws.py`：WebView2 CDP 通信与 WebSocket 传输。
 - `src/wuwa_tappo_plus/win.py`：Windows 注册表策略、进程、自启动与计划任务。
-- `src/wuwa_tappo_plus/scripts/inject.js`：页面检查、按钮点击与提醒气泡；同时读取应用持久化的 `wuwatappo-settings.gameMode` 或后台发布的窗口化全屏标志，在游戏模式期间给 `.pet-dock` 加内联透明度，退出后移除并恢复应用自己的 `--window-opacity`。
-- `src/wuwa_tappo_plus/fullscreen.py`：用前台窗口客户区判断窗口化/无边框全屏（客户区覆盖显示器，2px 容差），排除 Wuwa Tappo/Plus 自身、桌面/任务栏 shell 和输入体验进程；`runner.py` 每秒发布 `__WUT_EFFECTIVE_FULLSCREEN__`，注入脚本把它视作游戏模式；同时通过应用自己的 `tray-toggle-game-mode` 事件进入/退出应用游戏模式（窗口化全屏且应用不在游戏模式时进入，离开且由 Plus 进入时退出），不直接改应用配置。受 `appearance.game_mode_plus`（设置页「全屏进入游戏模式·Plus」）控制；开启时设置页会关闭官方「全屏进入游戏模式」开关并记住原值，关闭 Plus 时恢复，由 Plus 接管全屏自动逻辑；关闭后不检测、不自动切换，只跟随应用自己的 `gameMode`。
+- `src/wuwa_tappo_plus/scripts/inject.js`：页面检查、按钮点击与提醒气泡；同时读取应用持久化的 `wuwatappo-settings.gameMode` ，在游戏模式期间给 `.pet-dock` 加内联透明度，退出后移除并恢复应用自己的 `--window-opacity`。
+- `src/wuwa_tappo_plus/fullscreen.py`：用前台窗口客户区判断窗口化/无边框全屏（2px 容差），排除桌宠、桌面/任务栏和输入体验进程。返回 `True/False/None`，`None` 表示读取失败，不代表退出全屏。
+- `src/wuwa_tappo_plus/game_mode.py`、`scripts/game_mode.js`：后台管理全屏接管、两秒防抖、原生状态确认和恢复。通过原生 `loadDesktopCatSettings/persistDesktopCatSettings/emitSettingsGameMode` 操作明确布尔值，不发送 toggle 事件；原生入口模块从页面动态发现，API 不匹配时保留恢复信息并停止操作。
 - `src/wuwa_tappo_plus/config.py`：默认配置与 TOML 加载；`config.toml`：本地配置。
 - `src/wuwa_tappo_plus/settings.py`、`src/wuwa_tappo_plus/scripts/settings.js`：独立设置窗口中的 Plus 开关、配置持久化与运行状态同步。设置脚本同时在面板页挂载图鉴预览：未获得的角色、配件、表情点击弹窗查看；已获得的配件通过背包配件页稀有度筛选行最右侧的「配件位置调整」按钮打开。角色用外观目录的 `body1..3`/`head1..2` 帧做敲击与眨眼动画，配件叠加到当前角色上，表情原样展示。配件预览提供位置/缩放/旋转调节，保存到 `accessory_overrides.json`。外观目录从 IndexedDB 的 `wuwatappo_appearance_asset` 读取，图鉴图标通过 `height_light_id` 映射到真实外观条目，不额外请求服务器。
 - `src/wuwa_tappo_plus/accessories.py`：本机配件显示覆盖（位置/缩放/旋转），保存在数据目录的 `accessory_overrides.json`；后台在图鉴保存后把映射推给桌宠页面，注入脚本按配件文件名给 `.cat-stack__layer` 追加 `translate/scale/rotate`。只影响本机显示，其他玩家看不到。
@@ -27,7 +28,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 - `.\runtime\python.exe launch.py help`：查看可用命令。
 - `.\runtime\python.exe -m compileall -q src tests tools launch.py`：检查 Python 语法。
 - `.\runtime\python.exe tools/run_tests.py`：运行隔离回归测试。
-- `node --test tests/test_bubble.js tests/test_panel.js tests/test_rooms.js tests/test_toast.js`：验证气泡定位、原生裁切区域桥接、房间回跳与 toast 缓存；仅开发测试需要 Node.js。
+- `node --test tests/test_game_mode.js tests/test_bubble.js tests/test_panel.js tests/test_rooms.js tests/test_toast.js`：验证气泡定位、原生裁切区域桥接、房间回跳、游戏模式恢复与 toast 缓存；仅开发测试需要 Node.js。
 - `.\runtime\python.exe launch.py doctor`：检查解释器、应用、策略、连接与守护进程状态。
 - `.\runtime\python.exe launch.py status`、`.\runtime\python.exe launch.py logs 80`：查看当前状态与最近日志。
 - `.\runtime\python.exe launch.py install`、`.\runtime\python.exe launch.py uninstall`：安装 / 修复或卸载，保留个人配置与功能开关。
@@ -35,7 +36,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 
 对外命令仅保留 `install`、`uninstall`、`status`、`doctor`、`logs`；`run`、`ensure`、`menu` 为内部入口。EXE 双击打开终端安装管理，安装／卸载才提权；日常功能开关放在桌宠设置中。不要添加语义重复的 `start`、`stop`、`restart` 命令。重复安装应修复后台与策略，卸载不能因进程未运行而跳过清理。`uninstall` 保留数据；`uninstall --purge` 经确认后完整卸载，`--yes` 用于自动化。仅在卸载成功且后台已退出后删除已知 Plus 数据文件，保留源码、EXE 和其他文件；完整卸载成功后退出面板，避免重新生成配置。
 
-设置页仅允许修改自动开箱、余额提醒、气泡显示、气泡动画、屏幕记忆、自动发表情、小黑屋模式和全屏进入游戏模式·Plus八个布尔值，以及游戏模式透明度（0-100 的整数）；由后台原子保存到配置，保存成功后才确认。屏幕记忆关闭时既不记录也不移动。暂停点击不停止后台，界面关闭或重建后必须能重新挂载。游戏模式透明度默认 30：注入脚本每秒读取应用持久化的 `gameMode`，进入时给 `.pet-dock` 加内联透明度，退出时清除；不修改应用的 `windowOpacity` 或 `--window-opacity`，所以恢复的是应用当前的透明度。全屏进入游戏模式·Plus 默认开启：设置页会关闭官方「全屏进入游戏模式」开关并把原值记在 `wut-plus-auto-fullscreen-backup`，关闭 Plus 时恢复；`fullscreen.py` 把前台窗口客户区覆盖显示器视为窗口化/无边框全屏，应用透明度并触发应用自己的 `tray-toggle-game-mode` 进入游戏模式；runner 在 Plus 开启期间始终以自身检测为准，官方自动逻辑被接管，避免两边抢状态。关闭该开关后不检测、不自动切换，只跟随应用自己的 `gameMode`；不直接改应用配置。
+设置页仅允许修改自动开箱、余额提醒、气泡显示、气泡动画、屏幕记忆、自动发表情、小黑屋模式和全屏进入游戏模式·Plus八个布尔值，以及游戏模式透明度（0-100 的整数）；由后台原子保存到配置，保存成功后才确认。屏幕记忆关闭时既不记录也不移动。暂停点击不停止后台，界面关闭或重建后必须能重新挂载。游戏模式透明度默认 30：注入脚本每秒读取应用持久化的 `gameMode`，进入时给 `.pet-dock` 加内联透明度，退出时清除；不修改应用的 `windowOpacity` 或 `--window-opacity`，所以恢复的是应用当前的透明度。全屏进入游戏模式·Plus 默认开启：后台先在原生页面 localStorage 的 `wut-plus-game-mode-owner` 保存原官方自动开关、Plus 开启标记、待确认操作和手动退出状态，再关闭并确认官方自动逻辑；不依赖设置页。进入或退出全屏须连续稳定两秒，读取失败打断防抖但不改变模式。使用原生持久化函数和 `cat-settings-game-mode` 的明确 enabled 值，确认事件成功及存储状态后完成操作，每三秒最多重试一次、每轮最多三次。用户手动退出后，本次全屏期间不再自动进入；用户原本手动开启的模式不归 Plus 管理。后台重启复用恢复记录；关闭功能、后台正常退出和卸载时只退出 Plus 开启的模式并恢复官方自动开关。卸载恢复失败时保留调试策略和记录以便重试；原生页面正常关闭时同步恢复存储，异常强制结束后的恢复依赖下次连接。设置页只反映官方当前值；透明度只跟随官方 `gameMode`，不使用独立全屏标记。
 
 官方 1.0.2 开箱后使用组件内部计时，`userInfo.left_treasure_chest/right_treasure_chest` 可能保持旧值。宝箱状态以左右 `.reward-anchor--left/right` 内的原生按钮及 `.reward-countdown__text` 为准；隐藏的倒计时优先使用本账户已确认开箱的本地缓存；无有效缓存时标记为未知，不用旧字段或余额变化推算。缓存只供提醒，不能作为点击授权。必须按目标槽选择按钮，保留各槽独立的重试预算；脚本卸载后的旧验证回调不得继续报错。CLI 与后台共用主注入的快照。
 

@@ -976,12 +976,12 @@ test('auto emote toggles and pause mode changes do not reset the shared send bud
 test('game mode opacity restores the existing inline opacity on exit', () => {
   const f = fixture();
   f.petDock.style.opacity = '0.8';
-  f.window.__WUT_EFFECTIVE_FULLSCREEN__ = true;
+  f.context.localStorage = { getItem: () => JSON.stringify({ gameMode: true }) };
   f.a.configure({ ...f.a.cfg, game_mode_opacity: 30 });
   assert.equal(f.petDock.style.opacity, '0.3');
   f.a.configure({ ...f.a.cfg, game_mode_opacity: 45 });
   assert.equal(f.petDock.style.opacity, '0.45');
-  f.window.__WUT_EFFECTIVE_FULLSCREEN__ = false;
+  f.context.localStorage = { getItem: () => JSON.stringify({ gameMode: false }) };
   f.a.configure(f.a.cfg);
   assert.equal(f.petDock.style.opacity, '0.8');
   assert.equal(f.petDock.dataset.wutGameOpacity, undefined);
@@ -997,11 +997,11 @@ test('game mode opacity also affects room pets and restores CSS-controlled opaci
   const query = f.context.document.querySelector;
   f.context.document.querySelector = selector =>
     selector === '.room-cats-shell' ? room : query(selector);
-  f.window.__WUT_EFFECTIVE_FULLSCREEN__ = true;
+  f.context.localStorage = { getItem: () => JSON.stringify({ gameMode: true }) };
   f.a.configure({ ...f.a.cfg, game_mode_opacity: 0 });
   assert.equal(f.petDock.style.opacity, '0');
   assert.equal(room.style.opacity, '0');
-  f.window.__WUT_EFFECTIVE_FULLSCREEN__ = false;
+  f.context.localStorage = { getItem: () => JSON.stringify({ gameMode: false }) };
   f.a.configure(f.a.cfg);
   assert.equal(f.petDock.style.opacity, '');
   assert.equal(room.style.opacity, '');
