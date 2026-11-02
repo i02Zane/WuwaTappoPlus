@@ -45,13 +45,20 @@
   function ledger() {
     var raw = localStorage.getItem(KEY);
     if (raw === null) return null;
-    var data = JSON.parse(raw);
+    var data;
+    try {
+      data = JSON.parse(raw);
+    } catch (e) {
+      localStorage.removeItem(KEY);
+      return null;
+    }
     if (!data || ['original_auto', 'owned', 'active', 'suppressed', 'failed'].some(function (key) {
       return typeof data[key] !== 'boolean';
     }) || (data.pending !== null && (!data.pending ||
       typeof data.pending.target !== 'boolean' || !Number.isFinite(data.pending.at) ||
       typeof data.pending.confirmed !== 'boolean' || !Number.isInteger(data.pending.attempts) || data.pending.attempts < 1))) {
-      throw new Error('invalid Plus game mode recovery data');
+      localStorage.removeItem(KEY);
+      return null;
     }
     return data;
   }

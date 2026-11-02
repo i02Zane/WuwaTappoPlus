@@ -2,11 +2,10 @@
 
 import copy
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
-from wuwa_tappo_plus import cdp, game_mode
+from wuwa_tappo_plus import cdp
 from wuwa_tappo_plus.game_mode import GameModeController
-from wuwa_tappo_plus.config import Config
 
 
 class ControllerTests(unittest.TestCase):
@@ -191,26 +190,6 @@ class ControllerTests(unittest.TestCase):
         self.controller.detector = Mock(side_effect=AssertionError("unexpected detection"))
         self.tick(enabled=False)
         self.controller.detector.assert_not_called()
-
-
-class UninstallRecoveryTests(unittest.TestCase):
-    def test_repeated_uninstall_accepts_an_app_without_debug_policy(self):
-        session = Mock()
-        session.connect.side_effect = cdp.CDPError("no debug endpoint")
-        with patch.object(game_mode.cdp, "Session", return_value=session), \
-                patch.object(game_mode.win, "read_policy", return_value={}):
-            game_mode.restore(Config({}))
-        session.close.assert_called_once()
-        session.js.assert_not_called()
-
-    def test_existing_debug_policy_makes_connection_failure_actionable(self):
-        session = Mock()
-        session.connect.side_effect = cdp.CDPError("temporarily disconnected")
-        with patch.object(game_mode.cdp, "Session", return_value=session), \
-                patch.object(game_mode.win, "read_policy", return_value={game_mode.win.TARGET_EXE: "debug"}):
-            with self.assertRaises(cdp.CDPError):
-                game_mode.restore(Config({}))
-        session.close.assert_called_once()
 
 
 if __name__ == "__main__":

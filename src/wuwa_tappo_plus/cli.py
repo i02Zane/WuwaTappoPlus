@@ -7,7 +7,7 @@ import sys
 import time
 from datetime import datetime
 
-from . import __version__, accessories, cdp, game_mode, win, installation
+from . import __version__, accessories, cdp, win, installation
 from .config import (
     CONFIG_PATH,
     DISABLED_PATH,
@@ -355,13 +355,6 @@ def cmd_uninstall(argv):
     rc = _stop_daemon([])
     if rc:
         return rc
-
-    if app_running:
-        try:
-            game_mode.restore(cfg)
-        except (cdp.CDPError, OSError, ValueError) as exc:
-            out(BAD + "尚未恢复官方游戏模式设置，卸载已暂停，请重试：%s" % exc)
-            return 1
 
     if win.remove_policy():
         out(OK + "调试策略已移除。")

@@ -171,8 +171,10 @@ test('settings export queues one action, shows result, and permits retry after f
 
 test('panel cleanup reflects restored native game settings before removing Plus', () => {
   const f = fixture();
-  const auto = { checked: false, click() { this.checked = !this.checked; } };
-  const mode = { checked: true, click() { this.checked = !this.checked; } };
+  let autoClicks = 0;
+  let modeClicks = 0;
+  const auto = { checked: false, click() { autoClicks += 1; this.checked = !this.checked; } };
+  const mode = { checked: true, click() { modeClicks += 1; this.checked = !this.checked; } };
   const row = (title, input) => ({ querySelector: selector =>
     selector === '.setting-title' ? { textContent: title } : input });
   f.context.localStorage = { getItem: () => JSON.stringify({
@@ -185,4 +187,6 @@ test('panel cleanup reflects restored native game settings before removing Plus'
   f.settings.uninstall();
   assert.equal(auto.checked, true);
   assert.equal(mode.checked, false);
+  assert.equal(autoClicks, 1);
+  assert.equal(modeClicks, 1);
 });

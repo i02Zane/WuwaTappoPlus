@@ -3,7 +3,7 @@
 import json
 import time
 
-from . import __version__, cdp, fullscreen, win
+from . import __version__, cdp, fullscreen
 from .paths import SCRIPTS_DIR
 
 
@@ -112,20 +112,3 @@ class GameModeController:
         """Release only our game mode and restore the native automatic setting."""
         self._call(session, "release")
         self.candidate = None
-
-
-def restore(cfg):
-    """Uninstall fallback, including a previously crashed daemon/legacy backup."""
-    session = cdp.Session(cfg.port, cfg.host, timeout=3)
-    try:
-        try:
-            session.connect()
-        except (cdp.CDPError, OSError):
-            # A repeated uninstall may find an ordinary, non-debug app. There
-            # is no live injected controller in that process to release.
-            if not win.read_policy().get(win.TARGET_EXE):
-                return
-            raise
-        GameModeController().release(session)
-    finally:
-        session.close()

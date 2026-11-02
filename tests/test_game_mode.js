@@ -147,3 +147,11 @@ test('repeated injection retains one native bridge and its recovery information'
   assert.equal(f.events.size, 1);
   assert.equal((await f.api.read()).ledger.owned, true);
 });
+
+test('corrupt ownership data is discarded instead of blocking reads', async () => {
+  const f = fixture();
+  f.storage.set(KEY, '{broken');
+  const state = await f.api.read();
+  assert.equal(state.ledger, null);
+  assert.equal(f.storage.has(KEY), false);
+});
