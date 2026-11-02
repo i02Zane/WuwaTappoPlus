@@ -51,6 +51,61 @@
     });
   }
 
+  function readAccessToken() {
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var key = localStorage.key(i);
+        if (!key || key.indexOf('credentials_') !== 0) continue;
+        try {
+          var data = JSON.parse(localStorage.getItem(key));
+          if (data && typeof data.access_token === 'string' && data.access_token) return data.access_token;
+        } catch (e) {}
+      }
+      var legacy = localStorage.getItem('__KrSDK_USER_TOKEN__');
+      if (legacy) return legacy;
+      var info = JSON.parse(localStorage.getItem('__KrSDK_USER_INFO__') || 'null');
+      return info && typeof info.access_token === 'string' ? info.access_token : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function readInfoToken() {
+    try {
+      var parts = document.cookie ? document.cookie.split(';') : [];
+      for (var i = 0; i < parts.length; i++) {
+        var part = parts[i].trim();
+        if (part.indexOf('kuro_infoToken=') === 0) {
+          return decodeURIComponent(part.slice('kuro_infoToken='.length));
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  function copyToken(text) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      try {
+        var area = document.createElement('textarea');
+        area.value = text;
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        area.style.left = '-9999px';
+        document.body.appendChild(area);
+        area.focus();
+        area.select();
+        var ok = document.execCommand('copy');
+        document.body.removeChild(area);
+        if (ok) resolve(); else reject(new Error('copy failed'));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
   function emitGameOpacityPreview(value, done) {
     try {
       var internals = window.__TAURI_INTERNALS__;
@@ -85,6 +140,13 @@
         + 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}'
         + '#wut-plus-settings .setting-value-opacity{flex:0 0 64px;width:64px;'
         + 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}'
+        + '#wut-plus-settings .wut-token-warning{color:#b4543c;font-size:13px;'
+        + 'line-height:1.5;margin-top:6px;}'
+        + '#wut-plus-settings .wut-token-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}'
+        + '#wut-plus-settings .wut-token-output{width:100%;min-height:70px;margin-top:8px;'
+        + 'font-family:monospace;font-size:12px;line-height:1.4;resize:vertical;'
+        + 'box-sizing:border-box;padding:6px;border:1px solid #e0cfc0;border-radius:6px;}'
+        + '#wut-plus-settings .wut-token-status{font-size:13px;color:#8e7b6a;margin-top:6px;}'
         + '#wut-plus-settings .wut-export{gap:18px;}'
         + '#wut-plus-settings .wut-export .setting-label{min-width:0;}'
         + '#wut-plus-settings .wut-export .setting-content{flex-shrink:0;}'
@@ -328,6 +390,84 @@
     exports.appendChild(exportLabel);
     exports.appendChild(exportContent);
     host.appendChild(exports);
+    appendTokenRow();
+    function appendTokenRow() {
+      var row = document.createElement('div');
+      row.className = 'setting-item wut-token';
+      var label = document.createElement('div');
+      label.className = 'setting-label';
+      var title = document.createElement('div');
+      title.className = 'setting-title';
+      title.textContent = '提取 Token';
+      var desc = document.createElement('div');
+      desc.className = 'setting-sub';
+      desc.textContent = '当前 Wuwa Tappo 登录凭证；只在点击时读取，不会自动保存或上传。';
+      var warning = document.createElement('div');
+      warning.id = 'wut-token-warning';
+      warning.className = 'wut-token-warning';
+      warning.textContent = 'Token 是你的登录凭证，请勿分享给任何人，也不要粘贴到不可信的工具；泄露后他人可以访问你的账号。';
+      label.appendChild(title);
+      label.appendChild(desc);
+      label.appendChild(warning);
+      var content = document.createElement('div');
+      content.className = 'setting-content';
+      var actions = document.createElement('div');
+      actions.className = 'wut-token-actions';
+      var accessButton = document.createElement('button');
+      accessButton.id = 'wut-token-access';
+      accessButton.type = 'button';
+      accessButton.className = 'setting-btn';
+      accessButton.textContent = 'Access Token';
+      var infoButton = document.createElement('button');
+      infoButton.id = 'wut-token-info';
+      infoButton.type = 'button';
+      infoButton.className = 'setting-btn';
+      infoButton.textContent = 'Info Token';
+      var copyButton = document.createElement('button');
+      copyButton.id = 'wut-token-copy';
+      copyButton.type = 'button';
+      copyButton.className = 'setting-btn';
+      copyButton.textContent = '复制';
+      copyButton.disabled = true;
+      var output = document.createElement('textarea');
+      output.id = 'wut-token-output';
+      output.className = 'wut-token-output';
+      output.readOnly = true;
+      output.spellcheck = false;
+      output.placeholder = '点击上方按钮读取 Token';
+      var status = document.createElement('div');
+      status.id = 'wut-token-status';
+      status.className = 'wut-token-status';
+      status.setAttribute('role', 'status');
+      function showToken(kind, token) {
+        output.value = token || '';
+        copyButton.disabled = !token;
+        status.textContent = token ? '已提取 ' + kind + '，请勿外泄。' : '未找到 ' + kind + '，请先登录 Wuwa Tappo。';
+      }
+      accessButton.addEventListener('click', function () {
+        showToken('Access Token', readAccessToken());
+      });
+      infoButton.addEventListener('click', function () {
+        showToken('Info Token', readInfoToken());
+      });
+      copyButton.addEventListener('click', function () {
+        if (!output.value) return;
+        copyToken(output.value).then(function () {
+          status.textContent = '已复制，请勿外泄给其他人。';
+        }).catch(function () {
+          status.textContent = '复制失败，请手动选中文本复制。';
+        });
+      });
+      actions.appendChild(accessButton);
+      actions.appendChild(infoButton);
+      actions.appendChild(copyButton);
+      content.appendChild(actions);
+      content.appendChild(output);
+      content.appendChild(status);
+      row.appendChild(label);
+      row.appendChild(content);
+      host.appendChild(row);
+    }
     reportKey = '';
     var anchor = container.querySelector('.btn-check-update');
     container.insertBefore(host, anchor ? anchor.closest('.setting-item') :

@@ -190,3 +190,58 @@ test('panel cleanup reflects restored native game settings before removing Plus'
   assert.equal(autoClicks, 1);
   assert.equal(modeClicks, 1);
 });
+
+
+test('token extraction warns and copies only on demand', async () => {
+  const f = fixture();
+  const nodes = new Map();
+  let copied = null;
+  function element() {
+    return { dataset: {}, style: { setProperty() {} }, children: [], textContent: '',
+      setAttribute() {}, addEventListener(name, handler) { this[name] = handler; },
+      appendChild(child) { this.children.push(child); if (child.id) nodes.set(child.id, child); },
+      querySelectorAll() { return []; },
+      querySelector(selector) {
+        if (selector === '.wut-status') return this.children[0].children[1];
+        return null;
+      }
+    };
+  }
+  const container = element();
+  container.querySelector = () => null;
+  container.insertBefore = child => container.appendChild(child);
+  f.context.document.createElement = element;
+  f.context.document.head = element();
+  f.context.document.querySelector = () => container;
+  f.context.document.getElementById = id =>
+    id === 'wut-daily-report' ? null : nodes.get(id);
+  f.context.document.cookie = 'kuro_infoToken=info-token-123';
+  f.context.localStorage = {
+    length: 1,
+    key: () => 'credentials_zeus-free-test',
+    getItem: key => key === 'credentials_zeus-free-test'
+      ? JSON.stringify({ access_token: 'access-token-456' }) : null
+  };
+  f.context.navigator = {
+    clipboard: { writeText: text => { copied = text; return Promise.resolve(); } }
+  };
+  f.settings.update({ preferences: {}, ack: [] });
+  const warning = nodes.get('wut-token-warning');
+  const access = nodes.get('wut-token-access');
+  const info = nodes.get('wut-token-info');
+  const copy = nodes.get('wut-token-copy');
+  const output = nodes.get('wut-token-output');
+  const status = nodes.get('wut-token-status');
+  assert.match(warning.textContent, /请勿分享/);
+  assert.ok(!output.value);
+  access.click();
+  assert.equal(output.value, 'access-token-456');
+  assert.equal(copy.disabled, false);
+  assert.match(status.textContent, /Access Token/);
+  info.click();
+  assert.equal(output.value, 'info-token-123');
+  copy.click();
+  await Promise.resolve();
+  assert.equal(copied, 'info-token-123');
+  assert.match(status.textContent, /请勿外泄/);
+});
