@@ -122,11 +122,21 @@
     if (!script) return Promise.reject(new Error('native module missing'));
     return import(script.src).then(function (module) {
       var values = Object.values(module);
-      var renew = values.find(function (value) {
-        return typeof value === 'function' && value.name === 'renewTokenIfNeeded';
+      function named(name) {
+        var fn = values.find(function (value) {
+          return typeof value === 'function' && value.name === name;
+        });
+        if (!fn) throw new Error('API unavailable: ' + name);
+        return fn;
+      }
+      var refresh = named('refreshToken');
+      var unwrap = named('unwrapApiData');
+      var extend = named('extendTokenExpireLocally');
+      return refresh().then(function (response) {
+        if (unwrap(response) !== true) throw new Error('renew rejected');
+        extend();
+        return true;
       });
-      if (!renew) throw new Error('renew API unavailable');
-      return renew();
     });
   }
 
@@ -479,9 +489,8 @@
       extractButton.textContent = '提取Token';
       renewButton.addEventListener('click', function () {
         renewButton.disabled = true;
-        renewToken().then(function (renewed) {
+        renewToken().then(function () {
           updateTokenExpiry();
-          if (!renewed) showAppToast('当前有效期充足，未触发续期。');
         }).catch(function () {
           showAppToast('续期失败，请稍后重试或重新登录。');
         }).finally(function () {
