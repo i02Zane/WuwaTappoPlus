@@ -117,25 +117,39 @@
     });
   }
 
+  function setCookieValue(name, value, days) {
+    var expires = new Date(Date.now() + days * 86400000).toUTCString();
+    document.cookie = name + '=' + encodeURIComponent(value) + '; expires=' + expires + '; path=/';
+  }
+
   function renewToken() {
     var script = document.querySelector('script[type="module"][src]');
     if (!script) return Promise.reject(new Error('native module missing'));
     return import(script.src).then(function (module) {
       var values = Object.values(module);
-      function named(name) {
-        var fn = values.find(function (value) {
-          return typeof value === 'function' && value.name === name;
-        });
-        if (!fn) throw new Error('API unavailable: ' + name);
-        return fn;
+      var renew = values.find(function (value) {
+        return typeof value === 'function' && value.name === 'renewTokenIfNeeded';
+      });
+      if (!renew) throw new Error('renew API unavailable');
+      var original = cookieValue('kuro_lastLoginTime');
+      var temporary = String(Math.floor((Date.now() + 60 * 1000) / 1000));
+      setCookieValue('kuro_lastLoginTime', temporary, 7);
+      function restore() {
+        if (original) {
+          setCookieValue('kuro_lastLoginTime', original, 7);
+        } else {
+          document.cookie = 'kuro_lastLoginTime=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+        }
       }
-      var refresh = named('refreshToken');
-      var unwrap = named('unwrapApiData');
-      var extend = named('extendTokenExpireLocally');
-      return refresh().then(function (response) {
-        if (unwrap(response) !== true) throw new Error('renew rejected');
-        extend();
+      return renew().then(function (renewed) {
+        if (!renewed) {
+          restore();
+          throw new Error('renew rejected');
+        }
         return true;
+      }, function (error) {
+        restore();
+        throw error;
       });
     });
   }
