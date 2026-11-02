@@ -251,4 +251,10 @@ test('token row shows expiry and uses the official toast for extract/renew', asy
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.match(alerts[alerts.length - 1], /续期失败/);
   assert.equal(renew.disabled, false);
+  const loginInput = nodes.get('wut-token-login-input');
+  const loginButton = nodes.get('wut-token-login-button');
+  loginInput.value = 'phone-token-123';
+  loginButton.click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.match(alerts[alerts.length - 1], /Token 登录失败/);
 });

@@ -174,6 +174,34 @@
     });
   }
 
+  function applyAuthToken(token) {
+    var script = document.querySelector('script[type="module"][src]');
+    if (!script) return Promise.reject(new Error('native module missing'));
+    return import(script.src).then(function (module) {
+      var values = Object.values(module);
+      var apply = values.find(function (value) {
+        return typeof value === 'function' && value.name === 'applyAuthTokens';
+      });
+      if (!apply) throw new Error('applyAuthTokens unavailable');
+      apply({ token: token, expire_time: String(Date.now() + 7 * 86400000) });
+    });
+  }
+
+  function loginWithToken(token) {
+    if (!token) {
+      showAppToast('请先粘贴 Token。');
+      return Promise.resolve(false);
+    }
+    return applyAuthToken(token).then(function () {
+      showAppToast('Token 已写入，正在重新登录…', 1500);
+      setTimeout(function () { location.reload(); }, 400);
+      return true;
+    }).catch(function () {
+      showAppToast('Token 登录失败，请检查 Token 是否有效。');
+      return false;
+    });
+  }
+
   function copyToken(text) {
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
       return navigator.clipboard.writeText(text);
@@ -234,6 +262,8 @@
         + '#wut-plus-settings .wut-token-actions{display:flex;flex-wrap:wrap;gap:8px;}'
         + '#wut-plus-settings .wut-token-expiry{font-size:13px;color:#8e7b6a;margin-top:2px;}'
         + '#wut-plus-settings .wut-token-expiry[data-soon="true"]{color:#b4543c;font-weight:600;}'
+        + '#wut-plus-settings .wut-token-login-input{flex:1 1 220px;min-width:0;padding:6px 8px;'
+        + 'border:1px solid #e0cfc0;border-radius:6px;background:#fff;font-size:13px;color:#8e5e43;}'
         + '#wut-plus-settings .wut-export{gap:18px;}'
         + '#wut-plus-settings .wut-export .setting-label{min-width:0;}'
         + '#wut-plus-settings .wut-export .setting-content{flex-shrink:0;}'
@@ -521,6 +551,46 @@
       extractButton.addEventListener('click', extractToken);
       actions.appendChild(renewButton);
       actions.appendChild(extractButton);
+      content.appendChild(actions);
+      row.appendChild(label);
+      row.appendChild(content);
+      host.appendChild(row);
+    }
+    appendTokenLoginRow();
+    function appendTokenLoginRow() {
+      var row = document.createElement('div');
+      row.className = 'setting-item wut-token-login';
+      var label = document.createElement('div');
+      label.className = 'setting-label';
+      var title = document.createElement('div');
+      title.className = 'setting-title';
+      title.textContent = 'Token 登录';
+      var desc = document.createElement('div');
+      desc.className = 'setting-sub';
+      desc.textContent = '用手机端或其他设备提取的 Token 登录当前电脑；Token 只在本机使用，请勿外泄。';
+      label.appendChild(title);
+      label.appendChild(desc);
+      var content = document.createElement('div');
+      content.className = 'setting-content';
+      var actions = document.createElement('div');
+      actions.className = 'wut-token-actions';
+      var input = document.createElement('input');
+      input.id = 'wut-token-login-input';
+      input.className = 'wut-token-login-input';
+      input.type = 'password';
+      input.placeholder = '粘贴 Token';
+      input.autocomplete = 'off';
+      input.spellcheck = false;
+      var button = document.createElement('button');
+      button.id = 'wut-token-login-button';
+      button.type = 'button';
+      button.className = 'setting-btn';
+      button.textContent = '用 Token 登录';
+      button.addEventListener('click', function () {
+        loginWithToken(input.value.trim());
+      });
+      actions.appendChild(input);
+      actions.appendChild(button);
       content.appendChild(actions);
       row.appendChild(label);
       row.appendChild(content);
