@@ -234,12 +234,17 @@ test('token row shows expiry and uses the official toast for extract/renew', asy
   const renew = nodes.get('wut-token-renew');
   assert.match(expiry.textContent, /当前Token有效期：剩余3天/);
   assert.equal(expiry.dataset.soon, 'false');
+  assert.equal(renew.hidden, true);
   extract.click();
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(copied, 'info-token-123');
   assert.equal(alerts.length, 1);
   assert.match(alerts[0], /Token已提取至剪贴板/);
   assert.match(alerts[0], /请勿分享给他人/);
+  f.context.document.cookie = 'kuro_infoToken=info-token-123; kuro_lastLoginTime=' +
+    Math.floor((Date.now() + 86400000) / 1000);
+  f.settings.update({ preferences: {}, ack: [] });
+  assert.equal(renew.hidden, false);
   renew.click();
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.match(alerts[alerts.length - 1], /续期失败/);

@@ -95,8 +95,10 @@
     if (!node) return;
     var expiry = readTokenExpiry();
     node.textContent = '当前Token有效期：' + formatTokenExpiry(expiry);
-    var soon = expiry !== null && expiry - Date.now() <= 2 * 86400000;
+    var soon = expiry === null || expiry - Date.now() < 2 * 86400000;
     node.dataset.soon = soon ? 'true' : 'false';
+    var renew = document.getElementById('wut-token-renew');
+    if (renew) renew.hidden = !soon;
   }
 
   function showAppToast(message, delay) {
@@ -496,6 +498,7 @@
       renewButton.type = 'button';
       renewButton.className = 'setting-btn';
       renewButton.textContent = '手动续期';
+      renewButton.hidden = true;
       var extractButton = document.createElement('button');
       extractButton.id = 'wut-token-extract';
       extractButton.type = 'button';
