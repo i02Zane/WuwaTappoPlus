@@ -192,9 +192,10 @@ test('panel cleanup reflects restored native game settings before removing Plus'
 });
 
 
-test('token extraction warns and copies only on demand', async () => {
+test('token row shows expiry and uses the official toast for extract/renew', async () => {
   const f = fixture();
   const nodes = new Map();
+  const alerts = [];
   let copied = null;
   function element() {
     return { dataset: {}, style: { setProperty() {} }, children: [], textContent: '',
@@ -226,28 +227,21 @@ test('token extraction warns and copies only on demand', async () => {
   f.context.navigator = {
     clipboard: { writeText: text => { copied = text; return Promise.resolve(); } }
   };
+  f.context.window.alert = message => { alerts.push(message); };
   f.settings.update({ preferences: {}, ack: [] });
-  const warning = nodes.get('wut-token-warning');
   const expiry = nodes.get('wut-token-expiry');
   const extract = nodes.get('wut-token-extract');
   const renew = nodes.get('wut-token-renew');
-  const copy = nodes.get('wut-token-copy');
-  const output = nodes.get('wut-token-output');
-  const status = nodes.get('wut-token-status');
-  assert.match(warning.textContent, /请勿分享/);
-  assert.match(expiry.textContent, /剩余 3 天/);
+  assert.match(expiry.textContent, /当前Token有效期：剩余3天/);
   assert.equal(expiry.dataset.soon, 'false');
-  assert.ok(!output.value);
   extract.click();
-  assert.equal(output.value, 'info-token-123');
-  assert.equal(copy.disabled, false);
-  assert.match(status.textContent, /接口鉴权 Token/);
-  copy.click();
-  await Promise.resolve();
+  await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(copied, 'info-token-123');
-  assert.match(status.textContent, /请勿外泄/);
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0], /Token已提取至剪贴板/);
+  assert.match(alerts[0], /请勿分享给他人/);
   renew.click();
   await new Promise(resolve => setTimeout(resolve, 10));
-  assert.match(status.textContent, /续期失败/);
+  assert.match(alerts[alerts.length - 1], /续期失败/);
   assert.equal(renew.disabled, false);
 });

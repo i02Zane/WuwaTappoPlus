@@ -86,17 +86,35 @@
     var days = Math.floor(ms / 86400000);
     var hours = Math.floor((ms % 86400000) / 3600000);
     var minutes = Math.floor((ms % 3600000) / 60000);
-    return '剩余 ' + (days > 0 ? days + ' 天 ' : '') +
-      (hours > 0 ? hours + ' 小时 ' : '') + minutes + ' 分钟';
+    return '剩余' + (days > 0 ? days + '天' : '') +
+      (hours > 0 ? hours + '小时' : '') + minutes + '分钟';
   }
 
   function updateTokenExpiry() {
     var node = document.getElementById('wut-token-expiry');
     if (!node) return;
     var expiry = readTokenExpiry();
-    node.textContent = '有效期：' + formatTokenExpiry(expiry);
+    node.textContent = '当前Token有效期：' + formatTokenExpiry(expiry);
     var soon = expiry !== null && expiry - Date.now() <= 2 * 86400000;
     node.dataset.soon = soon ? 'true' : 'false';
+  }
+
+  function showAppToast(message, delay) {
+    var script = document.querySelector('script[type="module"][src]');
+    if (!script) {
+      try { window.alert(message); } catch (e) {}
+      return;
+    }
+    import(script.src).then(function (module) {
+      var values = Object.values(module);
+      var toast = values.find(function (value) {
+        return typeof value === 'function' && value.name === 'showToast';
+      });
+      if (!toast) throw new Error('toast API unavailable');
+      toast(message, delay || 2500);
+    }).catch(function () {
+      try { window.alert(message); } catch (e) {}
+    });
   }
 
   function renewToken() {
@@ -109,6 +127,21 @@
       });
       if (!renew) throw new Error('renew API unavailable');
       return renew();
+    });
+  }
+
+  function extractToken() {
+    var token = readInfoToken();
+    if (!token) {
+      showAppToast('未找到 Token，请先登录 Wuwa Tappo。');
+      return;
+    }
+    copyToken(token).then(function () {
+      showAppToast('Token已提取至剪贴板。Token是你的账号在Wuwa Tappo的登录凭证，'
+        + '请勿分享给他人，也不要粘贴到不可信的应用或工具。'
+        + '如果泄露Token，请立刻在Wuwa Tappo退出账号', 8000);
+    }).catch(function () {
+      showAppToast('复制失败，请检查剪贴板权限后重试。');
     });
   }
 
@@ -169,15 +202,9 @@
         + 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}'
         + '#wut-plus-settings .setting-value-opacity{flex:0 0 64px;width:64px;'
         + 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}'
-        + '#wut-plus-settings .wut-token-warning{color:#b4543c;font-size:13px;'
-        + 'line-height:1.5;margin-top:6px;}'
-        + '#wut-plus-settings .wut-token-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}'
-        + '#wut-plus-settings .wut-token-output{width:100%;min-height:70px;margin-top:8px;'
-        + 'font-family:monospace;font-size:12px;line-height:1.4;resize:vertical;'
-        + 'box-sizing:border-box;padding:6px;border:1px solid #e0cfc0;border-radius:6px;}'
-        + '#wut-plus-settings .wut-token-expiry{font-size:13px;color:#8e7b6a;margin-top:4px;}'
+        + '#wut-plus-settings .wut-token-actions{display:flex;flex-wrap:wrap;gap:8px;}'
+        + '#wut-plus-settings .wut-token-expiry{font-size:13px;color:#8e7b6a;margin-top:2px;}'
         + '#wut-plus-settings .wut-token-expiry[data-soon="true"]{color:#b4543c;font-weight:600;}'
-        + '#wut-plus-settings .wut-token-status{font-size:13px;color:#8e7b6a;margin-top:6px;}'
         + '#wut-plus-settings .wut-export{gap:18px;}'
         + '#wut-plus-settings .wut-export .setting-label{min-width:0;}'
         + '#wut-plus-settings .wut-export .setting-content{flex-shrink:0;}'
@@ -391,6 +418,7 @@
       + '<details open><summary>最近 7 天 · 点击数</summary>'
       + '<div class="wut-report-chart" role="list" aria-label="最近七天点击数"></div></details>';
     host.appendChild(report);
+    appendTokenRow();
     var exports = document.createElement('div');
     exports.className = 'setting-item wut-export';
     var exportLabel = document.createElement('div');
@@ -421,7 +449,6 @@
     exports.appendChild(exportLabel);
     exports.appendChild(exportContent);
     host.appendChild(exports);
-    appendTokenRow();
     function appendTokenRow() {
       var row = document.createElement('div');
       row.className = 'setting-item wut-token';
@@ -429,86 +456,42 @@
       label.className = 'setting-label';
       var title = document.createElement('div');
       title.className = 'setting-title';
-      title.textContent = '提取 Token';
+      title.textContent = 'Token';
       var desc = document.createElement('div');
-      desc.className = 'setting-sub';
-      desc.textContent = '当前 Wuwa Tappo 登录会话的接口鉴权 Token；接口请求会以 Authorization: Bearer 发送它。只在点击时读取，不会自动保存或上传。若Token有效期少于2天，建议手动续期。';
-      var expiry = document.createElement('div');
-      expiry.id = 'wut-token-expiry';
-      expiry.className = 'wut-token-expiry';
-      expiry.textContent = '有效期：读取中…';
-      var warning = document.createElement('div');
-      warning.id = 'wut-token-warning';
-      warning.className = 'wut-token-warning';
-      warning.textContent = 'Token 是你的登录凭证，请勿分享给任何人，也不要粘贴到不可信的工具；泄露后他人可以访问你的账号。';
+      desc.id = 'wut-token-expiry';
+      desc.className = 'setting-sub wut-token-expiry';
+      desc.textContent = '当前Token有效期：读取中…';
       label.appendChild(title);
       label.appendChild(desc);
-      label.appendChild(expiry);
-      label.appendChild(warning);
       var content = document.createElement('div');
       content.className = 'setting-content';
       var actions = document.createElement('div');
       actions.className = 'wut-token-actions';
-      var extractButton = document.createElement('button');
-      extractButton.id = 'wut-token-extract';
-      extractButton.type = 'button';
-      extractButton.className = 'setting-btn';
-      extractButton.textContent = '提取 Token';
-      var copyButton = document.createElement('button');
-      copyButton.id = 'wut-token-copy';
-      copyButton.type = 'button';
-      copyButton.className = 'setting-btn';
-      copyButton.textContent = '复制';
-      copyButton.disabled = true;
       var renewButton = document.createElement('button');
       renewButton.id = 'wut-token-renew';
       renewButton.type = 'button';
       renewButton.className = 'setting-btn';
       renewButton.textContent = '手动续期';
-      var output = document.createElement('textarea');
-      output.id = 'wut-token-output';
-      output.className = 'wut-token-output';
-      output.readOnly = true;
-      output.spellcheck = false;
-      output.placeholder = '点击“提取 Token”读取接口鉴权 Token';
-      var status = document.createElement('div');
-      status.id = 'wut-token-status';
-      status.className = 'wut-token-status';
-      status.setAttribute('role', 'status');
-      function showToken(token) {
-        output.value = token || '';
-        copyButton.disabled = !token;
-        status.textContent = token ? '已提取接口鉴权 Token，请勿外泄。' : '未找到接口鉴权 Token，请先登录 Wuwa Tappo。';
-      }
-      extractButton.addEventListener('click', function () {
-        showToken(readInfoToken());
-      });
+      var extractButton = document.createElement('button');
+      extractButton.id = 'wut-token-extract';
+      extractButton.type = 'button';
+      extractButton.className = 'setting-btn';
+      extractButton.textContent = '提取Token';
       renewButton.addEventListener('click', function () {
         renewButton.disabled = true;
-        status.textContent = '正在续期…';
         renewToken().then(function (renewed) {
           updateTokenExpiry();
-          status.textContent = renewed ? '续期成功，请重新提取 Token 以获取最新值。' : '当前有效期充足，未触发续期。';
+          if (!renewed) showAppToast('当前有效期充足，未触发续期。');
         }).catch(function () {
-          status.textContent = '续期失败，请稍后重试或重新登录。';
+          showAppToast('续期失败，请稍后重试或重新登录。');
         }).finally(function () {
           renewButton.disabled = false;
         });
       });
-      copyButton.addEventListener('click', function () {
-        if (!output.value) return;
-        copyToken(output.value).then(function () {
-          status.textContent = '已复制，请勿外泄给其他人。';
-        }).catch(function () {
-          status.textContent = '复制失败，请手动选中文本复制。';
-        });
-      });
-      actions.appendChild(extractButton);
+      extractButton.addEventListener('click', extractToken);
       actions.appendChild(renewButton);
-      actions.appendChild(copyButton);
+      actions.appendChild(extractButton);
       content.appendChild(actions);
-      content.appendChild(output);
-      content.appendChild(status);
       row.appendChild(label);
       row.appendChild(content);
       host.appendChild(row);
