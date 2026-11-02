@@ -125,6 +125,22 @@ def live_state(cfg):
 
 # ------------------------------------------------------------------ install
 
+PORT_ATTEMPTS = 5
+
+
+def _choose_policy_ports(base):
+    """Policy-free candidate ports, starting at the configured one."""
+    ports = []
+    for port in range(base, base + PORT_ATTEMPTS):
+        conflicts = win.policy_conflicts(port)
+        values = [c for c in conflicts if c["kind"] == "value"]
+        if values:
+            return ports, values
+        if any(c["kind"] == "port" for c in conflicts):
+            continue
+        ports.append(port)
+    return ports, []
+
 
 def cmd_install(argv):
     """install or repair Plus; preserve feature switches"""
@@ -153,38 +169,62 @@ def cmd_install(argv):
         return 1
     out(OK + "桌宠程序：%s" % exe)
 
-    conflicts = win.policy_conflicts(cfg.port)
-    if conflicts:
+    policy_ports, value_conflicts = _choose_policy_ports(cfg.port)
+    if value_conflicts:
         out(BAD + "检测到策略冲突，未更改安装设置。")
         out("")
-        for c in conflicts:
-            if c["kind"] == "value":
-                out("       %s\\%s 已设置为 %s"
-                    % (c["hive"], c["name"], c["value"]))
-                out("       本工具需要：%s" % win.debug_args(cfg.port))
-                out("       该配置并非本工具预期的值，为避免破坏现有设置，不会覆盖。")
-            else:
-                out("       %s\\%s 也使用端口 %d：%s"
-                    % (c["hive"], c["name"], cfg.port, c["value"]))
-                out("       两个应用不能共用该端口，否则可能连接到错误的应用。")
+        for c in value_conflicts:
+            out("       %s\\%s 已设置为 %s"
+                % (c["hive"], c["name"], c["value"]))
+            out("       本工具需要：%s" % win.debug_args(cfg.port))
+            out("       该配置并非本工具预期的值，为避免破坏现有设置，不会覆盖。")
         out("")
-        out("  可以更换调试端口：")
-        out("      在 %s 中设置 port = %d" % (CONFIG_PATH, cfg.port + 1))
-        out("      然后重新执行 WuwaTappoPlus.exe install")
-        if any(c["kind"] == "value" for c in conflicts):
-            out("")
-            out("  确认旧配置已不再使用时，也可执行卸载清理：")
-            out("      WuwaTappoPlus.exe uninstall（仅移除 %s 对应的策略值）" % win.TARGET_EXE)
-        if any(c["kind"] == "port" for c in conflicts):
-            out("")
-            out("  或检查并释放冲突端口：")
-            out("      WuwaTappoPlus.exe doctor --policy         只读检查策略")
-            out("      WuwaTappoPlus.exe doctor --clean-policy 确认后清理残留策略")
+        out("  确认旧配置已不再使用时，也可执行卸载清理：")
+        out("      WuwaTappoPlus.exe uninstall（仅移除 %s 对应的策略值）" % win.TARGET_EXE)
+        return 1
+    if not policy_ports:
+        out(BAD + "候选调试端口都被其他策略占用。")
+        out("")
+        for port in range(cfg.port, cfg.port + PORT_ATTEMPTS):
+            for c in win.policy_conflicts(port):
+                if c["kind"] == "port":
+                    out("       %s\\%s 也使用端口 %d：%s"
+                        % (c["hive"], c["name"], port, c["value"]))
+        out("")
+        out("  可以更换调试端口：在 %s 中设置 port = %d，然后重新安装。"
+            % (CONFIG_PATH, cfg.port + PORT_ATTEMPTS))
+        out("  或执行 doctor --policy 检查并清理残留策略。")
         return 1
 
     rc = _stop_daemon([])
     if rc:
         return rc
+
+    # Stop the app first: its own current debug port must not be mistaken for
+    # an external occupation. The policy is written before it starts again.
+    app_running = bool(win.processes())
+    if app_running:
+        out("       正在关闭桌宠，检查可用调试端口...")
+        try:
+            if win.stop_app(exe) is None:
+                out(BAD + "未找到 WuwaTappo.exe，无法重启桌宠。")
+                return 1
+        except OSError as exc:
+            out(BAD + "桌宠停止失败：%s" % exc)
+            return 1
+    port = next((candidate for candidate in policy_ports
+                 if win.port_available(candidate, cfg.host)), None)
+    if port is None:
+        if app_running:
+            win.launch_app(exe)
+        out(BAD + "候选调试端口都被占用：%s"
+            % ", ".join(str(p) for p in policy_ports))
+        out("       请关闭占用端口的程序，或在 %s 中更换 port 后重试。" % CONFIG_PATH)
+        return 1
+    if port != cfg.port:
+        out(OK + "调试端口 %d 被占用，改用 %d。" % (cfg.port, port))
+        _write_config_port(port)
+        cfg = load()
 
     try:
         installed = installation.deploy()
@@ -196,35 +236,29 @@ def cmd_install(argv):
         out(OK + "Plus 程序目录：%s" % installed.parent)
 
     _write_config_exe(exe)
-    args = win.write_policy(cfg.port)
+    args = win.write_policy(port)
     out(OK + "调试策略：%s = %s" % (win.TARGET_EXE, args))
 
     try:
-        if win.processes():
-            out("       正在重启桌宠，以加载策略和页面配置...")
-            if win.restart_app(exe) is None:
-                out(BAD + "未找到 WuwaTappo.exe，无法重启桌宠。")
-                return 1
-        else:
-            win.launch_app(exe)
+        win.launch_app(exe)
         out(OK + "桌宠程序已启动。")
     except OSError as exc:
-        out(BAD + "桌宠启动或重启失败：%s" % exc)
+        out(BAD + "桌宠启动失败：%s" % exc)
         return 1
 
     out("       正在等待调试端口就绪...")
     deadline = time.time() + 25
     version = None
     while time.time() < deadline:
-        version = cdp.probe_port(cfg.port)
+        version = cdp.probe_port(port)
         if version:
             break
         time.sleep(1.0)
 
     if version:
-        out(OK + "调试端口已就绪：%d（%s）" % (cfg.port, version.get("Browser")))
+        out(OK + "调试端口已就绪：%d（%s）" % (port, version.get("Browser")))
     else:
-        out(BAD + "等待调试端口 %d 超时。" % cfg.port)
+        out(BAD + "等待调试端口 %d 超时。" % port)
         out("       桌宠可能需要完全重启，请重新执行：WuwaTappoPlus.exe install")
         _finish_elevated(elevated)
         return 1
@@ -273,6 +307,25 @@ def _write_config_exe(exe):
     if re.search(r"(?m)^exe\s*=", text):
         # lambda keeps backslashes in the Windows path literal.
         text = re.sub(r"(?m)^exe\s*=.*$", lambda _m: new_line, text, count=1)
+    else:
+        text = text.replace("[app]\n", "[app]\n" + new_line + "\n", 1)
+    try:
+        CONFIG_PATH.write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _write_config_port(port):
+    """Store the selected debug port in the [app] section."""
+    import re
+
+    try:
+        text = CONFIG_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return
+    new_line = "port = %d" % port
+    if re.search(r"(?m)^port\s*=", text):
+        text = re.sub(r"(?m)^port\s*=.*$", lambda _m: new_line, text, count=1)
     else:
         text = text.replace("[app]\n", "[app]\n" + new_line + "\n", 1)
     try:

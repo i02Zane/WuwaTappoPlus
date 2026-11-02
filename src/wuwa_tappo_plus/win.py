@@ -390,14 +390,18 @@ def policy_conflicts(port, exe_name=TARGET_EXE):
 
     current = hklm.get(exe_name)
     if current is not None and str(current) != args:
-        conflicts.append({"kind": "value", "hive": "HKLM",
-                          "name": exe_name, "value": str(current)})
+        # Our own previous debug port is safe to replace; anything else is a
+        # foreign setup we must not overwrite.
+        if not str(current).strip().startswith("--remote-debugging-port="):
+            conflicts.append({"kind": "value", "hive": "HKLM",
+                              "name": exe_name, "value": str(current)})
 
     # Only worth mentioning when HKLM does not shadow it.
     shadow = hkcu.get(exe_name)
     if current is None and shadow is not None and str(shadow) != args:
-        conflicts.append({"kind": "value", "hive": "HKCU",
-                          "name": exe_name, "value": str(shadow)})
+        if not str(shadow).strip().startswith("--remote-debugging-port="):
+            conflicts.append({"kind": "value", "hive": "HKCU",
+                              "name": exe_name, "value": str(shadow)})
 
     for label, values in (("HKLM", hklm), ("HKCU", hkcu)):
         for name, value in values.items():
@@ -672,12 +676,8 @@ def launch_app(exe_path):
     )
 
 
-def restart_app(hint=""):
-    """Close every running copy and start it again.
-
-    A fresh WebView is the cheapest way to drop injected code: the page comes
-    back with nothing in it, so no teardown call is needed.
-    """
+def stop_app(hint=""):
+    """Close every running copy and wait until no main process remains."""
     import time
 
     exe = find_exe(hint)
@@ -694,9 +694,33 @@ def restart_app(hint=""):
 
     if running_pids():
         raise OSError("WuwaTappo.exe 仍在运行，已中止重启。")
+    return exe
 
+
+def restart_app(hint=""):
+    """Close every running copy and start it again.
+
+    A fresh WebView is the cheapest way to drop injected code: the page comes
+    back with nothing in it, so no teardown call is needed.
+    """
+    exe = stop_app(hint)
+    if exe is None:
+        return None
     launch_app(exe)
     return exe
+
+
+def port_available(port, host="127.0.0.1"):
+    """True when host:port can be bound; TIME_WAIT is acceptable."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
 
 
 def launch_detached(argv):
