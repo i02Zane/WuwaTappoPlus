@@ -26,7 +26,18 @@ class PreferenceTests(unittest.TestCase):
         self.assertEqual(Config({}).preferences,
                          {"auto_open": True, "balance_reminder": True, "bubble": True, "animation": True,
                           "remember_screen": True, "pause_clicks": False, "auto_emote": False,
+                          "auto_emote_rate": 20,
                           "game_mode_plus": True, "game_mode_opacity": 30})
+
+    def test_auto_emote_rate_is_saved_as_a_bounded_rate(self):
+        saved = save_preferences({"auto_emote_rate": 0}, self.path)
+        self.assertEqual(saved.auto_emote_rate, 1)
+        self.assertEqual(saved.inject_cfg["auto_emote_rate"], 1)
+        self.assertIn("auto_emote_rate = 1", self.path.read_text(encoding="utf-8"))
+        saved = save_preferences({"auto_emote_rate": 21}, self.path)
+        self.assertEqual(saved.auto_emote_rate, 20)
+        with self.assertRaises(ValueError):
+            save_preferences({"auto_emote_rate": "5"}, self.path)
 
     def test_game_mode_plus_switch_is_saved(self):
         saved = save_preferences({"game_mode_plus": False}, self.path)

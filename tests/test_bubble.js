@@ -973,6 +973,22 @@ test('auto emote toggles and pause mode changes do not reset the shared send bud
 });
 
 
+test('auto emote rate setting changes the rolling budget', () => {
+  const f = emoteFixture(); let now = 0;
+  f.context.performance = { now: () => now };
+  f.a.configure({ auto_emote: true, auto_emote_rate: 5 });
+  for (let i = 0; i < 10; i++) f.current.incrementLocalClickCount();
+  assert.equal(f.selected.length, 5);
+  assert.equal(f.a.autoEmote.limited, 5);
+  f.a.configure({ auto_emote: true, auto_emote_rate: 1 });
+  f.current.incrementLocalClickCount();
+  assert.equal(f.selected.length, 5);
+  now = 1000;
+  f.current.incrementLocalClickCount();
+  assert.equal(f.selected.length, 6);
+});
+
+
 test('game mode opacity restores the existing inline opacity on exit', () => {
   const f = fixture();
   f.petDock.style.opacity = '0.8';

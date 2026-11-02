@@ -85,13 +85,17 @@
   A.autoEmote = { sent: 0, available: false, limited: 0 };
   var emoteTimes = [];
   var EMOTES_PER_SECOND = 20;
+  function emoteBudget() {
+    var value = Math.round(Number(CFG.auto_emote_rate));
+    return isFinite(value) ? Math.max(1, Math.min(20, value)) : EMOTES_PER_SECOND;
+  }
   function sendRandomEmote() {
     if (!CFG.auto_emote || window.__WUT__ !== A) return;
     // A rolling window avoids a burst of 40 at a fixed second boundary.
     // Keep this budget across switch toggles; excess taps are never queued.
     var now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     while (emoteTimes.length && now - emoteTimes[0] >= 1000) emoteTimes.shift();
-    if (emoteTimes.length >= EMOTES_PER_SECOND) { A.autoEmote.limited++; return; }
+    if (emoteTimes.length >= emoteBudget()) { A.autoEmote.limited++; return; }
     try {
       var root = document.querySelector('#app');
       var queue = root && root._vnode ? [root._vnode] : [];
@@ -1182,6 +1186,7 @@
     var wasReminder = CFG.balance_reminder !== false;
     CFG.pause_clicks = next.pause_clicks === true;
     CFG.auto_emote = next.auto_emote === true;
+    CFG.auto_emote_rate = next.auto_emote_rate;
     syncClickPause();
     CFG.enabled = next.enabled !== false;
     CFG.balance_reminder = next.balance_reminder !== false;

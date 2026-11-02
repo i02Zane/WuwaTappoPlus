@@ -8,7 +8,7 @@
     exportPath: null, exportError: false, accessories: {},
     preferences: { auto_open: true, balance_reminder: true, bubble: true, animation: true,
                    remember_screen: true, auto_emote: false, pause_clicks: false,
-                   game_mode_plus: true, game_mode_opacity: 30 }
+                   game_mode_plus: true, game_mode_opacity: 30, auto_emote_rate: 20 }
   };
   var HOST = 'wut-plus-settings';
   var STYLE = 'wut-plus-settings-style';
@@ -17,11 +17,10 @@
   var error = '';
   var saved = false;
   var reportKey = '';
-  var gameRangeInitialized = false;
 
   var definitions = [
     ['auto_open', '自动开箱', '宝箱到期且余额充足时自动开启，关闭后仍显示倒计时。'],
-    ['auto_emote', '自动发表情', '桌宠会跟随敲击自动发送一个已装备的表情，每秒最多发送20次'],
+    ['auto_emote', '自动发表情', '桌宠会跟随敲击自动发送一个已装备的表情；频率可在下方调整。'],
     ['balance_reminder', '余额提醒', '余额不足时提醒，并显示宝箱倒计时；不影响其他气泡。'],
     ['bubble', '气泡显示', '显示 Plus 气泡，包括余额提醒和小黑屋模式文字。'],
     ['animation', '气泡动画', '让气泡轻轻跳动；关闭后保留静态气泡。'],
@@ -160,6 +159,68 @@
       row.appendChild(content);
       host.appendChild(row);
     });
+    var emoteRow = document.createElement('div');
+    emoteRow.className = 'setting-item';
+    var emoteLabel = document.createElement('div');
+    emoteLabel.className = 'setting-label';
+    var emoteName = document.createElement('div');
+    emoteName.className = 'setting-title';
+    emoteName.id = 'wut-setting-auto-emote-rate';
+    emoteName.textContent = '自动发表情频率';
+    var emoteDesc = document.createElement('div');
+    emoteDesc.className = 'setting-sub';
+    emoteDesc.textContent = '自动发表情时每秒最多发送的次数；1 到 20，步进 1。';
+    emoteLabel.appendChild(emoteName);
+    emoteLabel.appendChild(emoteDesc);
+    var emoteContent = document.createElement('div');
+    emoteContent.className = 'setting-content';
+    var emoteRange = document.createElement('input');
+    emoteRange.type = 'range';
+    emoteRange.min = '1';
+    emoteRange.max = '20';
+    emoteRange.step = '1';
+    emoteRange.className = 'setting-range';
+    emoteRange.dataset.preference = 'auto_emote_rate';
+    emoteRange.setAttribute('aria-labelledby', emoteName.id);
+    var initialRate = Number(S.preferences.auto_emote_rate);
+    if (!isFinite(initialRate)) initialRate = 20;
+    initialRate = Math.max(1, Math.min(20, Math.round(initialRate)));
+    emoteRange.value = String(initialRate);
+    emoteRange.style.setProperty('--range-progress', ((initialRate - 1) / 19 * 100) + '%');
+    var emoteValue = document.createElement('span');
+    emoteValue.className = 'setting-value setting-value-rate';
+    emoteValue.textContent = initialRate + ' 次/秒';
+    function showEmoteRate() {
+      var value = Number(emoteRange.value);
+      emoteRange.style.setProperty('--range-progress', ((value - 1) / 19 * 100) + '%');
+      emoteValue.textContent = value + ' 次/秒';
+    }
+    emoteRange.addEventListener('pointerdown', function () {
+      emoteRange.dataset.initialized = '1';
+      emoteRange.dataset.editing = 'true';
+    });
+    emoteRange.addEventListener('input', function () {
+      emoteRange.dataset.initialized = '1';
+      emoteRange.dataset.editing = 'true';
+      showEmoteRate();
+    });
+    emoteRange.addEventListener('change', function () {
+      emoteRange.dataset.editing = 'false';
+      if (Date.now() - S.beat > 5000) { render(); return; }
+      S.requests.push({ id: instance + '-' + (++serial), key: 'auto_emote_rate',
+                        value: Number(emoteRange.value) });
+      error = ''; saved = false;
+      render();
+    });
+    emoteRange.addEventListener('blur', function () {
+      emoteRange.dataset.editing = 'false';
+      render();
+    });
+    emoteContent.appendChild(emoteRange);
+    emoteContent.appendChild(emoteValue);
+    emoteRow.appendChild(emoteLabel);
+    emoteRow.appendChild(emoteContent);
+    host.appendChild(emoteRow);
     var gameRow = document.createElement('div');
     gameRow.className = 'setting-item';
     var gameLabel = document.createElement('div');
@@ -183,7 +244,6 @@
     gameRange.className = 'setting-range';
     gameRange.dataset.preference = 'game_mode_opacity';
     gameRange.setAttribute('aria-labelledby', gameName.id);
-    gameRangeInitialized = false;
     var initialOpacity = Number(S.preferences.game_mode_opacity);
     if (!isFinite(initialOpacity)) initialOpacity = 30;
     gameRange.value = String(initialOpacity);
@@ -192,11 +252,11 @@
     gameValue.className = 'setting-value setting-value-opacity';
     gameValue.textContent = initialOpacity + '%';
     gameRange.addEventListener('pointerdown', function () {
-      gameRangeInitialized = true;
+      gameRange.dataset.initialized = '1';
       gameRange.dataset.editing = 'true';
     });
     gameRange.addEventListener('input', function () {
-      gameRangeInitialized = true;
+      gameRange.dataset.initialized = '1';
       gameRange.dataset.editing = 'true';
       gameRange.style.setProperty('--range-progress', gameRange.value + '%');
       gameValue.textContent = gameRange.value + '%';
@@ -273,13 +333,22 @@
       var key = input.dataset.preference;
       var pending = S.requests.find(function (r) { return r.key === key; });
       if (input.type === 'range') {
-        if (!gameRangeInitialized && S.beat > 0) {
-          var initial = S.preferences[key];
+        if (!input.dataset.initialized && S.beat > 0) {
+          var initial = Number(S.preferences[key]);
+          var minimum = Number(input.min);
+          var maximum = Number(input.max);
+          if (!isFinite(minimum)) minimum = 0;
+          if (!isFinite(maximum)) maximum = 100;
+          if (!isFinite(initial)) initial = minimum;
+          initial = Math.max(minimum, Math.min(maximum, Math.round(initial)));
           input.value = String(initial);
-          input.style.setProperty('--range-progress', initial + '%');
+          var progress = maximum > minimum ? (initial - minimum) / (maximum - minimum) * 100 : 0;
+          input.style.setProperty('--range-progress', progress + '%');
           var valueNode = input.parentElement && input.parentElement.querySelector('.setting-value');
-          if (valueNode) valueNode.textContent = initial + '%';
-          gameRangeInitialized = true;
+          if (valueNode) {
+            valueNode.textContent = key === 'auto_emote_rate' ? initial + ' 次/秒' : initial + '%';
+          }
+          input.dataset.initialized = '1';
         }
         input.disabled = !online;
         return;

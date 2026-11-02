@@ -50,6 +50,8 @@ min_balance = 1000
 pause = false
 # Send one random equipped emote after each native tap.
 auto_emote = false
+# Maximum auto-emotes per rolling second while auto_emote is on (1-20).
+auto_emote_rate = 20
 
 [alerts]
 # Enable low-balance reminders independently of bubble visibility.
@@ -107,7 +109,7 @@ def _merge(base, over):
 BUILTIN = {
     "app": {"exe": "", "port": 9222, "host": "127.0.0.1"},
     "inject": {"enabled": True, "min_balance": 1000},
-    "clicks": {"pause": False, "auto_emote": False},
+    "clicks": {"pause": False, "auto_emote": False, "auto_emote_rate": 20},
     "alerts": {"balance": True, "bubble": True, "animation": True},
     "panel": {"remember_screen": True},
     "appearance": {"game_mode_opacity": 30, "game_mode_plus": True},
@@ -143,6 +145,7 @@ class Config:
             "enabled": self.auto_open,
             "pause_clicks": self.pause_clicks,
             "auto_emote": self.auto_emote,
+            "auto_emote_rate": self.auto_emote_rate,
             "balance_reminder": self.balance_reminder,
             "bubble": self.alert_bubble,
             "animation": self.alert_animation,
@@ -193,6 +196,14 @@ class Config:
         return bool(self.get("clicks", "auto_emote", False))
 
     @property
+    def auto_emote_rate(self):
+        try:
+            value = int(round(float(self.get("clicks", "auto_emote_rate", 20))))
+        except (TypeError, ValueError):
+            value = 20
+        return max(1, min(20, value))
+
+    @property
     def alert_animation(self):
         return bool(self.get("alerts", "animation", True))
 
@@ -223,6 +234,7 @@ class Config:
                 "animation": self.alert_animation,
                 "remember_screen": self.panel_remember_screen,
                 "pause_clicks": self.pause_clicks, "auto_emote": self.auto_emote,
+                "auto_emote_rate": self.auto_emote_rate,
                 "game_mode_plus": self.game_mode_plus,
                 "game_mode_opacity": self.game_mode_opacity}
 
@@ -414,6 +426,7 @@ PREFERENCE_KEYS = {"auto_open": ("inject", "enabled"),
                    "remember_screen": ("panel", "remember_screen"),
                    "pause_clicks": ("clicks", "pause"),
                    "auto_emote": ("clicks", "auto_emote"),
+                   "auto_emote_rate": ("clicks", "auto_emote_rate"),
                    "game_mode_plus": ("appearance", "game_mode_plus"),
                    "game_mode_opacity": ("appearance", "game_mode_opacity")}
 
@@ -428,6 +441,10 @@ def with_preferences(cfg, preferences):
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError("invalid Plus preference")
             value = max(0, min(100, int(round(value))))
+        elif name == "auto_emote_rate":
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("invalid Plus preference")
+            value = max(1, min(20, int(round(value))))
         elif type(value) is not bool:
             raise ValueError("invalid Plus preference")
         section, key = PREFERENCE_KEYS[name]
