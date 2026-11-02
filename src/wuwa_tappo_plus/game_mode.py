@@ -50,6 +50,15 @@ class GameModeController:
         if not enabled:
             self.release(session)
             return
+        try:
+            self._tick(session)
+        except Exception:
+            # A failed native read is also an unknown sample. Do not let a
+            # pre-failure candidate look stable after the outage.
+            self.candidate = None
+            raise
+
+    def _tick(self, session):
         state = self._call(session, "read")
         ledger = state["ledger"]
         if ledger is None:

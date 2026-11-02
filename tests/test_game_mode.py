@@ -186,6 +186,15 @@ class ControllerTests(unittest.TestCase):
         self.controller.release(None)
         self.assertTrue(self.state["auto"])
 
+    def test_native_read_failure_restarts_the_stability_window(self):
+        self.sample = True
+        self.tick()
+        self.tick(2)
+        self.controller._call = Mock(side_effect=cdp.CDPError("read failed"))
+        with self.assertRaises(cdp.CDPError):
+            self.tick(3)
+        self.assertIsNone(self.controller.candidate)
+
     def test_disabled_feature_does_not_query_the_foreground_window(self):
         self.controller.detector = Mock(side_effect=AssertionError("unexpected detection"))
         self.tick(enabled=False)
