@@ -21,12 +21,12 @@
   var definitions = [
     ['auto_open', '自动开箱', '宝箱到期且余额充足时自动开启，关闭后仍显示倒计时。'],
     ['auto_emote', '自动发表情', '桌宠会跟随敲击自动发送一个已装备的表情；频率可在下方调整。'],
+    ['game_mode_plus', '全屏进入游戏模式·Plus', '开启后由 Plus 接管全屏自动进入游戏模式：窗口化/无边框全屏也生效，官方全屏开关会暂时关闭；关闭后恢复官方设置；手动退出后，本次全屏期间不再自动进入。'],
     ['balance_reminder', '余额提醒', '余额不足时提醒，并显示宝箱倒计时；不影响其他气泡。'],
     ['bubble', '气泡显示', '显示 Plus 气泡，包括余额提醒和小黑屋模式文字。'],
     ['animation', '气泡动画', '让气泡轻轻跳动；关闭后保留静态气泡。'],
     ['remember_screen', '屏幕记忆', '记住桌宠所在的显示器，重启后自动回到该屏幕；显示器不可用时保持原样。'],
-    ['pause_clicks', '小黑屋模式', '暂停累积和上报新的点击，但仍保留桌宠敲击动画'],
-    ['game_mode_plus', '全屏进入游戏模式·Plus', '开启后由 Plus 接管全屏自动进入游戏模式：窗口化/无边框全屏也生效，官方全屏开关会暂时关闭；关闭后恢复官方设置；手动退出后，本次全屏期间不再自动进入。']
+    ['pause_clicks', '小黑屋模式', '暂停累积和上报新的点击，但仍保留桌宠敲击动画']
   ];
 
   // Reflect values already confirmed by the daemon. The panel never owns the
@@ -163,6 +163,7 @@
       row.appendChild(content);
       host.appendChild(row);
       if (definition[0] === 'auto_emote') appendEmoteRateRow();
+      if (definition[0] === 'game_mode_plus') appendGameModeOpacityRow();
     });
     function appendEmoteRateRow() {
       var emoteRow = document.createElement('div');
@@ -228,6 +229,7 @@
     emoteRow.appendChild(emoteContent);
     host.appendChild(emoteRow);
     }
+    function appendGameModeOpacityRow() {
     var gameRow = document.createElement('div');
     gameRow.className = 'setting-item';
     var gameLabel = document.createElement('div');
@@ -288,6 +290,7 @@
     gameRow.appendChild(gameLabel);
     gameRow.appendChild(gameContent);
     host.appendChild(gameRow);
+    }
     var report = document.createElement('div');
     report.id = 'wut-daily-report';    report.innerHTML = '<div class="wut-report-title">昨日点击数</div>'
       + '<div><span class="wut-report-count">—</span>次</div>'
