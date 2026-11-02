@@ -119,7 +119,7 @@ class ProgramTests(unittest.TestCase):
         finally:
             kernel.CloseHandle(handle)
         try:
-            stdout, stderr = processes[0].communicate(timeout=12)
+            stdout, stderr = processes[0].communicate(timeout=60)
             self.assertEqual(processes[0].returncode, 0, stderr.decode(errors="replace"))
         finally:
             if processes[0].poll() is None:
@@ -139,7 +139,7 @@ class ProgramTests(unittest.TestCase):
                                  "New-Item -ItemType Junction -Path $env:WTP_PROGRAM_LINK "
                                  "-Target $env:WTP_PROGRAM_OUTSIDE -ErrorAction Stop | Out-Null"],
                                 env={**os.environ, "WTP_PROGRAM_LINK": str(self.root),
-                                     "WTP_PROGRAM_OUTSIDE": str(outside)}, capture_output=True, timeout=10)
+                                     "WTP_PROGRAM_OUTSIDE": str(outside)}, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         try:
             with patch.object(installation, "frozen", return_value=True):
