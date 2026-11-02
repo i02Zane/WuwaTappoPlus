@@ -215,7 +215,8 @@ test('token extraction warns and copies only on demand', async () => {
   f.context.document.querySelector = () => container;
   f.context.document.getElementById = id =>
     id === 'wut-daily-report' ? null : nodes.get(id);
-  f.context.document.cookie = 'kuro_infoToken=info-token-123';
+  f.context.document.cookie = 'kuro_infoToken=info-token-123; kuro_lastLoginTime=' +
+    Math.floor((Date.now() + 3.5 * 86400000) / 1000);
   f.context.localStorage = {
     length: 1,
     key: () => 'credentials_zeus-free-test',
@@ -227,11 +228,15 @@ test('token extraction warns and copies only on demand', async () => {
   };
   f.settings.update({ preferences: {}, ack: [] });
   const warning = nodes.get('wut-token-warning');
+  const expiry = nodes.get('wut-token-expiry');
   const extract = nodes.get('wut-token-extract');
+  const renew = nodes.get('wut-token-renew');
   const copy = nodes.get('wut-token-copy');
   const output = nodes.get('wut-token-output');
   const status = nodes.get('wut-token-status');
   assert.match(warning.textContent, /请勿分享/);
+  assert.match(expiry.textContent, /剩余 3 天/);
+  assert.equal(expiry.dataset.soon, 'false');
   assert.ok(!output.value);
   extract.click();
   assert.equal(output.value, 'info-token-123');
@@ -241,4 +246,8 @@ test('token extraction warns and copies only on demand', async () => {
   await Promise.resolve();
   assert.equal(copied, 'info-token-123');
   assert.match(status.textContent, /请勿外泄/);
+  renew.click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.match(status.textContent, /续期失败/);
+  assert.equal(renew.disabled, false);
 });

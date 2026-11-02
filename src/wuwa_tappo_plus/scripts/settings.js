@@ -51,17 +51,65 @@
     });
   }
 
-  function readInfoToken() {
+  function cookieValue(name) {
     try {
       var parts = document.cookie ? document.cookie.split(';') : [];
       for (var i = 0; i < parts.length; i++) {
         var part = parts[i].trim();
-        if (part.indexOf('kuro_infoToken=') === 0) {
-          return decodeURIComponent(part.slice('kuro_infoToken='.length));
+        if (part.indexOf(name + '=') === 0) {
+          return decodeURIComponent(part.slice(name.length + 1));
         }
       }
     } catch (e) {}
     return '';
+  }
+
+  function readInfoToken() {
+    return cookieValue('kuro_infoToken');
+  }
+
+  function readTokenExpiry() {
+    var raw = cookieValue('kuro_lastLoginTime');
+    if (!raw) return null;
+    var text = String(raw).trim();
+    if (!text) return null;
+    var value = Number(text);
+    if (Number.isFinite(value) && value > 0) return value < 1e12 ? value * 1000 : value;
+    var parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function formatTokenExpiry(expiry) {
+    if (!expiry) return '有效期未知';
+    var ms = expiry - Date.now();
+    if (ms <= 0) return '已过期，请重新登录或续期';
+    var days = Math.floor(ms / 86400000);
+    var hours = Math.floor((ms % 86400000) / 3600000);
+    var minutes = Math.floor((ms % 3600000) / 60000);
+    return '剩余 ' + (days > 0 ? days + ' 天 ' : '') +
+      (hours > 0 ? hours + ' 小时 ' : '') + minutes + ' 分钟';
+  }
+
+  function updateTokenExpiry() {
+    var node = document.getElementById('wut-token-expiry');
+    if (!node) return;
+    var expiry = readTokenExpiry();
+    node.textContent = '有效期：' + formatTokenExpiry(expiry);
+    var soon = expiry !== null && expiry - Date.now() <= 2 * 86400000;
+    node.dataset.soon = soon ? 'true' : 'false';
+  }
+
+  function renewToken() {
+    var script = document.querySelector('script[type="module"][src]');
+    if (!script) return Promise.reject(new Error('native module missing'));
+    return import(script.src).then(function (module) {
+      var values = Object.values(module);
+      var renew = values.find(function (value) {
+        return typeof value === 'function' && value.name === 'renewTokenIfNeeded';
+      });
+      if (!renew) throw new Error('renew API unavailable');
+      return renew();
+    });
   }
 
   function copyToken(text) {
@@ -127,6 +175,8 @@
         + '#wut-plus-settings .wut-token-output{width:100%;min-height:70px;margin-top:8px;'
         + 'font-family:monospace;font-size:12px;line-height:1.4;resize:vertical;'
         + 'box-sizing:border-box;padding:6px;border:1px solid #e0cfc0;border-radius:6px;}'
+        + '#wut-plus-settings .wut-token-expiry{font-size:13px;color:#8e7b6a;margin-top:4px;}'
+        + '#wut-plus-settings .wut-token-expiry[data-soon="true"]{color:#b4543c;font-weight:600;}'
         + '#wut-plus-settings .wut-token-status{font-size:13px;color:#8e7b6a;margin-top:6px;}'
         + '#wut-plus-settings .wut-export{gap:18px;}'
         + '#wut-plus-settings .wut-export .setting-label{min-width:0;}'
@@ -382,13 +432,18 @@
       title.textContent = '提取 Token';
       var desc = document.createElement('div');
       desc.className = 'setting-sub';
-      desc.textContent = '当前 Wuwa Tappo 登录会话的接口鉴权 Token；接口请求会以 Authorization: Bearer 发送它。只在点击时读取，不会自动保存或上传。';
+      desc.textContent = '当前 Wuwa Tappo 登录会话的接口鉴权 Token；接口请求会以 Authorization: Bearer 发送它。只在点击时读取，不会自动保存或上传。若Token有效期少于2天，建议手动续期。';
+      var expiry = document.createElement('div');
+      expiry.id = 'wut-token-expiry';
+      expiry.className = 'wut-token-expiry';
+      expiry.textContent = '有效期：读取中…';
       var warning = document.createElement('div');
       warning.id = 'wut-token-warning';
       warning.className = 'wut-token-warning';
       warning.textContent = 'Token 是你的登录凭证，请勿分享给任何人，也不要粘贴到不可信的工具；泄露后他人可以访问你的账号。';
       label.appendChild(title);
       label.appendChild(desc);
+      label.appendChild(expiry);
       label.appendChild(warning);
       var content = document.createElement('div');
       content.className = 'setting-content';
@@ -405,6 +460,11 @@
       copyButton.className = 'setting-btn';
       copyButton.textContent = '复制';
       copyButton.disabled = true;
+      var renewButton = document.createElement('button');
+      renewButton.id = 'wut-token-renew';
+      renewButton.type = 'button';
+      renewButton.className = 'setting-btn';
+      renewButton.textContent = '手动续期';
       var output = document.createElement('textarea');
       output.id = 'wut-token-output';
       output.className = 'wut-token-output';
@@ -423,6 +483,18 @@
       extractButton.addEventListener('click', function () {
         showToken(readInfoToken());
       });
+      renewButton.addEventListener('click', function () {
+        renewButton.disabled = true;
+        status.textContent = '正在续期…';
+        renewToken().then(function (renewed) {
+          updateTokenExpiry();
+          status.textContent = renewed ? '续期成功，请重新提取 Token 以获取最新值。' : '当前有效期充足，未触发续期。';
+        }).catch(function () {
+          status.textContent = '续期失败，请稍后重试或重新登录。';
+        }).finally(function () {
+          renewButton.disabled = false;
+        });
+      });
       copyButton.addEventListener('click', function () {
         if (!output.value) return;
         copyToken(output.value).then(function () {
@@ -432,6 +504,7 @@
         });
       });
       actions.appendChild(extractButton);
+      actions.appendChild(renewButton);
       actions.appendChild(copyButton);
       content.appendChild(actions);
       content.appendChild(output);
@@ -444,6 +517,7 @@
     var anchor = container.querySelector('.btn-check-update');
     container.insertBefore(host, anchor ? anchor.closest('.setting-item') :
       container.querySelector('.setting-btns'));
+    updateTokenExpiry();
     render();
   }
 
@@ -487,6 +561,7 @@
     if (status.textContent !== text) status.textContent = text;
     status.dataset.error = error ? 'true' : 'false';
     renderReport();
+    updateTokenExpiry();
     var exportButton = document.getElementById('wut-export-button');
     var exportStatus = document.getElementById('wut-export-status');
     if (exportButton && exportStatus) {
