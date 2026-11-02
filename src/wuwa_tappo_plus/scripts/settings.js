@@ -81,6 +81,10 @@
         + '#wut-plus-settings .wut-status[data-error="true"]{color:#b4543c;}'
         + '#wut-plus-settings input:disabled+.setting-slider{opacity:.45;cursor:wait;}'
         + '#wut-plus-settings .setting-sub{max-width:420px;}'
+        + '#wut-plus-settings .setting-value-rate{min-width:64px;text-align:right;'
+        + 'font-variant-numeric:tabular-nums;}'
+        + '#wut-plus-settings .setting-value-opacity{min-width:48px;text-align:right;'
+        + 'font-variant-numeric:tabular-nums;}'
         + '#wut-plus-settings .wut-export{gap:18px;}'
         + '#wut-plus-settings .wut-export .setting-label{min-width:0;}'
         + '#wut-plus-settings .wut-export .setting-content{flex-shrink:0;}'
@@ -171,7 +175,7 @@
     emoteName.textContent = '自动发表情频率';
     var emoteDesc = document.createElement('div');
     emoteDesc.className = 'setting-sub';
-    emoteDesc.textContent = '自动发表情时每秒最多发送的次数；1 到 20，步进 1。';
+    emoteDesc.textContent = '自动发表情功能每秒发送表情个数的上限，范围1-20。';
     emoteLabel.appendChild(emoteName);
     emoteLabel.appendChild(emoteDesc);
     var emoteContent = document.createElement('div');
