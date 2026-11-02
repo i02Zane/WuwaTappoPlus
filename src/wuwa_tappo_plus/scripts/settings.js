@@ -51,25 +51,6 @@
     });
   }
 
-  function readAccessToken() {
-    try {
-      for (var i = 0; i < localStorage.length; i++) {
-        var key = localStorage.key(i);
-        if (!key || key.indexOf('credentials_') !== 0) continue;
-        try {
-          var data = JSON.parse(localStorage.getItem(key));
-          if (data && typeof data.access_token === 'string' && data.access_token) return data.access_token;
-        } catch (e) {}
-      }
-      var legacy = localStorage.getItem('__KrSDK_USER_TOKEN__');
-      if (legacy) return legacy;
-      var info = JSON.parse(localStorage.getItem('__KrSDK_USER_INFO__') || 'null');
-      return info && typeof info.access_token === 'string' ? info.access_token : '';
-    } catch (e) {
-      return '';
-    }
-  }
-
   function readInfoToken() {
     try {
       var parts = document.cookie ? document.cookie.split(';') : [];
@@ -401,7 +382,7 @@
       title.textContent = '提取 Token';
       var desc = document.createElement('div');
       desc.className = 'setting-sub';
-      desc.textContent = '当前 Wuwa Tappo 登录凭证；只在点击时读取，不会自动保存或上传。';
+      desc.textContent = '当前 Wuwa Tappo 登录会话的接口鉴权 Token；接口请求会以 Authorization: Bearer 发送它。只在点击时读取，不会自动保存或上传。';
       var warning = document.createElement('div');
       warning.id = 'wut-token-warning';
       warning.className = 'wut-token-warning';
@@ -413,16 +394,11 @@
       content.className = 'setting-content';
       var actions = document.createElement('div');
       actions.className = 'wut-token-actions';
-      var accessButton = document.createElement('button');
-      accessButton.id = 'wut-token-access';
-      accessButton.type = 'button';
-      accessButton.className = 'setting-btn';
-      accessButton.textContent = 'Access Token';
-      var infoButton = document.createElement('button');
-      infoButton.id = 'wut-token-info';
-      infoButton.type = 'button';
-      infoButton.className = 'setting-btn';
-      infoButton.textContent = 'Info Token';
+      var extractButton = document.createElement('button');
+      extractButton.id = 'wut-token-extract';
+      extractButton.type = 'button';
+      extractButton.className = 'setting-btn';
+      extractButton.textContent = '提取 Token';
       var copyButton = document.createElement('button');
       copyButton.id = 'wut-token-copy';
       copyButton.type = 'button';
@@ -434,21 +410,18 @@
       output.className = 'wut-token-output';
       output.readOnly = true;
       output.spellcheck = false;
-      output.placeholder = '点击上方按钮读取 Token';
+      output.placeholder = '点击“提取 Token”读取接口鉴权 Token';
       var status = document.createElement('div');
       status.id = 'wut-token-status';
       status.className = 'wut-token-status';
       status.setAttribute('role', 'status');
-      function showToken(kind, token) {
+      function showToken(token) {
         output.value = token || '';
         copyButton.disabled = !token;
-        status.textContent = token ? '已提取 ' + kind + '，请勿外泄。' : '未找到 ' + kind + '，请先登录 Wuwa Tappo。';
+        status.textContent = token ? '已提取接口鉴权 Token，请勿外泄。' : '未找到接口鉴权 Token，请先登录 Wuwa Tappo。';
       }
-      accessButton.addEventListener('click', function () {
-        showToken('Access Token', readAccessToken());
-      });
-      infoButton.addEventListener('click', function () {
-        showToken('Info Token', readInfoToken());
+      extractButton.addEventListener('click', function () {
+        showToken(readInfoToken());
       });
       copyButton.addEventListener('click', function () {
         if (!output.value) return;
@@ -458,8 +431,7 @@
           status.textContent = '复制失败，请手动选中文本复制。';
         });
       });
-      actions.appendChild(accessButton);
-      actions.appendChild(infoButton);
+      actions.appendChild(extractButton);
       actions.appendChild(copyButton);
       content.appendChild(actions);
       content.appendChild(output);
