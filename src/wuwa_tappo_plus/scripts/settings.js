@@ -158,8 +158,10 @@
       row.appendChild(label);
       row.appendChild(content);
       host.appendChild(row);
+      if (definition[0] === 'auto_emote') appendEmoteRateRow();
     });
-    var emoteRow = document.createElement('div');
+    function appendEmoteRateRow() {
+      var emoteRow = document.createElement('div');
     emoteRow.className = 'setting-item';
     var emoteLabel = document.createElement('div');
     emoteLabel.className = 'setting-label';
@@ -221,6 +223,7 @@
     emoteRow.appendChild(emoteLabel);
     emoteRow.appendChild(emoteContent);
     host.appendChild(emoteRow);
+    }
     var gameRow = document.createElement('div');
     gameRow.className = 'setting-item';
     var gameLabel = document.createElement('div');
