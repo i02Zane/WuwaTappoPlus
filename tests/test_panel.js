@@ -190,3 +190,63 @@ test('panel cleanup reflects restored native game settings before removing Plus'
   assert.equal(autoClicks, 1);
   assert.equal(modeClicks, 1);
 });
+
+
+test('token row shows expiry and uses the official toast for extract/renew', async () => {
+  const f = fixture();
+  const nodes = new Map();
+  const alerts = [];
+  let copied = null;
+  function element() {
+    return { dataset: {}, style: { setProperty() {} }, children: [], textContent: '',
+      setAttribute() {}, addEventListener(name, handler) { this[name] = handler; },
+      appendChild(child) { this.children.push(child); if (child.id) nodes.set(child.id, child); },
+      querySelectorAll() { return []; },
+      querySelector(selector) {
+        if (selector === '.wut-status') return this.children[0].children[1];
+        return null;
+      }
+    };
+  }
+  const container = element();
+  container.querySelector = () => null;
+  container.insertBefore = child => container.appendChild(child);
+  f.context.document.createElement = element;
+  f.context.document.head = element();
+  f.context.document.querySelector = () => container;
+  f.context.document.getElementById = id =>
+    id === 'wut-daily-report' ? null : nodes.get(id);
+  f.context.document.cookie = 'kuro_infoToken=info-token-123; kuro_lastLoginTime=' +
+    Math.floor((Date.now() + 3.5 * 86400000) / 1000);
+  f.context.localStorage = {
+    length: 1,
+    key: () => 'credentials_zeus-free-test',
+    getItem: key => key === 'credentials_zeus-free-test'
+      ? JSON.stringify({ access_token: 'access-token-456' }) : null
+  };
+  f.context.navigator = {
+    clipboard: { writeText: text => { copied = text; return Promise.resolve(); } }
+  };
+  f.context.window.alert = message => { alerts.push(message); };
+  f.settings.update({ preferences: {}, ack: [] });
+  const expiry = nodes.get('wut-token-expiry');
+  const extract = nodes.get('wut-token-extract');
+  const renew = nodes.get('wut-token-renew');
+  assert.match(expiry.textContent, /当前Token有效期：剩余3天/);
+  assert.equal(expiry.dataset.soon, 'false');
+  assert.equal(renew.hidden, true);
+  extract.click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(copied, 'info-token-123');
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0], /Token已提取至剪贴板/);
+  assert.match(alerts[0], /请勿分享给他人/);
+  f.context.document.cookie = 'kuro_infoToken=info-token-123; kuro_lastLoginTime=' +
+    Math.floor((Date.now() + 86400000) / 1000);
+  f.settings.update({ preferences: {}, ack: [] });
+  assert.equal(renew.hidden, false);
+  renew.click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.match(alerts[alerts.length - 1], /续期失败/);
+  assert.equal(renew.disabled, false);
+});

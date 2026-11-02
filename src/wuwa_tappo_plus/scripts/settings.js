@@ -51,6 +51,149 @@
     });
   }
 
+  function cookieValue(name) {
+    try {
+      var parts = document.cookie ? document.cookie.split(';') : [];
+      for (var i = 0; i < parts.length; i++) {
+        var part = parts[i].trim();
+        if (part.indexOf(name + '=') === 0) {
+          return decodeURIComponent(part.slice(name.length + 1));
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  function readInfoToken() {
+    return cookieValue('kuro_infoToken');
+  }
+
+  function readTokenExpiry() {
+    var raw = cookieValue('kuro_lastLoginTime');
+    if (!raw) return null;
+    var text = String(raw).trim();
+    if (!text) return null;
+    var value = Number(text);
+    if (Number.isFinite(value) && value > 0) return value < 1e12 ? value * 1000 : value;
+    var parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function formatTokenExpiry(expiry) {
+    if (!expiry) return '有效期未知';
+    var ms = expiry - Date.now();
+    if (ms <= 0) return '已过期，请重新登录或续期';
+    var days = Math.floor(ms / 86400000);
+    var hours = Math.floor((ms % 86400000) / 3600000);
+    var minutes = Math.floor((ms % 3600000) / 60000);
+    return '剩余' + (days > 0 ? days + '天' : '') +
+      (hours > 0 ? hours + '小时' : '') + minutes + '分钟';
+  }
+
+  function updateTokenExpiry() {
+    var node = document.getElementById('wut-token-expiry');
+    if (!node) return;
+    var expiry = readTokenExpiry();
+    node.textContent = '当前Token有效期：' + formatTokenExpiry(expiry);
+    var soon = expiry === null || expiry - Date.now() < 2 * 86400000;
+    node.dataset.soon = soon ? 'true' : 'false';
+    var renew = document.getElementById('wut-token-renew');
+    if (renew) renew.hidden = !soon;
+  }
+
+  function showAppToast(message, delay) {
+    var script = document.querySelector('script[type="module"][src]');
+    if (!script) {
+      try { window.alert(message); } catch (e) {}
+      return;
+    }
+    import(script.src).then(function (module) {
+      var values = Object.values(module);
+      var toast = values.find(function (value) {
+        return typeof value === 'function' && value.name === 'showToast';
+      });
+      if (!toast) throw new Error('toast API unavailable');
+      toast(message, delay || 2500);
+    }).catch(function () {
+      try { window.alert(message); } catch (e) {}
+    });
+  }
+
+  function setCookieValue(name, value, days) {
+    var expires = new Date(Date.now() + days * 86400000).toUTCString();
+    document.cookie = name + '=' + encodeURIComponent(value) + '; expires=' + expires + '; path=/';
+  }
+
+  function renewToken() {
+    var script = document.querySelector('script[type="module"][src]');
+    if (!script) return Promise.reject(new Error('native module missing'));
+    return import(script.src).then(function (module) {
+      var values = Object.values(module);
+      var renew = values.find(function (value) {
+        return typeof value === 'function' && value.name === 'renewTokenIfNeeded';
+      });
+      if (!renew) throw new Error('renew API unavailable');
+      var original = cookieValue('kuro_lastLoginTime');
+      var temporary = String(Math.floor((Date.now() + 60 * 1000) / 1000));
+      setCookieValue('kuro_lastLoginTime', temporary, 7);
+      function restore() {
+        if (original) {
+          setCookieValue('kuro_lastLoginTime', original, 7);
+        } else {
+          document.cookie = 'kuro_lastLoginTime=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+        }
+      }
+      return renew().then(function (renewed) {
+        if (!renewed) {
+          restore();
+          throw new Error('renew rejected');
+        }
+        return true;
+      }, function (error) {
+        restore();
+        throw error;
+      });
+    });
+  }
+
+  function extractToken() {
+    var token = readInfoToken();
+    if (!token) {
+      showAppToast('未找到 Token，请先登录 Wuwa Tappo。');
+      return;
+    }
+    copyToken(token).then(function () {
+      showAppToast('Token已提取至剪贴板。Token是你的账号在Wuwa Tappo的登录凭证，'
+        + '请勿分享给他人，也不要粘贴到不可信的应用或工具。'
+        + '如果泄露Token，请立刻在Wuwa Tappo退出账号', 8000);
+    }).catch(function () {
+      showAppToast('复制失败，请检查剪贴板权限后重试。');
+    });
+  }
+
+  function copyToken(text) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      try {
+        var area = document.createElement('textarea');
+        area.value = text;
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        area.style.left = '-9999px';
+        document.body.appendChild(area);
+        area.focus();
+        area.select();
+        var ok = document.execCommand('copy');
+        document.body.removeChild(area);
+        if (ok) resolve(); else reject(new Error('copy failed'));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
   function emitGameOpacityPreview(value, done) {
     try {
       var internals = window.__TAURI_INTERNALS__;
@@ -85,6 +228,9 @@
         + 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}'
         + '#wut-plus-settings .setting-value-opacity{flex:0 0 64px;width:64px;'
         + 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}'
+        + '#wut-plus-settings .wut-token-actions{display:flex;flex-wrap:wrap;gap:8px;}'
+        + '#wut-plus-settings .wut-token-expiry{font-size:13px;color:#8e7b6a;margin-top:2px;}'
+        + '#wut-plus-settings .wut-token-expiry[data-soon="true"]{color:#b4543c;font-weight:600;}'
         + '#wut-plus-settings .wut-export{gap:18px;}'
         + '#wut-plus-settings .wut-export .setting-label{min-width:0;}'
         + '#wut-plus-settings .wut-export .setting-content{flex-shrink:0;}'
@@ -298,6 +444,7 @@
       + '<details open><summary>最近 7 天 · 点击数</summary>'
       + '<div class="wut-report-chart" role="list" aria-label="最近七天点击数"></div></details>';
     host.appendChild(report);
+    appendTokenRow();
     var exports = document.createElement('div');
     exports.className = 'setting-item wut-export';
     var exportLabel = document.createElement('div');
@@ -328,10 +475,58 @@
     exports.appendChild(exportLabel);
     exports.appendChild(exportContent);
     host.appendChild(exports);
+    function appendTokenRow() {
+      var row = document.createElement('div');
+      row.className = 'setting-item wut-token';
+      var label = document.createElement('div');
+      label.className = 'setting-label';
+      var title = document.createElement('div');
+      title.className = 'setting-title';
+      title.textContent = 'Token';
+      var desc = document.createElement('div');
+      desc.id = 'wut-token-expiry';
+      desc.className = 'setting-sub wut-token-expiry';
+      desc.textContent = '当前Token有效期：读取中…';
+      label.appendChild(title);
+      label.appendChild(desc);
+      var content = document.createElement('div');
+      content.className = 'setting-content';
+      var actions = document.createElement('div');
+      actions.className = 'wut-token-actions';
+      var renewButton = document.createElement('button');
+      renewButton.id = 'wut-token-renew';
+      renewButton.type = 'button';
+      renewButton.className = 'setting-btn';
+      renewButton.textContent = '手动续期';
+      renewButton.hidden = true;
+      var extractButton = document.createElement('button');
+      extractButton.id = 'wut-token-extract';
+      extractButton.type = 'button';
+      extractButton.className = 'setting-btn';
+      extractButton.textContent = '提取Token';
+      renewButton.addEventListener('click', function () {
+        renewButton.disabled = true;
+        renewToken().then(function () {
+          updateTokenExpiry();
+        }).catch(function () {
+          showAppToast('续期失败，请稍后重试或重新登录。');
+        }).finally(function () {
+          renewButton.disabled = false;
+        });
+      });
+      extractButton.addEventListener('click', extractToken);
+      actions.appendChild(renewButton);
+      actions.appendChild(extractButton);
+      content.appendChild(actions);
+      row.appendChild(label);
+      row.appendChild(content);
+      host.appendChild(row);
+    }
     reportKey = '';
     var anchor = container.querySelector('.btn-check-update');
     container.insertBefore(host, anchor ? anchor.closest('.setting-item') :
       container.querySelector('.setting-btns'));
+    updateTokenExpiry();
     render();
   }
 
@@ -375,6 +570,7 @@
     if (status.textContent !== text) status.textContent = text;
     status.dataset.error = error ? 'true' : 'false';
     renderReport();
+    updateTokenExpiry();
     var exportButton = document.getElementById('wut-export-button');
     var exportStatus = document.getElementById('wut-export-status');
     if (exportButton && exportStatus) {
