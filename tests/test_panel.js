@@ -235,6 +235,7 @@ test('token row shows expiry and uses the official toast for extract/renew', asy
   assert.match(expiry.textContent, /当前Token有效期：剩余3天/);
   assert.equal(expiry.dataset.soon, 'false');
   assert.equal(renew.hidden, true);
+  assert.equal(renew.style.display, 'none');
   extract.click();
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(copied, 'info-token-123');
@@ -245,6 +246,7 @@ test('token row shows expiry and uses the official toast for extract/renew', asy
     Math.floor((Date.now() + 86400000) / 1000);
   f.settings.update({ preferences: {}, ack: [] });
   assert.equal(renew.hidden, false);
+  assert.equal(renew.style.display, '');
   renew.click();
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.match(alerts[alerts.length - 1], /续期失败/);
