@@ -1,9 +1,8 @@
 """Remember which monitor the pet is on and put it back after a restart.
 
-The app's own display switch is wired to an F8 keydown listener in its page, so
-the daemon only has to dispatch that event; the app then resizes the window and
-re-lays out the pet. Nothing here touches the app's files or memory, and a
-missing monitor is never fatal: the pet stays where it is.
+The pet window is moved directly with SetWindowPos; the app's F8 page listener
+proved unreliable after app updates. Nothing here touches the app's files or
+memory, and a missing monitor is never fatal: the pet stays where it is.
 """
 
 import ctypes
@@ -12,7 +11,6 @@ import time
 from ctypes import wintypes
 from pathlib import Path
 
-from . import cdp
 from .config import ROOT
 
 RECORD_PATH = ROOT / "screen.json"
@@ -21,6 +19,9 @@ PET_TITLE = "Wuwa Tappo"
 
 _MONITORINFOF_PRIMARY = 0x1
 _MONITOR_DEFAULTTONEAREST = 0x2
+_SWP_NOSIZE = 0x0001
+_SWP_NOZORDER = 0x0004
+_SWP_NOACTIVATE = 0x0010
 
 _MONITORENUMPROC = ctypes.WINFUNCTYPE(
     wintypes.BOOL, ctypes.c_void_p, wintypes.HDC,
@@ -72,6 +73,10 @@ def _api():
         user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
         user32.MonitorFromWindow.restype = ctypes.c_void_p
         user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        user32.SetWindowPos.restype = wintypes.BOOL
         user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         _user32 = user32
@@ -240,14 +245,35 @@ class ScreenKeeper:
                     return monitor if self._same_monitor(self.target, monitor) else None
         return None
 
-    def _dispatch(self, session):
-        """Ask the app to switch displays the same way its F8 shortcut does."""
-        try:
-            session.js("window.dispatchEvent(new KeyboardEvent('keydown', {key: 'F8'})); 1")
-            return True
-        except (cdp.CDPError, OSError, AttributeError) as exc:
-            self.log.warn("screen: cannot ask the app to switch displays: %s" % str(exc)[:160])
+    def _move_to(self, hwnd, target):
+        """Move the pet window to the target monitor without resizing it."""
+        rect = target.get("rect") or []
+        if len(rect) != 4:
             return False
+        try:
+            current_rect = wintypes.RECT()
+            if not _api().GetWindowRect(hwnd, ctypes.byref(current_rect)):
+                return False
+            width = current_rect.right - current_rect.left
+            height = current_rect.bottom - current_rect.top
+            if width <= 0 or height <= 0:
+                return False
+            x = int(rect[0] + (rect[2] - width) / 2)
+            y = int(rect[1] + (rect[3] - height) / 2)
+            moved = _api().SetWindowPos(
+                hwnd, None, x, y, 0, 0,
+                _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE)
+            if not moved:
+                self.log.warn("screen: cannot move the pet window: %s"
+                              % ctypes.get_last_error())
+            return bool(moved)
+        except (OSError, AttributeError) as exc:
+            self.log.warn("screen: cannot move the pet window: %s" % str(exc)[:160])
+            return False
+
+    def _dispatch(self, hwnd, target):
+        """Move the pet window directly; the app's F8 shortcut is not reliable."""
+        return self._move_to(hwnd, target)
 
     def tick(self, session, enabled=True):
         if not enabled:
@@ -298,7 +324,7 @@ class ScreenKeeper:
                 self.log.warn("screen: could not move the pet back to %s; left it on %s"
                               % (target["device"], current["device"]))
                 return
-            if self._dispatch(session):
+            if self._dispatch(hwnd, target):
                 self.attempts += 1
                 self.next_check = self.clock() + self.settle
             else:
@@ -320,5 +346,5 @@ class ScreenKeeper:
             self.next_check = self.clock() + self.settle
             self.log.info("screen: pet is on %s, moving it to %s"
                           % (current["device"], target["device"]))
-            if not self._dispatch(session):
+            if not self._dispatch(hwnd, target):
                 self.restoring = False

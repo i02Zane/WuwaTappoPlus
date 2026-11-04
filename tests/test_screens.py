@@ -41,10 +41,17 @@ class ScreenKeeperTests(unittest.TestCase):
         self.monitors = [LEFT, RIGHT]
         self.pet = {"hwnd": 1, "device": LEFT["device"]}
         self.session = FakeSession()
+        self.moves = []
+
+        def move(hwnd, target):
+            self.moves.append((hwnd, dict(target)))
+            return True
+
         for patcher in (
             patch("wuwa_tappo_plus.screens.pet_window", lambda: self.pet["hwnd"]),
             patch("wuwa_tappo_plus.screens.list_monitors", lambda: list(self.monitors)),
             patch("wuwa_tappo_plus.screens.monitor_of_window", self.current),
+            patch.object(ScreenKeeper, "_move_to", side_effect=move),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -67,25 +74,25 @@ class ScreenKeeperTests(unittest.TestCase):
         keeper = self.keeper()
         keeper.tick(self.session)
         self.assertEqual(self.record()["device"], LEFT["device"])
-        self.assertEqual(self.session.calls, [])
+        self.assertEqual(self.moves, [])
 
     def test_the_pet_is_left_alone_on_the_remembered_monitor(self):
         keeper = self.keeper({"device": LEFT["device"], "rect": LEFT["rect"]})
         keeper.tick(self.session)
-        self.assertEqual(self.session.calls, [])
+        self.assertEqual(self.moves, [])
 
     def test_a_pet_on_another_monitor_is_moved_back(self):
         keeper = self.keeper({"device": LEFT["device"], "rect": LEFT["rect"]})
         self.pet["device"] = RIGHT["device"]
         keeper.tick(self.session)
-        self.assertEqual(len(self.session.calls), 1, "one switch request")
-        self.assertIn("F8", self.session.calls[0])
+        self.assertEqual(len(self.moves), 1, "one move request")
+        self.assertEqual(self.moves[0][1]["device"], LEFT["device"])
 
-        # The app finishes the switch: the window lands on the remembered one.
+        # The window lands on the remembered one.
         self.advance()
         self.pet["device"] = LEFT["device"]
         keeper.tick(self.session)
-        self.assertEqual(len(self.session.calls), 1, "no second request")
+        self.assertEqual(len(self.moves), 1, "no second request")
         self.assertEqual(self.record()["device"], LEFT["device"])
 
     def test_a_missing_monitor_is_never_fatal_and_keeps_the_record(self):
@@ -93,7 +100,7 @@ class ScreenKeeperTests(unittest.TestCase):
         self.monitors = [RIGHT]
         self.pet["device"] = RIGHT["device"]
         keeper.tick(self.session)
-        self.assertEqual(self.session.calls, [])
+        self.assertEqual(self.moves, [])
         self.assertEqual(self.record()["device"], LEFT["device"])
 
     def test_a_monitor_that_comes_back_can_be_restored_again(self):
@@ -104,14 +111,14 @@ class ScreenKeeperTests(unittest.TestCase):
         # The display returns while the app keeps running.
         self.monitors = [LEFT, RIGHT]
         keeper.tick(self.session)
-        self.assertEqual(len(self.session.calls), 1, "retry once the monitor is back")
+        self.assertEqual(len(self.moves), 1, "retry once the monitor is back")
 
     def test_moving_the_pet_by_hand_updates_the_record_instead_of_fighting_it(self):
         keeper = self.keeper({"device": LEFT["device"], "rect": LEFT["rect"]})
         keeper.tick(self.session)               # same monitor, check recorded
-        self.pet["device"] = RIGHT["device"]    # user presses F8
+        self.pet["device"] = RIGHT["device"]    # user moves it by hand
         keeper.tick(self.session)
-        self.assertEqual(self.session.calls, [])
+        self.assertEqual(self.moves, [])
         self.assertEqual(self.record()["device"], RIGHT["device"])
 
     def test_a_restarted_app_is_restored_again(self):
@@ -119,13 +126,13 @@ class ScreenKeeperTests(unittest.TestCase):
         keeper.tick(self.session)               # settled on the target
         self.pet = {"hwnd": 2, "device": RIGHT["device"]}
         keeper.tick(self.session)
-        self.assertEqual(len(self.session.calls), 1, "new window on the wrong monitor")
+        self.assertEqual(len(self.moves), 1, "new window on the wrong monitor")
 
     def test_a_breakdown_in_the_switch_request_is_not_fatal(self):
         keeper = self.keeper({"device": LEFT["device"], "rect": LEFT["rect"]})
         self.pet["device"] = RIGHT["device"]
-        keeper.session = FakeSession(fail=True)
-        keeper.tick(keeper.session)
+        with patch.object(ScreenKeeper, "_move_to", return_value=False):
+            keeper.tick(self.session)
         self.assertFalse(keeper.restoring)
 
     def test_the_record_survives_a_broken_file(self):
@@ -139,10 +146,10 @@ class ScreenKeeperTests(unittest.TestCase):
                               "name": LEFT["name"]})
         self.pet["device"] = RIGHT["device"]
         keeper.tick(self.session, enabled=False)
-        self.assertEqual(self.session.calls, [])
+        self.assertEqual(self.moves, [])
         self.assertEqual(self.record()["device"], LEFT["device"])
         keeper.tick(self.session)
-        self.assertEqual(len(self.session.calls), 1, "works again once re-enabled")
+        self.assertEqual(len(self.moves), 1, "works again once re-enabled")
 
     def test_a_replacement_monitor_on_the_same_output_is_not_confused_for_ours(self):
         keeper = self.keeper({"device": LEFT["device"], "rect": LEFT["rect"],
@@ -152,7 +159,7 @@ class ScreenKeeperTests(unittest.TestCase):
         self.monitors = [monitor(LEFT["device"], LEFT["rect"],
                                  name=LEFT["name"], hardware="MONITOR\\ANOTHER"), RIGHT]
         keeper.tick(self.session)
-        self.assertEqual(self.session.calls, [])
+        self.assertEqual(self.moves, [])
         self.assertEqual(self.record()["device"], LEFT["device"])
         self.assertEqual(self.record()["id"], LEFT["id"])
 
@@ -165,7 +172,7 @@ class ScreenKeeperTests(unittest.TestCase):
         self.monitors = [moved, RIGHT]
         self.pet["device"] = RIGHT["device"]
         keeper.tick(self.session)
-        self.assertEqual(len(self.session.calls), 1)
+        self.assertEqual(len(self.moves), 1)
 
     def test_a_monitor_outside_the_layout_is_not_a_target(self):
         keeper = self.keeper({"device": LEFT["device"], "rect": LEFT["rect"],
@@ -173,7 +180,7 @@ class ScreenKeeperTests(unittest.TestCase):
         self.monitors = [RIGHT]
         self.pet["device"] = RIGHT["device"]
         keeper.tick(self.session)
-        self.assertEqual(self.session.calls, [])
+        self.assertEqual(self.moves, [])
 
     def test_identical_monitors_prefer_the_output_we_were_on(self):
         keeper = self.keeper({"device": LEFT["device"], "rect": LEFT["rect"],
