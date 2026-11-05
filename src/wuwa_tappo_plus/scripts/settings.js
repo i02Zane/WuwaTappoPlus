@@ -82,6 +82,26 @@
     }
   }
 
+  function isLoggedIn() {
+    try {
+      var root = document.querySelector('#app');
+      var app = root && root.__vue_app__;
+      var pinia = app && app.config.globalProperties.$pinia;
+      var store = pinia && pinia._s.get('GlobalState');
+      return store ? store.isLoggedIn === true : null;
+    } catch (e) { return null; }
+  }
+
+  // Token login is a recovery path for a fresh or logged-out client. When the
+  // app already has a session, pasting another token only risks clobbering it.
+  function syncTokenLoginVisibility() {
+    var row = document.getElementById('wut-token-login-row');
+    if (!row) return;
+    var hidden = isLoggedIn() === true;
+    row.hidden = hidden;
+    row.style.display = hidden ? 'none' : '';
+  }
+
   function showAppToast(message, delay) {
     var script = document.querySelector('script[type="module"][src]');
     if (!script) {
@@ -537,6 +557,7 @@
     appendTokenLoginRow();
     function appendTokenLoginRow() {
       var row = document.createElement('div');
+      row.id = 'wut-token-login-row';
       row.className = 'setting-item wut-token-login';
       var label = document.createElement('div');
       label.className = 'setting-label';
@@ -588,6 +609,7 @@
   function render() {
     var host = document.getElementById(HOST);
     if (!host) return;
+    syncTokenLoginVisibility();
     var online = Date.now() - S.beat <= 5000;
     host.querySelectorAll('input[data-preference]').forEach(function (input) {
       var key = input.dataset.preference;

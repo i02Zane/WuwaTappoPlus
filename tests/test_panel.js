@@ -236,10 +236,15 @@ test('token row shows expiry and uses the official toast for extract/renew', asy
   const expiry = nodes.get('wut-token-expiry');
   const extract = nodes.get('wut-token-extract');
   const renew = nodes.get('wut-token-renew');
+  const loginRow = nodes.get('wut-token-login-row');
   assert.match(expiry.textContent, /当前Token有效期：剩余3天/);
   assert.equal(expiry.dataset.soon, 'false');
   assert.equal(renew.hidden, true);
   assert.equal(renew.style.display, 'none');
+  // No app store in this fixture means the state is unknown, so the recovery
+  // row stays available rather than disappearing for a logged-out client.
+  assert.equal(loginRow.hidden, false);
+  assert.equal(loginRow.style.display, '');
   extract.click();
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(copied, 'info-token-123');
@@ -261,4 +266,19 @@ test('token row shows expiry and uses the official toast for extract/renew', asy
   loginButton.click();
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.match(alerts[alerts.length - 1], /Token 登录失败/);
+
+  // Once the app reports a session, keep the recovery row out of the way.
+  const store = { isLoggedIn: true };
+  const app = { __vue_app__: { config: { globalProperties: {
+    $pinia: { _s: new Map([['GlobalState', store]]) }
+  } } } };
+  const baseQuery = f.context.document.querySelector;
+  f.context.document.querySelector = selector => selector === '#app' ? app : baseQuery(selector);
+  f.settings.update({ preferences: {}, ack: [] });
+  assert.equal(loginRow.hidden, true);
+  assert.equal(loginRow.style.display, 'none');
+  store.isLoggedIn = false;
+  f.settings.update({ preferences: {}, ack: [] });
+  assert.equal(loginRow.hidden, false);
+  assert.equal(loginRow.style.display, '');
 });
