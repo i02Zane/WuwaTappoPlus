@@ -45,22 +45,47 @@ class PathTests(unittest.TestCase):
 class CommandTests(unittest.TestCase):
     def test_independent_background_process_owns_its_onefile_extraction(self):
         with patch.object(win, "frozen", return_value=True), \
+                patch.object(win.sys, "_MEIPASS", r"C:\Temp\_MEI123", create=True), \
                 patch.object(win.subprocess, "Popen") as popen, \
-                patch.dict(os.environ, {"PYINSTALLER_RESET_ENVIRONMENT": "original"}):
+                patch.dict(os.environ, {
+                    "PATH": r"C:\Temp\_MEI123;C:\Windows\System32",
+                    "PYINSTALLER_RESET_ENVIRONMENT": "original"}):
             win.launch_detached(["WuwaTappoPlus.exe", "run"])
-            self.assertEqual(popen.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"], "1")
+            environment = popen.call_args.kwargs["env"]
+            self.assertEqual(environment["PYINSTALLER_RESET_ENVIRONMENT"], "1")
+            self.assertNotIn("_MEI123", environment["PATH"])
+            self.assertIn(r"C:\Windows\System32", environment["PATH"])
             self.assertEqual(os.environ["PYINSTALLER_RESET_ENVIRONMENT"], "original")
+
+    def test_launch_app_does_not_inherit_the_onefile_path(self):
+        with patch.object(win.sys, "_MEIPASS", r"C:\Temp\_MEI123", create=True), \
+                patch.object(win.subprocess, "Popen") as popen, \
+                patch.dict(os.environ, {
+                    "PATH": r"C:\Temp\_MEI123;C:\Windows\System32",
+                    "PYINSTALLER_RESET_ENVIRONMENT": "1"}):
+            win.launch_app(r"C:\App\WuwaTappo.exe")
+            environment = popen.call_args.kwargs["env"]
+            self.assertEqual(popen.call_args.args[0], [r"C:\App\WuwaTappo.exe"])
+            self.assertNotIn("_MEI123", environment["PATH"])
+            self.assertIn(r"C:\Windows\System32", environment["PATH"])
+            self.assertNotIn("PYINSTALLER_RESET_ENVIRONMENT", environment)
 
     def test_elevated_launch_resets_extraction_and_restores_the_parent_environment(self):
         observed = []
+        original_path = r"C:\Temp\_MEI123;C:\Windows\System32"
         with patch.object(win, "frozen", return_value=True), \
+                patch.object(win.sys, "_MEIPASS", r"C:\Temp\_MEI123", create=True), \
                 patch.object(win.ctypes.windll.shell32, "ShellExecuteW",
                              side_effect=lambda *args: observed.append(
-                                 os.environ.get("PYINSTALLER_RESET_ENVIRONMENT")) or 42), \
-                patch.dict(os.environ, {"PYINSTALLER_RESET_ENVIRONMENT": "original"}):
+                                 (os.environ.get("PYINSTALLER_RESET_ENVIRONMENT"),
+                                  os.environ.get("PATH"))) or 42), \
+                patch.dict(os.environ, {"PYINSTALLER_RESET_ENVIRONMENT": "original",
+                                        "PATH": original_path}):
             self.assertTrue(win.relaunch_elevated(["install", "--elevated"]))
-            self.assertEqual(observed, ["1"])
+            self.assertEqual(observed[0][0], "1")
+            self.assertNotIn("_MEI123", observed[0][1])
             self.assertEqual(os.environ["PYINSTALLER_RESET_ENVIRONMENT"], "original")
+            self.assertEqual(os.environ["PATH"], original_path)
 
     def test_frozen_background_commands_do_not_invoke_python_or_a_source_launcher(self):
         executable = r"C:\Program Files\WuwaTappoPlus\WuwaTappoPlus.exe"
