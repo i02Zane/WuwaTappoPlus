@@ -69,8 +69,12 @@ def relaunch_elevated(argv):
     command.extend(["--data-dir", str(ROOT), "--program-dir", str(directory()), *argv])
     params = subprocess.list2cmdline(command[1:])
     previous_reset = os.environ.get("PYINSTALLER_RESET_ENVIRONMENT")
+    previous_path = os.environ.get("PATH")
     if frozen():
+        environment = _child_environment(reset=True)
         os.environ["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+        if "PATH" in environment:
+            os.environ["PATH"] = environment["PATH"]
     try:
         rc = ctypes.windll.shell32.ShellExecuteW(
             None, "runas", command[0], params, str(APP_DIR), 1
@@ -84,6 +88,10 @@ def relaunch_elevated(argv):
                 os.environ.pop("PYINSTALLER_RESET_ENVIRONMENT", None)
             else:
                 os.environ["PYINSTALLER_RESET_ENVIRONMENT"] = previous_reset
+            if previous_path is None:
+                os.environ.pop("PATH", None)
+            else:
+                os.environ["PATH"] = previous_path
 
 
 RUNTIME_DIR = APP_DIR / "runtime"
@@ -663,6 +671,32 @@ def read_watchdog():
 # ---------------------------------------------------------------- processes
 
 
+def _child_environment(reset=False):
+    """Environment for child processes that must not keep this onefile alive.
+
+    PyInstaller prepends its extraction directory to PATH. A long-running child
+    (the official app) then loads VCRUNTIME from there, and the onefile
+    bootloader can no longer remove the temporary directory on exit.
+    """
+    environment = dict(os.environ)
+    extraction = getattr(sys, "_MEIPASS", None)
+    if extraction:
+        target = os.path.normcase(os.path.normpath(str(extraction)))
+        parts = environment.get("PATH", "").split(os.pathsep)
+        environment["PATH"] = os.pathsep.join(
+            part for part in parts
+            if part and os.path.normcase(os.path.normpath(part)) != target)
+    for name in list(environment):
+        key = name.upper()
+        if key.startswith("_PYI") or key in ("_MEIPASS", "_MEIPASS2"):
+            environment.pop(name, None)
+    if reset:
+        environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    else:
+        environment.pop("PYINSTALLER_RESET_ENVIRONMENT", None)
+    return environment
+
+
 def launch_app(exe_path):
     """Start the app detached from this process."""
     DETACHED_PROCESS = 0x00000008
@@ -673,6 +707,7 @@ def launch_app(exe_path):
         creationflags=flags,
         close_fds=True,
         cwd=str(Path(exe_path).parent),
+        env=_child_environment(),
     )
 
 
@@ -728,11 +763,7 @@ def launch_detached(argv):
     DETACHED_PROCESS = 0x00000008
     CREATE_NEW_PROCESS_GROUP = 0x00000200
     CREATE_NO_WINDOW = 0x08000000
-    environment = dict(os.environ)
-    if frozen():
-        # An independent onefile instance must own its extracted resources;
-        # its launching menu/watchdog may exit before this daemon does.
-        environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    environment = _child_environment(reset=frozen())
     return subprocess.Popen(
         [str(a) for a in argv],
         creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
