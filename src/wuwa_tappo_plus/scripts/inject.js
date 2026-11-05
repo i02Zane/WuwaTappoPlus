@@ -1080,6 +1080,7 @@
   var previewGameOpacity = null;
   var previewUntil = 0;
   var gamePreviewEventId = null;
+  var bossTimer = 0;
 
   function applyGameOpacity(target, value) {
     if (!target || !target.dataset || !target.style) return;
@@ -1162,6 +1163,17 @@
         if (rect && rect.width) mirrored = rect.left + rect.width / 2 < center;
       }
       mirrorBossPet(visual, mirrored);
+    }
+    ensureBossTimer(cats.length > 0);
+  }
+
+  function ensureBossTimer(hasCats) {
+    var active = CFG.hello_boss === true && hasCats;
+    if (active && !bossTimer) {
+      bossTimer = setInterval(syncBossMode, 50);
+    } else if (!active && bossTimer) {
+      clearInterval(bossTimer);
+      bossTimer = 0;
     }
   }
 
@@ -1283,6 +1295,7 @@
     gamePreviewEventId = null;
     CFG.hello_boss = false;
     syncBossMode();
+    if (bossTimer) { clearInterval(bossTimer); bossTimer = 0; }
     if (graceTimer) clearTimeout(graceTimer);
     A.obs.disconnect();
     if (stopChestAction) stopChestAction();

@@ -1011,15 +1011,26 @@ test('hello boss mode mirrors only room pets left of the user and keeps names in
   left.visual.style.scale = '0.9';
   f.context.document.querySelectorAll = selector =>
     selector === '.room-cat-shell' ? [left.element, right.element] : [];
+  const intervals = new Map();
+  const cleared = [];
+  let nextTimer = 1000;
+  f.context.setInterval = (fn, ms) => {
+    const id = ++nextTimer;
+    intervals.set(id, { fn, ms });
+    return id;
+  };
+  f.context.clearInterval = id => { cleared.push(id); intervals.delete(id); };
   f.a.configure({ ...f.a.cfg, hello_boss: true });
   assert.equal(left.visual.style.scale, '-1 1');
   assert.equal(left.nickname.style.scale, undefined);
   assert.equal(right.visual.style.scale, undefined);
+  const boss = [...intervals.values()].find(timer => timer.ms <= 100);
+  assert.ok(boss, 'boss mode should install a fast position watcher');
   // Moving the pet to the user's right restores its original scale.
   left.rect.left = 800; left.rect.right = 1000;
-  f.a.tick();
+  boss.fn();
   assert.equal(left.visual.style.scale, '0.9');
-  // Turning the mode off restores every mirrored pet and forgets the baseline.
+  // Turning the mode off restores every mirrored pet and stops the watcher.
   f.context.document.querySelectorAll = selector =>
     selector === '.room-cat-shell' ? [left.element] : [];
   left.rect.left = 100; left.rect.right = 300;
@@ -1028,6 +1039,7 @@ test('hello boss mode mirrors only room pets left of the user and keeps names in
   f.a.configure({ ...f.a.cfg, hello_boss: false });
   assert.equal(left.visual.style.scale, '0.9');
   assert.equal(left.visual.dataset.wutBossScale, undefined);
+  assert.equal([...intervals.values()].some(timer => timer.ms <= 100), false);
 });
 
 
