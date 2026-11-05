@@ -993,8 +993,10 @@ test('hello boss mode mirrors only room pets left of the user and keeps names in
   const f = fixture();
   function shell(left, top) {
     const rect = { left, top, width: 200, height: 200, right: left + 200, bottom: top + 200 };
-    const visual = { style: {}, dataset: {}, getBoundingClientRect: () => rect };
-    const nickname = { style: {}, dataset: {}, getBoundingClientRect: () => rect };
+    const visual = { style: {}, dataset: {}, offsetTop: 0, offsetHeight: 200,
+      getBoundingClientRect: () => rect };
+    const nickname = { style: {}, dataset: {}, offsetTop: 179, offsetHeight: 32,
+      getBoundingClientRect: () => rect };
     return {
       rect,
       visual,
@@ -1002,7 +1004,8 @@ test('hello boss mode mirrors only room pets left of the user and keeps names in
       element: {
         style: {}, dataset: {},
         getBoundingClientRect: () => rect,
-        querySelector: selector => selector === '.cat-friend' ? visual : null
+        querySelector: selector => selector === '.cat-friend' ? visual :
+          selector === '.cat-friend__nickname' ? nickname : null
       }
     };
   }
@@ -1022,23 +1025,29 @@ test('hello boss mode mirrors only room pets left of the user and keeps names in
   f.context.clearInterval = id => { cleared.push(id); intervals.delete(id); };
   f.a.configure({ ...f.a.cfg, hello_boss: true });
   assert.equal(left.visual.style.scale, '-1 1');
+  assert.equal(left.visual.style.zIndex, '1');
+  assert.equal(left.visual.style.translate, undefined);
   assert.equal(left.nickname.style.scale, undefined);
   assert.equal(right.visual.style.scale, undefined);
   const boss = [...intervals.values()].find(timer => timer.ms <= 100);
   assert.ok(boss, 'boss mode should install a fast position watcher');
-  // Moving the pet to the user's right restores its original scale.
+  // Moving the pet to the user's right restores its original scale and lift.
   left.rect.left = 800; left.rect.right = 1000;
   boss.fn();
   assert.equal(left.visual.style.scale, '0.9');
+  assert.equal(left.visual.style.zIndex, '');
   // Turning the mode off restores every mirrored pet and stops the watcher.
   f.context.document.querySelectorAll = selector =>
     selector === '.room-cat-shell' ? [left.element] : [];
   left.rect.left = 100; left.rect.right = 300;
   f.a.configure({ ...f.a.cfg, hello_boss: true });
   assert.equal(left.visual.style.scale, '-1 1');
+  assert.equal(left.visual.style.zIndex, '1');
   f.a.configure({ ...f.a.cfg, hello_boss: false });
   assert.equal(left.visual.style.scale, '0.9');
+  assert.equal(left.visual.style.zIndex, '');
   assert.equal(left.visual.dataset.wutBossScale, undefined);
+  assert.equal(left.visual.dataset.wutBossLift, undefined);
   assert.equal([...intervals.values()].some(timer => timer.ms <= 100), false);
 });
 

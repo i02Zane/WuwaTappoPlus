@@ -1133,10 +1133,22 @@
       if (visual.dataset.wutBossScale === undefined) {
         visual.dataset.wutBossScale = visual.style.scale || '';
       }
+      if (visual.dataset.wutBossZ === undefined) {
+        visual.dataset.wutBossZ = visual.style.zIndex || '';
+      }
       if (visual.style.scale !== '-1 1') visual.style.scale = '-1 1';
-    } else if (visual.dataset.wutBossScale !== undefined) {
-      visual.style.scale = visual.dataset.wutBossScale;
-      delete visual.dataset.wutBossScale;
+      // Lift the mirrored pet above the ID pill without moving it: z-index
+      // keeps both the pet and the name visible.
+      if (visual.style.zIndex !== '1') visual.style.zIndex = '1';
+    } else {
+      if (visual.dataset.wutBossScale !== undefined) {
+        visual.style.scale = visual.dataset.wutBossScale;
+        delete visual.dataset.wutBossScale;
+      }
+      if (visual.dataset.wutBossZ !== undefined) {
+        visual.style.zIndex = visual.dataset.wutBossZ;
+        delete visual.dataset.wutBossZ;
+      }
     }
   }
 
