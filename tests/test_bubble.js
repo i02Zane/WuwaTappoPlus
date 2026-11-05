@@ -1004,22 +1004,35 @@ test('game mode opacity restores the existing inline opacity on exit', () => {
   assert.equal(f.petDock.dataset.wutBaseOpacity, undefined);
 });
 
-test('game mode opacity also affects room pets and restores CSS-controlled opacity', () => {
+test('game mode opacity dims each room pet once and leaves the shared container alone', () => {
   const f = fixture();
-  const room = {
-    style: {}, dataset: {},
-    classList: { contains: name => name === 'room-cats-shell' }
-  };
+  const room = { style: {}, dataset: {}, classList: { contains: () => false } };
+  function cat() {
+    return { style: {}, dataset: {}, classList: { contains: name => name === 'room-cat-shell' } };
+  }
+  const first = cat();
+  const second = cat();
   const query = f.context.document.querySelector;
   f.context.document.querySelector = selector =>
     selector === '.room-cats-shell' ? room : query(selector);
+  f.context.document.querySelectorAll = selector =>
+    selector === '.room-cat-shell' ? [first, second] : [];
+  // State left by the previous build, which dimmed the container itself.
+  room.style.opacity = '0.5';
+  room.dataset.wutGameOpacity = '0.5';
+  room.dataset.wutBaseOpacity = '';
   f.context.localStorage = { getItem: () => JSON.stringify({ gameMode: true }) };
   f.a.configure({ ...f.a.cfg, game_mode_opacity: 0 });
   assert.equal(f.petDock.style.opacity, '0');
-  assert.equal(room.style.opacity, '0');
+  assert.equal(room.style.opacity, '');
+  assert.equal(room.dataset.wutGameOpacity, undefined);
+  assert.equal(first.style.opacity, '0');
+  assert.equal(second.style.opacity, '0');
   f.context.localStorage = { getItem: () => JSON.stringify({ gameMode: false }) };
   f.a.configure(f.a.cfg);
   assert.equal(f.petDock.style.opacity, '');
-  assert.equal(room.style.opacity, '');
-  assert.equal(room.dataset.wutGameOpacity, undefined);
+  assert.equal(first.style.opacity, '');
+  assert.equal(second.style.opacity, '');
+  assert.equal(first.dataset.wutGameOpacity, undefined);
+  assert.equal(second.dataset.wutGameOpacity, undefined);
 });

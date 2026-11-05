@@ -1081,30 +1081,49 @@
   var previewUntil = 0;
   var gamePreviewEventId = null;
 
+  function applyGameOpacity(target, value) {
+    if (!target || !target.dataset || !target.style) return;
+    if (value !== null) {
+      var desired = String(value / 100);
+      if (target.dataset.wutGameOpacity !== desired) {
+        if (!target.dataset.wutGameOpacity) {
+          target.dataset.wutBaseOpacity = target.style.opacity || '';
+          target.dataset.wutBaseTransition = target.style.transition || '';
+        }
+        if (target.classList && target.classList.contains('room-cat-shell') &&
+            !target.style.transition) {
+          target.style.transition = 'opacity .35s ease';
+        }
+        target.style.opacity = desired;
+        target.dataset.wutGameOpacity = desired;
+      }
+    } else if (target.dataset.wutGameOpacity) {
+      target.style.opacity = target.dataset.wutBaseOpacity || '';
+      target.style.transition = target.dataset.wutBaseTransition || '';
+      delete target.dataset.wutGameOpacity;
+      delete target.dataset.wutBaseOpacity;
+      delete target.dataset.wutBaseTransition;
+    }
+  }
+
   function syncGameModeOpacity() {
     if (previewGameOpacity !== null && Date.now() > previewUntil) previewGameOpacity = null;
     var mode = gameModeEnabled();
     var value = previewGameOpacity !== null ? previewGameOpacity :
       (mode ? gameModeOpacity() : null);
-    var targets = [document.querySelector('.pet-dock'), document.querySelector('.room-cats-shell')];
-    targets.forEach(function (target) {
-      if (!target) return;
-      if (value !== null) {
-        var desired = String(value / 100);
-        if (target.dataset.wutGameOpacity !== desired) {
-          if (!target.dataset.wutGameOpacity) target.dataset.wutBaseOpacity = target.style.opacity || '';
-          if (target.classList.contains('room-cats-shell') && !target.style.transition) {
-            target.style.transition = 'opacity .35s ease';
-          }
-          target.style.opacity = desired;
-          target.dataset.wutGameOpacity = desired;
-        }
-      } else if (target.dataset.wutGameOpacity) {
-        target.style.opacity = target.dataset.wutBaseOpacity || '';
-        delete target.dataset.wutGameOpacity;
-        delete target.dataset.wutBaseOpacity;
-      }
-    });
+    // The room container itself must not be dimmed: every .room-cat-shell
+    // inside it already carries the app's own opacity, so targeting the
+    // container multiplied the two and made friends' pets dimmer than ours.
+    var room = document.querySelector('.room-cats-shell');
+    if (room && room.dataset && room.style && room.dataset.wutGameOpacity) {
+      room.style.opacity = room.dataset.wutBaseOpacity || '';
+      if (room.style.transition === 'opacity .35s ease') room.style.transition = '';
+      delete room.dataset.wutGameOpacity;
+      delete room.dataset.wutBaseOpacity;
+    }
+    applyGameOpacity(document.querySelector('.pet-dock'), value);
+    var cats = document.querySelectorAll('.room-cat-shell');
+    for (var i = 0; i < cats.length; i += 1) applyGameOpacity(cats[i], value);
   }
 
   // The settings page sends this while the slider is dragged so the pet previews
