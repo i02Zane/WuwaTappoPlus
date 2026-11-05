@@ -29,28 +29,6 @@
     ['pause_clicks', '小黑屋模式', '暂停累积和上报新的点击，但仍保留桌宠敲击动画']
   ];
 
-  // Reflect values already confirmed by the daemon. The panel never owns the
-  // takeover/backup, and may be closed throughout the operation.
-  function syncOfficialGameSettings() {
-    var container = document.querySelector('.settings-module .panel-content');
-    if (!container) return;
-    var settings;
-    try { settings = JSON.parse(localStorage.getItem('wuwatappo-settings') || '{}'); }
-    catch (e) { return; }
-    var host = document.getElementById(HOST);
-    var titles = { '全屏进入游戏模式': 'autoGameModeOnFullscreen',
-                   'Enter Game Mode in Fullscreen': 'autoGameModeOnFullscreen',
-                   '游戏模式': 'gameMode', 'Game Mode': 'gameMode' };
-    container.querySelectorAll('.setting-item').forEach(function (row) {
-      if (host && host.contains(row)) return;
-      var title = row.querySelector('.setting-title');
-      var key = title && titles[title.textContent.trim()];
-      if (!key || typeof settings[key] !== 'boolean') return;
-      var input = row.querySelector('.setting-switch input[type="checkbox"]');
-      if (input && input.checked !== settings[key]) input.click();
-    });
-  }
-
   function cookieValue(name) {
     try {
       var parts = document.cookie ? document.cookie.split(';') : [];
@@ -604,6 +582,9 @@
     render();
   }
 
+  // Never click the app's own controls. Its settings component renders the
+  // stored values only after mount; a click before that saves the defaults it
+  // was initialized with and wipes taskbar icon, opacity, pet size and autostart.
   function render() {
     var host = document.getElementById(HOST);
     if (!host) return;
@@ -636,7 +617,6 @@
       input.checked = current;
       input.disabled = !online || !!pending;
     });
-    syncOfficialGameSettings();
     var status = host.querySelector('.wut-status');
     var text = !online ? 'Plus 后台未连接，请安装或修复 Plus' :
       error ? error :
@@ -1271,7 +1251,6 @@
   observer.observe(document.body, { childList: true, subtree: true });
   var timer = setInterval(function () { mount(); render(); }, 1000);
   S.uninstall = function () {
-    syncOfficialGameSettings();
     atlasView.dispose();
     observer.disconnect(); clearInterval(timer);
     [HOST, STYLE].forEach(function (id) {
