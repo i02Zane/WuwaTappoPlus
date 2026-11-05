@@ -169,26 +169,30 @@ test('settings export queues one action, shows result, and permits retry after f
 });
 
 
-test('panel cleanup reflects restored native game settings before removing Plus', () => {
+test('panel never clicks official game switches and cannot overwrite stored settings', () => {
   const f = fixture();
-  let autoClicks = 0;
-  let modeClicks = 0;
-  const auto = { checked: false, click() { autoClicks += 1; this.checked = !this.checked; } };
-  const mode = { checked: true, click() { modeClicks += 1; this.checked = !this.checked; } };
+  let clicks = 0;
+  let reads = 0;
+  const auto = { checked: true, click() { clicks += 1; this.checked = !this.checked; } };
+  const mode = { checked: false, click() { clicks += 1; this.checked = !this.checked; } };
   const row = (title, input) => ({ querySelector: selector =>
     selector === '.setting-title' ? { textContent: title } : input });
-  f.context.localStorage = { getItem: () => JSON.stringify({
-    gameMode: false, autoGameModeOnFullscreen: true
-  }) };
+  f.context.localStorage = { getItem: () => { reads += 1; return JSON.stringify({
+    gameMode: false, autoGameModeOnFullscreen: false
+  }); } };
   f.context.document.querySelector = selector =>
     selector === '.settings-module .panel-content' ? {
       querySelectorAll: () => [row('全屏进入游戏模式', auto), row('游戏模式', mode)]
     } : null;
   f.settings.uninstall();
+  assert.equal(clicks, 0);
   assert.equal(auto.checked, true);
   assert.equal(mode.checked, false);
-  assert.equal(autoClicks, 1);
-  assert.equal(modeClicks, 1);
+  // The panel does not own the app's settings, so it does not even read them.
+  assert.equal(reads, 0);
+  // A click before the app's component loads its stored values would save the
+  // defaults it was initialized with and wipe taskbar icon, opacity and size.
+  assert.doesNotMatch(loadScript('settings.js'), /\.click\s*\(/);
 });
 
 
