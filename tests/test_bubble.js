@@ -989,6 +989,48 @@ test('auto emote rate setting changes the rolling budget', () => {
 });
 
 
+test('hello boss mode mirrors only room pets left of the user and keeps names intact', () => {
+  const f = fixture();
+  function shell(left, top) {
+    const rect = { left, top, width: 200, height: 200, right: left + 200, bottom: top + 200 };
+    const visual = { style: {}, dataset: {}, getBoundingClientRect: () => rect };
+    const nickname = { style: {}, dataset: {}, getBoundingClientRect: () => rect };
+    return {
+      rect,
+      visual,
+      nickname,
+      element: {
+        style: {}, dataset: {},
+        getBoundingClientRect: () => rect,
+        querySelector: selector => selector === '.cat-friend' ? visual : null
+      }
+    };
+  }
+  const left = shell(100, 0);
+  const right = shell(800, 0);
+  left.visual.style.scale = '0.9';
+  f.context.document.querySelectorAll = selector =>
+    selector === '.room-cat-shell' ? [left.element, right.element] : [];
+  f.a.configure({ ...f.a.cfg, hello_boss: true });
+  assert.equal(left.visual.style.scale, '-1 1');
+  assert.equal(left.nickname.style.scale, undefined);
+  assert.equal(right.visual.style.scale, undefined);
+  // Moving the pet to the user's right restores its original scale.
+  left.rect.left = 800; left.rect.right = 1000;
+  f.a.tick();
+  assert.equal(left.visual.style.scale, '0.9');
+  // Turning the mode off restores every mirrored pet and forgets the baseline.
+  f.context.document.querySelectorAll = selector =>
+    selector === '.room-cat-shell' ? [left.element] : [];
+  left.rect.left = 100; left.rect.right = 300;
+  f.a.configure({ ...f.a.cfg, hello_boss: true });
+  assert.equal(left.visual.style.scale, '-1 1');
+  f.a.configure({ ...f.a.cfg, hello_boss: false });
+  assert.equal(left.visual.style.scale, '0.9');
+  assert.equal(left.visual.dataset.wutBossScale, undefined);
+});
+
+
 test('game mode opacity restores the existing inline opacity on exit', () => {
   const f = fixture();
   f.petDock.style.opacity = '0.8';

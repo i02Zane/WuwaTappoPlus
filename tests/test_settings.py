@@ -25,9 +25,19 @@ class PreferenceTests(unittest.TestCase):
     def test_default_switches_keep_clicks_running(self):
         self.assertEqual(Config({}).preferences,
                          {"auto_open": True, "balance_reminder": True, "bubble": True, "animation": True,
-                          "remember_screen": True, "pause_clicks": False, "auto_emote": False,
+                          "remember_screen": True, "hello_boss": False, "pause_clicks": False,
+                          "auto_emote": False,
                           "auto_emote_rate": 20,
                           "game_mode_plus": True, "game_mode_opacity": 30})
+
+    def test_hello_boss_switch_is_saved_and_reaches_injection(self):
+        self.assertFalse(Config({}).hello_boss)
+        saved = save_preferences({"hello_boss": True}, self.path)
+        self.assertTrue(saved.hello_boss)
+        self.assertTrue(saved.inject_cfg["hello_boss"])
+        self.assertTrue(saved.preferences["hello_boss"])
+        self.assertIs(tomllib.loads(self.path.read_text(encoding="utf-8"))["rooms"]["hello_boss"], True)
+        self.assertFalse(save_preferences({"hello_boss": False}, self.path).hello_boss)
 
     def test_auto_emote_rate_is_saved_as_a_bounded_rate(self):
         saved = save_preferences({"auto_emote_rate": 0}, self.path)
@@ -320,7 +330,7 @@ class ConfigSyncTests(unittest.TestCase):
         self.assertEqual(parsed["app"]["port"], 9333)
         self.assertEqual(parsed["inject"], {"enabled": False, "min_balance": 1500})
         self.assertEqual(parsed["alerts"], {"balance": True, "bubble": False, "animation": True})
-        self.assertEqual(parsed["rooms"], {"history": 20})       # section appended
+        self.assertEqual(parsed["rooms"], {"history": 20, "hello_boss": False})  # section appended
         self.assertEqual(parsed["daemon"]["watchdog_min"], 1)    # missing key added
 
     def test_sync_is_idempotent(self):

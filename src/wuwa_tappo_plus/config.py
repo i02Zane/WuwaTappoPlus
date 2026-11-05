@@ -80,6 +80,8 @@ game_mode_plus = true
 # How many visited rooms the multiplayer tab remembers. Pinned rooms are kept
 # on top and do not count against this limit.
 history = 20
+# Turn room pets on your left around to face you (names stay unmirrored).
+hello_boss = false
 
 [daemon]
 # Seconds between heartbeat lines in the log.
@@ -113,7 +115,7 @@ BUILTIN = {
     "alerts": {"balance": True, "bubble": True, "animation": True},
     "panel": {"remember_screen": True},
     "appearance": {"game_mode_opacity": 30, "game_mode_plus": True},
-    "rooms": {"history": 20},
+    "rooms": {"history": 20, "hello_boss": False},
     "daemon": {"heartbeat": 300, "max_runtime": 0, "watchdog_min": 1},
     "log": {"max_bytes": 1048576, "keep": 3},
 }
@@ -150,6 +152,7 @@ class Config:
             "bubble": self.alert_bubble,
             "animation": self.alert_animation,
             "game_mode_opacity": self.game_mode_opacity,
+            "hello_boss": self.hello_boss,
             # Timings are properties of the app, not preferences: they are
             # constants now, and a leftover key in config.toml is ignored.
             "poll_ms": POLL_MS,
@@ -228,11 +231,16 @@ class Config:
         return max(1, int(self.get("rooms", "history", 20)))
 
     @property
+    def hello_boss(self):
+        return bool(self.get("rooms", "hello_boss", False))
+
+    @property
     def preferences(self):
         return {"auto_open": self.auto_open, "balance_reminder": self.balance_reminder,
                 "bubble": self.alert_bubble,
                 "animation": self.alert_animation,
                 "remember_screen": self.panel_remember_screen,
+                "hello_boss": self.hello_boss,
                 "pause_clicks": self.pause_clicks, "auto_emote": self.auto_emote,
                 "auto_emote_rate": self.auto_emote_rate,
                 "game_mode_plus": self.game_mode_plus,
@@ -424,6 +432,7 @@ PREFERENCE_KEYS = {"auto_open": ("inject", "enabled"),
                    "bubble": ("alerts", "bubble"),
                    "animation": ("alerts", "animation"),
                    "remember_screen": ("panel", "remember_screen"),
+                   "hello_boss": ("rooms", "hello_boss"),
                    "pause_clicks": ("clicks", "pause"),
                    "auto_emote": ("clicks", "auto_emote"),
                    "auto_emote_rate": ("clicks", "auto_emote_rate"),

@@ -1126,6 +1126,45 @@
     for (var i = 0; i < cats.length; i += 1) applyGameOpacity(cats[i], value);
   }
 
+  function mirrorBossPet(visual, mirrored) {
+    if (!visual || !visual.dataset || !visual.style) return;
+    if (mirrored) {
+      if (visual.dataset.wutBossScale === undefined) {
+        visual.dataset.wutBossScale = visual.style.scale || '';
+      }
+      if (visual.style.scale !== '-1 1') visual.style.scale = '-1 1';
+    } else if (visual.dataset.wutBossScale !== undefined) {
+      visual.style.scale = visual.dataset.wutBossScale;
+      delete visual.dataset.wutBossScale;
+    }
+  }
+
+  function myPetCenter() {
+    var pet = document.querySelector('.pet-dock .cat-wrap') ||
+      document.querySelector('.pet-dock');
+    if (!pet) return null;
+    var rect = pet.getBoundingClientRect();
+    if (!rect || (rect.width === 0 && rect.height === 0)) return null;
+    return rect.left + rect.width / 2;
+  }
+
+  // "王总好": every pet faces left. Mirror the ones left of the user's pet so
+  // they face back, while their nickname and emotion layer stay unmirrored.
+  function syncBossMode() {
+    var cats = document.querySelectorAll('.room-cat-shell');
+    var center = CFG.hello_boss === true ? myPetCenter() : null;
+    for (var i = 0; i < cats.length; i += 1) {
+      var visual = cats[i].querySelector ? cats[i].querySelector('.cat-friend') : null;
+      if (!visual) continue;
+      var mirrored = false;
+      if (center !== null) {
+        var rect = visual.getBoundingClientRect ? visual.getBoundingClientRect() : null;
+        if (rect && rect.width) mirrored = rect.left + rect.width / 2 < center;
+      }
+      mirrorBossPet(visual, mirrored);
+    }
+  }
+
   // The settings page sends this while the slider is dragged so the pet previews
   // the value without waiting for the config round trip. Payload: {value, done}.
   function installGameOpacityPreview() {
@@ -1160,6 +1199,7 @@
     planGrace();
     applyAccessoryOverride();
     syncGameModeOpacity();
+    syncBossMode();
   }
 
   // Wake exactly when the earliest due chest clears its grace window, so the
@@ -1212,7 +1252,9 @@
     CFG.bubble = next.bubble !== false;
     CFG.animation = next.animation !== false;
     CFG.game_mode_opacity = gameModeOpacityFrom(next.game_mode_opacity);
+    CFG.hello_boss = next.hello_boss === true;
     syncGameModeOpacity();
+    syncBossMode();
     if (!CFG.enabled) A.lowBalance = null;
     if (!CFG.bubble && bubble) dropBubble();
     if (bubble) bubble.box.style.animation = CFG.animation ? '' : 'none';
@@ -1239,6 +1281,8 @@
       } catch (e) {}
     }
     gamePreviewEventId = null;
+    CFG.hello_boss = false;
+    syncBossMode();
     if (graceTimer) clearTimeout(graceTimer);
     A.obs.disconnect();
     if (stopChestAction) stopChestAction();
