@@ -70,7 +70,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 
 `pyproject.toml` 定义 `src/` 包布局与 GPL-3.0-only 许可。`python tools/build_release.py` 仅生成单文件 EXE 和只包含该 EXE 哈希的 SHA-256 校验文件，不额外打包源码；`python tools/smoke_release.py` 验证冻结入口、资源、终端窗口、隔离后台拉起和校验值。Release 只上传 EXE 与校验文件，对应源码使用 GitHub 版本标签自动提供的 ZIP / TAR.GZ。发布时保持标签源码与二进制一致，保留构建文件和第三方许可证；不得打入配置、统计、日志或个人路径。
 
-EXE 数据存放在 `%LOCALAPPDATA%\WuwaTappoPlus`，源码数据保留在仓库根目录。`WUWA_TAPPO_PLUS_DATA_DIR` 仅允许绝对路径，用于隔离测试与显式数据定位。资源从包内 `scripts/` 读取，运行命令通过 `win.command_args` 生成；冻结程序不能再启动 `pythonw.exe` 或源码脚本。不要把用户数据写入临时解包目录；启动独立后台和提权进程时设置 `PYINSTALLER_RESET_ENVIRONMENT=1`，确保前台退出后后台资源仍然可用；从冻结程序启动任何子进程前还要从 PATH 移除 `_MEI` 目录并清理 `_PYI*` 变量，否则长期运行的官方应用会锁定临时目录里的 DLL，退出时无法删除并弹出警告。这是首次公开发布，不引入历史入口、旧配置迁移和旧自启动名称的兼容代码。
+EXE 数据存放在 `%LOCALAPPDATA%\WuwaTappoPlus`，源码数据保留在仓库根目录。`WUWA_TAPPO_PLUS_DATA_DIR` 仅允许绝对路径，用于隔离测试与显式数据定位。资源从包内 `scripts/` 读取，运行命令通过 `win.command_args` 生成；冻结程序不能再启动 `pythonw.exe` 或源码脚本。不要把用户数据写入临时解包目录；启动独立后台和提权进程时设置 `PYINSTALLER_RESET_ENVIRONMENT=1`，确保前台退出后后台资源仍然可用；从冻结程序创建子进程（含 UAC、官方应用、独立后台和卸载清理进程）时，使用 `win._system_dll_search` 临时调用 `SetDllDirectoryW(NULL)`，创建后在 finally 恢复原目录，并串行化进程创建；同时从 PATH 移除解包目录并清理 `_PYI*` 变量。仅清理环境变量不能重置 Windows DLL 搜索路径；官方应用会因此加载并锁定 Plus 临时目录里的 VCRUNTIME，造成退出清理警告。系统工具和清理进程统一通过 `win.run_external/popen_external` 创建，不关闭 PyInstaller 清理警告来掩盖占用。这是首次公开发布，不引入历史入口、旧配置迁移和旧自启动名称的兼容代码。
 
 ### Agent 的发布职责
 

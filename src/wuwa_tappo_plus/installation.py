@@ -13,7 +13,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import __version__
+from . import __version__, win
 from .paths import frozen
 
 EXE_NAME = "WuwaTappoPlus.exe"
@@ -64,7 +64,7 @@ def deploy():
         staged = Path(temporary)
         try:
             shutil.copyfile(source, staged)
-            subprocess.run(["icacls", str(staged), "/setintegritylevel", "M"],
+            win.run_external(["icacls", str(staged), "/setintegritylevel", "M"],
                            check=True, capture_output=True)
             deadline = time.monotonic() + 8
             while True:
@@ -149,7 +149,7 @@ def remove_program():
         script = _cleanup_script(root, digest, receipt)
         encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
         shell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
-        subprocess.Popen([str(shell), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded],
+        win.popen_external([str(shell), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded],
                          creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
                          cwd=str(root.parent), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, close_fds=True)

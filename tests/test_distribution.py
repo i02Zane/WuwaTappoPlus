@@ -1,6 +1,7 @@
 """Frozen/source command lines, data isolation, and setup result transport."""
 
 import io
+import ctypes
 import json
 import os
 import subprocess
@@ -9,7 +10,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from wuwa_tappo_plus import __version__, cli, entry, paths, win
 from wuwa_tappo_plus.config import Config
@@ -113,6 +114,64 @@ class CommandTests(unittest.TestCase):
             self.assertEqual(win.command_args("ensure", background=True),
                              ["pythonw.exe", "-m", "wuwa_tappo_plus", "ensure"])
 
+
+
+class DllSearchTests(unittest.TestCase):
+    def test_real_child_does_not_inherit_parent_dll_directory(self):
+        api = ctypes.WinDLL("kernel32", use_last_error=True)
+        api.GetDllDirectoryW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p]
+        api.SetDllDirectoryW.argtypes = [ctypes.c_wchar_p]
+        def current():
+            buffer = ctypes.create_unicode_buffer(32768)
+            return buffer.value if api.GetDllDirectoryW(len(buffer), buffer) else None
+        child = (
+            "import ctypes; a=ctypes.WinDLL('kernel32');"
+            "a.GetDllDirectoryW.argtypes=[ctypes.c_uint,ctypes.c_wchar_p];"
+            "b=ctypes.create_unicode_buffer(32768);"
+            "a.GetDllDirectoryW(len(b),b);print(b.value)"
+        )
+        with tempfile.TemporaryDirectory() as directory, win._spawn_lock:
+            previous = current()
+            self.assertTrue(api.SetDllDirectoryW(directory))
+            try:
+                command = [sys.executable, "-c", child]
+                inherited = subprocess.run(command, capture_output=True, text=True, check=True)
+                self.assertEqual(inherited.stdout.strip(), directory)
+                with patch.object(win, "frozen", return_value=True):
+                    clean = win.run_external(command, capture_output=True, text=True, check=True)
+                    self.assertEqual(current(), directory)
+                    with self.assertRaises(OSError):
+                        win.popen_external([str(Path(directory) / "missing.exe")])
+                    self.assertEqual(current(), directory)
+                self.assertEqual(clean.stdout.strip(), "")
+            finally:
+                api.SetDllDirectoryW(previous)
+
+    def test_launch_and_uac_see_system_search_and_restore_afterwards(self):
+        # Isolate API calls: neither launch a real app nor show a UAC prompt.
+        directory = {"value": r"C:\Temp\_MEI-original"}
+        def get_directory(size, buffer):
+            buffer.value = directory["value"] or ""
+            return len(buffer.value)
+        def set_directory(value):
+            directory["value"] = value
+            return True
+        api = Mock()
+        api.GetDllDirectoryW.side_effect = get_directory
+        api.SetDllDirectoryW.side_effect = set_directory
+        observations = []
+        def created(*args, **kwargs):
+            observations.append(directory["value"])
+            return 42
+        with patch.object(win, "frozen", return_value=True), \
+                patch.object(win.ctypes, "WinDLL", return_value=api), \
+                patch.object(win.subprocess, "Popen", side_effect=created), \
+                patch.object(win.ctypes.windll.shell32, "ShellExecuteW", side_effect=created):
+            win.launch_app(r"C:\App\WuwaTappo.exe")
+            win.launch_detached([r"C:\App\WuwaTappoPlus.exe", "run"])
+            self.assertTrue(win.relaunch_elevated(["install", "--elevated"]))
+        self.assertEqual(observations, [None, None, None])
+        self.assertEqual(directory["value"], r"C:\Temp\_MEI-original")
 
 
 class EntryTests(unittest.TestCase):

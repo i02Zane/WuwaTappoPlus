@@ -9,6 +9,8 @@ import ctypes
 import os
 import subprocess
 import sys
+import threading
+from contextlib import contextmanager
 from ctypes import wintypes
 from pathlib import Path
 
@@ -76,9 +78,10 @@ def relaunch_elevated(argv):
         if "PATH" in environment:
             os.environ["PATH"] = environment["PATH"]
     try:
-        rc = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", command[0], params, str(APP_DIR), 1
-        )
+        with _system_dll_search():
+            rc = ctypes.windll.shell32.ShellExecuteW(
+                None, "runas", command[0], params, str(APP_DIR), 1
+            )
         return int(rc) > 32
     except Exception:
         return False
@@ -547,7 +550,7 @@ def watchdog_command():
 
 def _schtasks(*args, timeout=25.0):
     try:
-        return subprocess.run(
+        return run_external(
             ["schtasks"] + [str(a) for a in args],
             capture_output=True,
             timeout=timeout,
@@ -559,7 +562,7 @@ def _schtasks(*args, timeout=25.0):
 
 def _powershell(script, timeout=45.0):
     try:
-        return subprocess.run(
+        return run_external(
             [
                 "powershell", "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-Command", script,
@@ -671,12 +674,60 @@ def read_watchdog():
 # ---------------------------------------------------------------- processes
 
 
+_spawn_lock = threading.RLock()
+
+
+@contextmanager
+def _system_dll_search():
+    """Do not let a child inherit the bootloader's SetDllDirectory(_MEIPASS).
+
+    This is process state, independent of PATH/env. Restore the exact previous
+    directory after CreateProcess/ShellExecute, including when launching fails.
+    Serialize launches because changing this directory affects the whole process.
+    """
+    if not frozen():
+        yield
+        return
+    with _spawn_lock:
+        api = ctypes.WinDLL("kernel32", use_last_error=True)
+        api.GetDllDirectoryW.argtypes = [wintypes.DWORD, wintypes.LPWSTR]
+        api.GetDllDirectoryW.restype = wintypes.DWORD
+        api.SetDllDirectoryW.argtypes = [wintypes.LPCWSTR]
+        api.SetDllDirectoryW.restype = wintypes.BOOL
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = api.GetDllDirectoryW(len(buffer), buffer)
+        if length >= len(buffer):
+            raise OSError("DLL search directory is too long")
+        previous = buffer.value if length else None
+        if not api.SetDllDirectoryW(None):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            yield
+        finally:
+            if not api.SetDllDirectoryW(previous):
+                raise ctypes.WinError(ctypes.get_last_error())
+
+
+def popen_external(*args, **kwargs):
+    """Create an independent process with system DLL lookup and a clean env."""
+    kwargs.setdefault("env", _child_environment())
+    with _system_dll_search():
+        return subprocess.Popen(*args, **kwargs)
+
+
+def run_external(*args, **kwargs):
+    """Run a system utility without inheriting bundled DLL locations."""
+    kwargs.setdefault("env", _child_environment())
+    with _system_dll_search():
+        return subprocess.run(*args, **kwargs)
+
+
 def _child_environment(reset=False):
     """Environment for child processes that must not keep this onefile alive.
 
-    PyInstaller prepends its extraction directory to PATH. A long-running child
-    (the official app) then loads VCRUNTIME from there, and the onefile
-    bootloader can no longer remove the temporary directory on exit.
+    Remove extraction paths added by runtime hooks as well as private
+    bootloader variables. The DLL search directory itself is sanitized by
+    _system_dll_search(); environment cleanup alone cannot reset it.
     """
     environment = dict(os.environ)
     extraction = getattr(sys, "_MEIPASS", None)
@@ -702,7 +753,7 @@ def launch_app(exe_path):
     DETACHED_PROCESS = 0x00000008
     CREATE_NEW_PROCESS_GROUP = 0x00000200
     flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-    return subprocess.Popen(
+    return popen_external(
         [str(exe_path)],
         creationflags=flags,
         close_fds=True,
@@ -764,7 +815,7 @@ def launch_detached(argv):
     CREATE_NEW_PROCESS_GROUP = 0x00000200
     CREATE_NO_WINDOW = 0x08000000
     environment = _child_environment(reset=frozen())
-    return subprocess.Popen(
+    return popen_external(
         [str(a) for a in argv],
         creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
         close_fds=True,
@@ -778,7 +829,7 @@ def launch_detached(argv):
 
 def kill_pid(pid, timeout=5.0):
     try:
-        result = subprocess.run(
+        result = run_external(
             ["taskkill", "/PID", str(pid), "/T", "/F"],
             capture_output=True,
             creationflags=0x08000000,
