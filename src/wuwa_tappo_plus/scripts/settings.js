@@ -78,8 +78,8 @@
     node.dataset.soon = soon ? 'true' : 'false';
     var renew = document.getElementById('wut-token-renew');
     if (renew) {
-      renew.hidden = !soon;
-      renew.style.display = soon ? '' : 'none';
+      renew.hidden = false;
+      renew.style.display = '';
     }
   }
 
@@ -530,8 +530,6 @@
       renewButton.type = 'button';
       renewButton.className = 'setting-btn';
       renewButton.textContent = '手动续期';
-      renewButton.hidden = true;
-      renewButton.style.display = 'none';
       var extractButton = document.createElement('button');
       extractButton.id = 'wut-token-extract';
       extractButton.type = 'button';

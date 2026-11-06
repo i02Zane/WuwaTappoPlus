@@ -239,8 +239,8 @@ test('token row shows expiry and uses the official toast for extract/renew', asy
   const loginRow = nodes.get('wut-token-login-row');
   assert.match(expiry.textContent, /当前Token有效期：剩余3天/);
   assert.equal(expiry.dataset.soon, 'false');
-  assert.equal(renew.hidden, true);
-  assert.equal(renew.style.display, 'none');
+  assert.equal(renew.hidden, false);
+  assert.equal(renew.style.display, '');
   // No app store in this fixture means the state is unknown, so the recovery
   // row stays available rather than disappearing for a logged-out client.
   assert.equal(loginRow.hidden, false);
