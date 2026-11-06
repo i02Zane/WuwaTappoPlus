@@ -8,7 +8,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 - `src/wuwa_tappo_plus/runner.py`：守护进程生命周期、心跳与状态发布。
 - `src/wuwa_tappo_plus/cdp.py`、`src/wuwa_tappo_plus/ws.py`：WebView2 CDP 通信与 WebSocket 传输。
 - `src/wuwa_tappo_plus/win.py`：Windows 注册表策略、进程、自启动与计划任务。
-- `src/wuwa_tappo_plus/scripts/inject.js`：页面检查、按钮点击与提醒气泡；同时读取应用持久化的 `wuwatappo-settings.gameMode` ，在游戏模式期间给 `.pet-dock` 和每个 `.room-cat-shell` 分别加内联透明度，退出后移除并恢复应用自己的 `--window-opacity`；不设置 `.room-cats-shell` 父容器，避免与子元素透明度相乘。「王总好」开启时按横向位置镜像用户左侧的 `.cat-friend`，不镜像昵称和表情气泡。
+- `src/wuwa_tappo_plus/scripts/inject.js`：页面检查、按钮点击与提醒气泡；同时读取应用持久化的 `wuwatappo-settings.gameMode` ，在游戏模式期间给 `.pet-dock` 和每个 `.room-cat-shell` 分别加内联透明度，退出后移除并恢复应用自己的 `--window-opacity`；不设置 `.room-cats-shell` 父容器，避免与子元素透明度相乘。「王总好模式」开启时按横向位置镜像用户左侧的 `.cat-friend`，不镜像昵称和表情气泡。
 - `src/wuwa_tappo_plus/fullscreen.py`：用前台窗口客户区判断窗口化/无边框全屏（2px 容差），排除桌宠、桌面/任务栏和输入体验进程。返回 `True/False/None`，`None` 表示读取失败，不代表退出全屏。
 - `src/wuwa_tappo_plus/game_mode.py`、`scripts/game_mode.js`：后台管理全屏接管、两秒防抖、原生状态确认和恢复。通过原生 `loadDesktopCatSettings/persistDesktopCatSettings/emitSettingsGameMode` 操作明确布尔值，不发送 toggle 事件；原生入口模块从页面动态发现，API 不匹配时保留恢复信息并停止操作。
 - `src/wuwa_tappo_plus/config.py`：默认配置与 TOML 加载；`config.toml`：本地配置。
@@ -36,7 +36,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 
 对外命令仅保留 `install`、`uninstall`、`status`、`doctor`、`logs`；`run`、`ensure`、`menu` 为内部入口。EXE 双击打开终端安装管理，安装／卸载才提权；日常功能开关放在桌宠设置中。不要添加语义重复的 `start`、`stop`、`restart` 命令。重复安装应修复后台与策略，卸载不能因进程未运行而跳过清理。安装会从配置端口开始尝试最多 5 个连续端口，先停桌宠再检查，成功后把端口写回 `config.toml`；本工具自己的旧调试策略允许更新，其他策略值仍拒绝覆盖。`uninstall` 保留数据；`uninstall --purge` 经确认后完整卸载，`--yes` 用于自动化。仅在卸载成功且后台已退出后删除已知 Plus 数据文件，保留源码、EXE 和其他文件；完整卸载成功后退出面板，避免重新生成配置。
 
-设置页仅允许修改自动开箱、余额提醒、气泡显示、气泡动画、屏幕记忆、王总好、自动发表情、小黑屋模式和全屏进入游戏模式·Plus九个布尔值，以及游戏模式透明度（0-100 的整数）和自动发表情频率（1-20 的整数，步进 1）；两项数值都用滑动条；由后台原子保存到配置，保存成功后才确认。屏幕记忆关闭时既不记录也不移动。暂停点击不停止后台，界面关闭或重建后必须能重新挂载。游戏模式透明度默认 30：注入脚本每秒读取应用持久化的 `gameMode`，进入时给 `.pet-dock` 和每个 `.room-cat-shell` 分别加内联透明度，退出时恢复各自原值；不能设置 `.room-cats-shell` 父容器，否则会与子元素已有的官方透明度相乘；不修改应用的 `windowOpacity` 或 `--window-opacity`，所以恢复的是应用当前的透明度。全屏进入游戏模式·Plus 默认开启：后台先在原生页面 localStorage 的 `wut-plus-game-mode-owner` 保存原官方自动开关、Plus 开启标记、待确认操作和手动退出状态，再关闭并确认官方自动逻辑；不依赖设置页。进入或退出全屏须连续稳定两秒，读取失败打断防抖但不改变模式。使用原生持久化函数和 `cat-settings-game-mode` 的明确 enabled 值，确认事件成功及存储状态后完成操作，每三秒最多重试一次、每轮最多三次。用户手动退出后，本次全屏期间不再自动进入；用户原本手动开启的模式不归 Plus 管理。后台重启复用恢复记录；关闭功能、后台正常退出时只退出 Plus 开启的模式并恢复官方自动开关；原生页面正常关闭时同步恢复存储，异常强制结束后的恢复依赖下次连接。设置页只反映官方当前值，不点击官方开关：官方设置组件挂载后才读回已保存的值，挂载前点击会用组件默认值覆盖任务栏图标、透明度、桌宠大小和开机自启等选项。透明度只跟随官方 `gameMode`，不使用独立全屏标记。设置页提供 Token 行（位于诊断日志上方）：显示 `kuro_lastLoginTime` 有效期；「手动续期」始终显示，临时把 `kuro_lastLoginTime` 设到 1 分钟后，调用应用导出的 `renewTokenIfNeeded` 强制续期，失败恢复原值并用官方 `showToast` 提示；「提取Token」直接复制 `kuro_infoToken` 到剪贴板并用官方 `showToast` 提示不要外泄；另提供 Token 登录行（仅在未登录时显示）：粘贴手机端或其他设备的 Token，调用应用导出的 `applyAuthTokens` 写入 `kuro_infoToken`/`kuro_lastLoginTime`（7 天），随后重载页面恢复登录；不写日志、不落盘、不发给后台。
+设置页仅允许修改自动开箱、余额提醒、气泡显示、气泡动画、屏幕记忆、王总好模式、自动发表情、小黑屋模式和全屏进入游戏模式·Plus九个布尔值，以及游戏模式透明度（0-100 的整数）和自动发表情频率（1-20 的整数，步进 1）；两项数值都用滑动条；由后台原子保存到配置，保存成功后才确认。屏幕记忆关闭时既不记录也不移动。暂停点击不停止后台，界面关闭或重建后必须能重新挂载。游戏模式透明度默认 30：注入脚本每秒读取应用持久化的 `gameMode`，进入时给 `.pet-dock` 和每个 `.room-cat-shell` 分别加内联透明度，退出时恢复各自原值；不能设置 `.room-cats-shell` 父容器，否则会与子元素已有的官方透明度相乘；不修改应用的 `windowOpacity` 或 `--window-opacity`，所以恢复的是应用当前的透明度。全屏进入游戏模式·Plus 默认开启：后台先在原生页面 localStorage 的 `wut-plus-game-mode-owner` 保存原官方自动开关、Plus 开启标记、待确认操作和手动退出状态，再关闭并确认官方自动逻辑；不依赖设置页。进入或退出全屏须连续稳定两秒，读取失败打断防抖但不改变模式。使用原生持久化函数和 `cat-settings-game-mode` 的明确 enabled 值，确认事件成功及存储状态后完成操作，每三秒最多重试一次、每轮最多三次。用户手动退出后，本次全屏期间不再自动进入；用户原本手动开启的模式不归 Plus 管理。后台重启复用恢复记录；关闭功能、后台正常退出时只退出 Plus 开启的模式并恢复官方自动开关；原生页面正常关闭时同步恢复存储，异常强制结束后的恢复依赖下次连接。设置页只反映官方当前值，不点击官方开关：官方设置组件挂载后才读回已保存的值，挂载前点击会用组件默认值覆盖任务栏图标、透明度、桌宠大小和开机自启等选项。透明度只跟随官方 `gameMode`，不使用独立全屏标记。设置页提供 Token 行（位于诊断日志上方）：显示 `kuro_lastLoginTime` 有效期；「手动续期」始终显示，临时把 `kuro_lastLoginTime` 设到 1 分钟后，调用应用导出的 `renewTokenIfNeeded` 强制续期，失败恢复原值并用官方 `showToast` 提示；「提取Token」直接复制 `kuro_infoToken` 到剪贴板并用官方 `showToast` 提示不要外泄；另提供 Token 登录行（仅在未登录时显示）：粘贴手机端或其他设备的 Token，调用应用导出的 `applyAuthTokens` 写入 `kuro_infoToken`/`kuro_lastLoginTime`（7 天），随后重载页面恢复登录；不写日志、不落盘、不发给后台。
 
 官方 1.0.2 开箱后使用组件内部计时，`userInfo.left_treasure_chest/right_treasure_chest` 可能保持旧值。宝箱状态以左右 `.reward-anchor--left/right` 内的原生按钮及 `.reward-countdown__text` 为准；隐藏的倒计时优先使用本账户已确认开箱的本地缓存；无有效缓存时标记为未知，不用旧字段或余额变化推算。缓存只供提醒，不能作为点击授权。必须按目标槽选择按钮，保留各槽独立的重试预算；脚本卸载后的旧验证回调不得继续报错。CLI 与后台共用主注入的快照。
 
@@ -102,7 +102,7 @@ EXE 数据存放在 `%LOCALAPPDATA%\WuwaTappoPlus`，源码数据保留在仓库
 
 小黑屋模式开启时常驻显示“库爹我错了，我再也不刷点击数了T T”，独立于余额提醒开关与余额阈值，但受气泡显示总开关控制，优先于临时提醒；关闭模式后恢复正常气泡，卸载时移除。文字气泡只在本地绘制，原生联机敲击动作同步保留。
 
-设置顺序：自动开箱、自动发表情、自动发表情频率、全屏进入游戏模式·Plus、游戏模式透明度、余额提醒、气泡显示、气泡动画、屏幕记忆、王总好、小黑屋模式。气泡显示控制全部 Plus 气泡；余额提醒只控制低余额提醒（含日志），关闭时重置日志层级基线，不伪报余额恢复。
+设置顺序：自动开箱、自动发表情、自动发表情频率、全屏进入游戏模式·Plus、游戏模式透明度、余额提醒、气泡显示、气泡动画、屏幕记忆、王总好模式、小黑屋模式。气泡显示控制全部 Plus 气泡；余额提醒只控制低余额提醒（含日志），关闭时重置日志层级基线，不伪报余额恢复。
 
 日志导出作为独立操作放在桌宠 Plus 设置中，不添加 EXE 菜单或 CLI 入口。后台仅接受 export_logs 动作，将 ZIP 写入系统桌面；不接受页面指定路径，不导出原始配置、凭据和数据库。日志默认每文件 1 MiB、3 份备份，写入前轮转，单条最多 16 KiB；导出读取历史文件也必须限量，失败删除不完整 ZIP，重复请求不得重复生成。
 
@@ -116,6 +116,6 @@ Windows 构建前检查内置 runtime/python.exe 不带 Low 完整性标签；�
 
 房间内「显示他人桌宠」「隐藏他人桌宠」两个独立按钮仅挂载于 .room-module .room-info，使用原生 common-btn 并放在离开房间旁；通过当前 .room-visible-btn 的真实点击批量切换，排除自身和离线成员，不改桌宠 CSS 或构造通信请求。显示按钮只显示当前隐藏者，隐藏按钮只隐藏当前可见者；无对应操作时禁用，等待原生状态更新期间禁止重复操作；离房、页面重建和卸载需移除按钮，空房禁用。
 
-「王总好」默认关闭：只读取页面内每个 `.room-cat-shell` 的横向位置，给用户桌宠左侧的 `.cat-friend` 加内联 `scale: -1 1` 使其面向用户；昵称和表情气泡是兄弟节点，不参与镜像；镜像时把 `.cat-friend` 的 `z-index` 提到 ID 条之上，避免被底部 ID 条遮挡；桌宠移动、换房、关闭模式或卸载时恢复原 `scale` 和 `z-index`；开启且房间内有桌宠时每 50ms 复查横向位置，无桌宠或关闭后停止定时器。不修改其他玩家页面或网络数据。
+「王总好模式」默认关闭：只读取页面内每个 `.room-cat-shell` 的横向位置，给用户桌宠左侧的 `.cat-friend` 加内联 `scale: -1 1` 使其面向用户；昵称和表情气泡是兄弟节点，不参与镜像；镜像时把 `.cat-friend` 的 `z-index` 提到 ID 条之上，避免被底部 ID 条遮挡；桌宠移动、换房、关闭模式或卸载时恢复原 `scale` 和 `z-index`；开启且房间内有桌宠时每 50ms 复查横向位置，无桌宠或关闭后停止定时器。不修改其他玩家页面或网络数据。
 
 EXE 安装到 %LOCALAPPDATA%\Programs\WuwaTappoPlus，数据目录独立。installation.py 只管理固定 EXE 和 install.json，拒绝链接路径；临时文件原子替换、失败保留旧 EXE。安装后自启动、看门狗及后台工作目录均指向安装目录，UAC 保留原用户程序目录。两种卸载都删除程序文件，源码和下载包不删除；运行中 EXE 用隐藏 PowerShell 清理进程退出后删除，按安装代次和 SHA-256 防止误删重新安装的新程序，禁止递归删除目录。两种卸载成功后退出菜单，完整卸载还清理已知数据。
