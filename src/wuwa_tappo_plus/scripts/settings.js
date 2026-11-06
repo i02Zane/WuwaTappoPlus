@@ -6,6 +6,7 @@
   var S = window.__WUT_SETTINGS__ = {
     version: VERSION, requests: [], beat: 0, report: null,
     exportPath: null, exportError: false, accessories: {},
+    _test: { emitLoginSuccess: emitLoginSuccess },
     preferences: { auto_open: true, balance_reminder: true, bubble: true, animation: true,
                    remember_screen: true, auto_emote: false, pause_clicks: false,
                    game_mode_plus: true, game_mode_opacity: 30, auto_emote_rate: 20 }
@@ -186,12 +187,26 @@
     });
   }
 
+  // The official SDK login broadcasts this event so the pet window hydrates the
+  // new session, reconnects the socket and restores its room. Token login must
+  // do the same; reloading only the settings window leaves the pet logged out.
+  function emitLoginSuccess() {
+    try {
+      if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
+        return Promise.resolve(window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {
+          event: 'cat-auth-login-success', payload: {}
+        })).catch(function () {});
+      }
+    } catch (e) {}
+    return Promise.resolve();
+  }
+
   function loginWithToken(token) {
     if (!token) {
       showAppToast('请先粘贴 Token。');
       return Promise.resolve(false);
     }
-    return applyAuthToken(token).then(function () {
+    return applyAuthToken(token).then(emitLoginSuccess).then(function () {
       showAppToast('Token 已写入，正在重新登录…', 1500);
       setTimeout(function () { location.reload(); }, 400);
       return true;

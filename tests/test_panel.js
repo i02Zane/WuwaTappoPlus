@@ -196,6 +196,24 @@ test('panel never clicks official game switches and cannot overwrite stored sett
 });
 
 
+test('token login notifies the pet window to hydrate the new session', async () => {
+  const f = fixture();
+  const calls = [];
+  f.context.window.__TAURI_INTERNALS__ = {
+    invoke: (command, args) => {
+      calls.push({ command, args });
+      return Promise.resolve();
+    }
+  };
+  await f.settings._test.emitLoginSuccess();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, 'plugin:event|emit');
+  assert.equal(calls[0].args.event, 'cat-auth-login-success');
+  // Login must emit the official success event before reloading the panel.
+  assert.match(loadScript('settings.js'), /applyAuthToken\(token\)\.then\(emitLoginSuccess\)/);
+});
+
+
 test('token row shows expiry and uses the official toast for extract/renew', async () => {
   const f = fixture();
   const nodes = new Map();
