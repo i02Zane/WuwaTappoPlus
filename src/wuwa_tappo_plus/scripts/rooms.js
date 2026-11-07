@@ -4,6 +4,13 @@
   if (window.__WUT_ROOMS__) window.__WUT_ROOMS__.uninstall();
 
   var HOST = 'wut-rooms';
+  var PLAZA_CONTROLS = 'wut-plaza-controls';
+  var activeTab = 'recent';
+  var plaza = { items: [], logged: null, owner: false, published: false };
+  var plazaPainted = '';
+  var plazaNote = '';
+  var confirming = false;
+  var confirmation = null;
   var STYLE = 'wut-rooms-style';
   var VISIBILITY = 'wut-room-visibility';
   var visibilityUntil = 0;
@@ -90,11 +97,61 @@
 
     '#wut-rooms .wut-rooms-empty{font-size:14px;line-height:24px;color:#8e7b6a;',
     'opacity:.8;padding:0 2px;}',
-    '#wut-room-visibility{position:absolute;bottom:0;display:flex;gap:10px;white-space:nowrap;}'
+    '#wut-room-visibility{display:flex;flex-shrink:0;align-items:center;height:36px;box-sizing:border-box;margin:28px 0 0;padding:0 26px;border-radius:5px;background:#fbedd5;color:#8e5e43;}'
+    + '#wut-room-visibility .wut-members-title{flex:0 0 240px;font-size:18px;font-weight:400;}'
+    + '#wut-room-visibility+.room-members{margin-top:10px;}'
+    + '#wut-room-visibility .wut-room-eye{flex:0 0 36px;width:36px;height:36px;border:0;padding:0;cursor:pointer;background-color:transparent;background-position:center;background-repeat:no-repeat;background-size:24px auto;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;}'
+    + '#wut-room-visibility .wut-room-eye:hover:not(:disabled){background-color:rgba(185,123,81,.1);}'
+    + '#wut-room-visibility .wut-room-eye svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}'
+    + '#wut-room-visibility .wut-room-eye:disabled{opacity:.4;cursor:default;}'
+    + '#wut-room-visibility .wut-room-eye:focus-visible{outline:2px solid #b97b51;outline-offset:2px;border-radius:6px;}'
   ].join('');
 
   // The panel shows "房间号： 32RH4VrDT" next to a copy button; only the token
   // matters. Anything that is not a short alphanumeric id is not a room.
+  var PLAZA_CSS = '#wut-rooms [hidden]{display:none!important;}'
+    + '#wut-rooms .wut-rooms-tabs{display:flex;gap:8px;margin-bottom:12px;position:relative;}'
+    + '#wut-rooms .wut-rooms-tab{font:inherit;font-size:14px;color:#8e5e43;background:#fed291;'
+    + 'border:1px solid #e7b77c;border-radius:20px;padding:3px 14px;cursor:pointer;white-space:nowrap;}'
+    + '#wut-rooms .wut-rooms-tab[aria-selected="false"]{background:transparent;}'
+    + '#wut-rooms .wut-rooms-tab:disabled{opacity:.45;cursor:default;}'
+    + '.room-module .panel-content.wut-room-browser{display:flex;flex-direction:column;overflow:hidden;min-height:0;}'
+    // The native create-room button is inline-block; as a flex item it would
+    // stretch to the panel width. Keep it content-sized.
+    + '.room-module .panel-content.wut-room-browser>.create-room-btn{align-self:flex-start;}'
+    + '.wut-room-browser> :not(#wut-rooms){flex-shrink:0;}'
+    + '.wut-room-browser>#wut-rooms{display:flex;flex-direction:column;flex:1;min-height:0;}'
+    + '#wut-rooms .wut-rooms-tabs,#wut-rooms .wut-rooms-head{flex-shrink:0;}'
+    + '#wut-rooms .wut-rooms-list{min-height:0;overflow-y:auto;}'
+    + '#wut-rooms .wut-plaza-view{display:flex;flex-direction:column;flex:1;min-height:0;}'
+    + '#wut-rooms .wut-plaza-list{flex:1;min-height:0;overflow-y:auto;list-style:none;padding:0;margin:10px 0;}'
+    + '#wut-rooms .wut-plaza-row{padding-right:24px;}'
+    + '#wut-rooms .wut-plaza-help{display:inline-flex;align-items:center;justify-content:center;'
+    + 'width:15px;height:15px;margin-left:5px;border:1px solid currentColor;border-radius:50%;'
+    + 'font-size:11px;line-height:1;cursor:help;opacity:.8;}'
+    + '#wut-rooms .wut-plaza-tooltip{position:absolute;top:calc(100% + 6px);left:0;z-index:20;'
+    + 'max-width:300px;padding:8px 10px;border:1px solid #e7b77c;border-radius:10px;'
+    + 'background:#fff3dd;color:#8e5e43;font-size:12px;line-height:1.6;'
+    + 'box-shadow:0 6px 18px rgba(70,40,20,.18);}'
+    + '#wut-rooms .wut-plaza-note{flex-shrink:0;font-size:13px;color:#8e7b6a;}'
+    + '#wut-rooms .wut-plaza-pages{display:flex;flex-shrink:0;gap:10px;align-items:center;'
+    + 'margin-top:auto;padding:12px 0 0;font-size:13px;}'
+    + '#wut-rooms [data-plaza="random"]{margin-left:auto;}'
+    + '#wut-plaza-controls{position:relative;display:inline-flex;flex-direction:column;align-items:flex-start;max-width:100%;gap:6px;margin:10px 10px 0 0;vertical-align:top;}'
+    + '.room-info>#wut-plaza-controls{position:absolute;bottom:0;margin:0;}'
+    + '.room-info>#wut-plaza-controls .wut-plaza-action-status{position:absolute;top:calc(100% + 7px);right:0;width:300px;}'
+    + '#wut-plaza-controls .common-btn{white-space:nowrap;}'
+    + '#wut-plaza-controls .wut-plaza-action-status{display:block;max-width:300px;'
+    + 'font-size:13px;color:#b4543c;overflow-wrap:anywhere;}'
+    + '#wut-plaza-controls .wut-plaza-action-status:empty{display:none;}'
+    + '#wut-plaza-confirm{max-width:480px;width:calc(100% - 64px);box-sizing:border-box;'
+    + 'padding:26px;border:2px solid #e7b77c;border-radius:18px;background:#fff3dd;color:#8e5e43;'
+    + 'font:inherit;box-shadow:0 12px 40px rgba(70,40,20,.2);}'
+    + '#wut-plaza-confirm::backdrop{background:rgba(60,35,20,.35);}'
+    + '#wut-plaza-confirm p{font-size:18px;line-height:1.6;margin:0 0 24px;}'
+    + '#wut-plaza-confirm .wut-confirm-buttons{display:flex;justify-content:flex-end;gap:12px;}'
+    + '#wut-plaza-confirm .common-btn{min-width:90px;}';
+
   function parseRoomNumber(text) {
     var flat = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
     var labelled = flat.match(/房间号\s*[:：]?\s*([0-9A-Za-z]{4,16})/);
@@ -244,7 +301,7 @@
     if (!document.getElementById(STYLE)) {
       var style = document.createElement('style');
       style.id = STYLE;
-      style.textContent = CSS;
+      style.textContent = CSS + PLAZA_CSS;
       (document.head || document.documentElement).appendChild(style);
     }
   }
@@ -253,11 +310,57 @@
     ensureStyle();
     var host = document.createElement('div');
     host.id = HOST;
-    host.innerHTML = '<div class="wut-rooms-head">'
+    host.innerHTML = '<div class="wut-rooms-tabs" role="tablist" aria-label="房间列表">'
+      + '<button type="button" class="wut-rooms-tab" role="tab" data-tab="recent">最近房间</button>'
+      + '<button type="button" class="wut-rooms-tab" role="tab" data-tab="plaza">联机广场（测试）'
+      + '<span class="wut-plaza-help" aria-hidden="true">?</span></button>'
+      + '<div class="wut-plaza-tooltip" role="tooltip" hidden>'
+      + '实验性功能，随时可能调整或关闭<br>'
+      + '主动发布时会把房间码上传到广场服务器<br>'
+      + '房间由玩家主动公开，是否可加入由原生软件判断。'
+      + '</div></div>'
+      + '<div class="wut-rooms-head">'
       + '<strong class="wut-rooms-title">最近房间</strong>'
       + '<span class="wut-rooms-note" role="status"></span></div>'
-      + '<ul class="wut-rooms-list"></ul>';
+      + '<ul class="wut-rooms-list" role="tabpanel"></ul>'
+      + '<div class="wut-plaza-view" role="tabpanel" hidden>'
+      + '<div class="wut-plaza-note" role="status"></div>'
+      + '<ul class="wut-plaza-list"></ul><div class="wut-plaza-pages">'
+      + '<button type="button" class="wut-rooms-tab" data-plaza="previous">上一页</button>'
+      + '<span class="wut-plaza-page"></span><button type="button" class="wut-rooms-tab" data-plaza="next">下一页</button>'
+      + '<button type="button" class="wut-rooms-tab" data-plaza="refresh">刷新</button>'
+      + '<button type="button" class="wut-rooms-tab" data-plaza="random">随机进入</button>'
+      + '<button type="button" class="wut-rooms-tab" data-plaza="reset" hidden>重建广场身份</button></div></div>';
+    var help = host.querySelector('.wut-plaza-help');
+    var tooltip = host.querySelector('.wut-plaza-tooltip');
+    if (help && tooltip) {
+      var showTip = function () { tooltip.hidden = false; };
+      var hideTip = function () { tooltip.hidden = true; };
+      help.addEventListener('mouseenter', showTip);
+      help.addEventListener('mouseleave', hideTip);
+      // Keep the icon from switching tabs when clicked; it only explains them.
+      help.addEventListener('click', function (event) {
+        event.preventDefault(); event.stopPropagation(); showTip();
+      });
+    }
     host.addEventListener('click', function (event) {
+      var tab = event.target.closest('[data-tab]');
+      var action = event.target.closest('[data-plaza]');
+      if (tab || action) {
+        event.preventDefault(); event.stopPropagation();
+        if (tab) {
+          activeTab = tab.dataset.tab === 'plaza' ? 'plaza' : 'recent';
+          if (activeTab === 'plaza') plazaRequest('list', 0);
+        } else if (action.dataset.plaza === 'reset') {
+          plazaRequest('reset', 0);
+        } else if (action.dataset.plaza === 'random') {
+          randomJoin();
+        } else {
+          var page = plaza.page || 0;
+          plazaRequest('list', action.dataset.plaza === 'next' ? page + 1 : action.dataset.plaza === 'previous' ? page - 1 : page, action.dataset.plaza === 'refresh');
+        }
+        renderPlaza(); return;
+      }
       var forget = event.target.closest('.wut-room-forget');
       var star = event.target.closest('.wut-room-pin');
       var row = event.target.closest('.wut-room');
@@ -275,7 +378,8 @@
         render();
         return;
       }
-      join(row.dataset.room);
+      if (row.dataset.source === 'plaza') enterPlaza(row.dataset.room);
+      else join(row.dataset.room);
     });
     host.addEventListener('keydown', function (event) {
       if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -284,7 +388,8 @@
       if (!row || event.target.closest('.wut-room-forget')
           || event.target.closest('.wut-room-pin')) return;
       event.preventDefault();
-      join(row.dataset.room);
+      if (row.dataset.source === 'plaza') enterPlaza(row.dataset.room);
+      else join(row.dataset.room);
     });
     return host;
   }
@@ -306,11 +411,25 @@
     });
   }
 
+  function nativeVisibilityIcons() {
+    var icons = {};
+    Array.from(document.styleSheets || []).forEach(function (sheet) {
+      try {
+        Array.from(sheet.cssRules || []).forEach(function (rule) {
+          var selector = rule.selectorText || '';
+          if (selector.indexOf('.room-visible-btn') < 0 || selector.indexOf(':') >= 0 || !rule.style || !rule.style.backgroundImage) return;
+          icons[selector.indexOf('.room-invisible') >= 0 ? 'hide' : 'show'] = rule.style.backgroundImage;
+        });
+      } catch (e) { /* A changed/cross-origin stylesheet uses the inline fallback. */ }
+    });
+    return icons;
+  }
+
   function mountVisibility(container) {
     var leave = container.querySelector('.leave-room-btn');
-    var info = container.querySelector('.room-info');
+    var members = container.querySelector('.room-members');
     var control = document.getElementById(VISIBILITY);
-    if (!inRoom() || !leave || !info) {
+    if (!inRoom() || !leave || !members || !members.parentNode) {
       if (control) control.remove();
       visibilityUntil = 0;
       return;
@@ -318,10 +437,16 @@
     ensureStyle();
     if (!control) {
       control = document.createElement('div'); control.id = VISIBILITY;
+      var title = document.createElement('span'); title.className = 'wut-members-title'; title.textContent = '房间成员'; control.appendChild(title);
+      var icons = nativeVisibilityIcons();
       [[true, '显示他人桌宠', 'show'], [false, '隐藏他人桌宠', 'hide']].forEach(function (definition) {
         var button = document.createElement('button');
-        button.id = VISIBILITY + '-' + definition[2]; button.type = 'button'; button.className = 'common-btn';
-        button.textContent = definition[1];
+        button.id = VISIBILITY + '-' + definition[2]; button.type = 'button';
+        button.className = 'room-visible-btn wut-room-eye' + (definition[0] ? '' : ' room-invisible');
+        button.title = definition[1]; button.setAttribute('aria-label', definition[1]);
+        if (icons[definition[2]]) button.style.backgroundImage = icons[definition[2]];
+        else button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>'
+          + (definition[0] ? '' : '<path d="m3 3 18 18"/>') + '</svg>';
         button.addEventListener('click', function (event) {
           event.preventDefault(); event.stopPropagation();
           if (visibilityUntil > Date.now() || !inRoom()) return;
@@ -341,7 +466,9 @@
         });
         control.appendChild(button);
       });
-      info.insertBefore(control, leave);
+      members.parentNode.insertBefore(control, members);
+    } else if (control.parentNode !== members.parentNode || control.nextElementSibling !== members) {
+      members.parentNode.insertBefore(control, members);
     }
     var buttons = memberButtons(container);
     var visible = buttons.filter(function (button) { return !button.classList.contains('room-invisible'); }).length;
@@ -350,7 +477,6 @@
     var disabled = pending || !buttons.length || leave.disabled;
     control.querySelector('#' + VISIBILITY + '-show').disabled = disabled || visible === buttons.length;
     control.querySelector('#' + VISIBILITY + '-hide').disabled = disabled || visible === 0;
-    control.style.right = ((leave.offsetWidth || 0) + 10) + 'px';
     control.setAttribute('aria-busy', pending ? 'true' : 'false');
     control.title = buttons.length ? '仅切换当前在线的其他桌宠，不影响自己的桌宠' : '当前没有可切换的其他桌宠';
   }
@@ -359,6 +485,9 @@
     var container = document.querySelector('.room-module .panel-content');
     if (!container) return;
     mountVisibility(container);
+    ensureStyle();
+    mountPlazaControls(container);
+    if (container.classList) container.classList.toggle('wut-room-browser', !inRoom());
     if (inRoom()) {
       var stale = document.getElementById(HOST);
       if (stale) stale.remove();
@@ -373,6 +502,195 @@
     render();
   }
 
+  function plazaRequest(op, page, refresh) {
+    refresh = refresh !== false;
+    if (Date.now() - R.beat > 5000 || (!plaza.logged && !(op === 'withdraw' && plaza.canWithdraw)) || R.requests.some(function (r) { return r.action === 'plaza'; })) return;
+    if (op === 'list' && refresh && Date.now() < (plaza.nextRefreshAt || 0)) { renderPlaza(); return; }
+    if (plaza.busy || (op === 'list' && plaza.loading)) return;
+    var command = { id: instance + '-' + (++serial), op: op,
+                    page: Math.max(0, Math.min(49, page || 0)), refresh: refresh };
+    try {
+      if (typeof window.__wutPlazaAction !== 'function') throw new Error('binding unavailable');
+      window.__wutPlazaAction(JSON.stringify(command));
+      if (op === 'list') plaza.loading = true; else plaza.busy = true;
+    } catch (e) { R.error = 'Plus 广场连接尚未就绪，请稍后重试。'; }
+    plazaNote = '';
+    var container = document.querySelector('.room-module .panel-content');
+    if (container) mountPlazaControls(container);
+    renderPlaza();
+  }
+
+  function confirmPlaza(op) {
+    return new Promise(function (resolve) {
+      var dialog = document.createElement('dialog');
+      dialog.id = 'wut-plaza-confirm';
+      // A top-layer dialog is appended to body, outside the panel's font scope.
+      var reference = document.querySelector('.room-module .leave-room-btn');
+      if (reference && window.getComputedStyle) {
+        var font = window.getComputedStyle(reference);
+        dialog.style.fontFamily = font.fontFamily;
+        dialog.style.fontWeight = font.fontWeight;
+      }
+      dialog.setAttribute('aria-labelledby', 'wut-plaza-confirm-message');
+      dialog.innerHTML = '<p id="wut-plaza-confirm-message"></p><div class="wut-confirm-buttons">'
+        + '<button type="button" class="common-btn wut-confirm-cancel" autofocus>取消</button>'
+        + '<button type="button" class="common-btn wut-confirm-ok">确认</button></div>';
+      dialog.querySelector('p').textContent = op === 'publish'
+        ? '发布到广场的房间将可以被任何人访问，是否要发布？' : '是否要将房间从广场撤下？';
+      var done = false;
+      function finish(confirmed) {
+        if (done) return; done = true;
+        dialog.remove(); confirmation = null; resolve(confirmed);
+      }
+      confirmation = { cancel: function () { finish(false); } };
+      dialog.querySelector('.wut-confirm-cancel').addEventListener('click', function () { finish(false); });
+      dialog.querySelector('.wut-confirm-ok').addEventListener('click', function () { finish(true); });
+      dialog.addEventListener('cancel', function (event) { event.preventDefault(); finish(false); });
+      document.body.appendChild(dialog);
+      try { dialog.showModal(); }
+      catch (error) { plazaNote = '无法打开确认窗口，请重新打开联机页后重试。'; finish(false); }
+    });
+  }
+
+  function mountPlazaControls(container) {
+    var control = document.getElementById(PLAZA_CONTROLS);
+    var leave = document.querySelector('.room-module .leave-room-btn');
+    var canPublish = inRoom() && leave && plaza.owner && R.current && plaza.room === R.current.room_id;
+    var canWithdraw = plaza.canWithdraw === true;
+    var allowed = canPublish || canWithdraw;
+    var parent = leave ? leave.parentNode : container;
+    if (!allowed) { if (control) control.remove(); if (confirmation) confirmation.cancel(); return; }
+    if (!control) {
+      control = document.createElement('div'); control.id = PLAZA_CONTROLS;
+      control.innerHTML = '<button type="button" class="common-btn"></button>'
+        + '<span class="wut-plaza-action-status" role="status"></span>';
+      control.querySelector('button').addEventListener('click', async function () {
+        if (confirming || plaza.busy || Date.now() - R.beat > 5000) return;
+        var room = R.current && R.current.room_id;
+        var withdrawal = plaza.withdrawRoom;
+        var op = plaza.canWithdraw ? 'withdraw' : 'publish';
+        confirming = true; mountPlazaControls(container);
+        var confirmed = await confirmPlaza(op);
+        confirming = false;
+        if (confirmed && ((op === 'withdraw' && plaza.canWithdraw && plaza.withdrawRoom === withdrawal)
+            || (op === 'publish' && inRoom() && plaza.owner && !plaza.canWithdraw && R.current && R.current.room_id === room && plaza.room === room))) plazaRequest(op, 0);
+        mountPlazaControls(container);
+      });
+      if (leave) parent.insertBefore(control, leave);
+      else if (typeof parent.insertBefore === 'function') parent.insertBefore(control, parent.firstChild);
+      else parent.appendChild(control);
+    } else if (control.parentNode !== parent) {
+      if (leave) parent.insertBefore(control, leave);
+      else if (typeof parent.insertBefore === 'function') parent.insertBefore(control, parent.firstChild);
+      else parent.appendChild(control);
+    }
+    control.style.right = leave ? ((leave.offsetWidth || 135) + 10) + 'px' : '';
+    var pending = plaza.busy || R.requests.some(function (r) { return r.action === 'plaza' && r.op !== 'list'; });
+    var button = control.querySelector('button');
+    var buttonText = pending ? '处理中…' : plaza.withdrawing ? '撤下待确认' : canWithdraw ? '从广场撤下' : '发布到广场';
+    if (button.textContent !== buttonText) button.textContent = buttonText;
+    button.disabled = confirming || pending || !!plaza.withdrawing || (!canWithdraw && (!leave || leave.disabled)) || Date.now() - R.beat > 5000;
+    var status = control.querySelector('.wut-plaza-action-status');
+    var text = plaza.error || '';
+    if (status.textContent !== text) status.textContent = text;
+  }
+
+  function plazaItems() {
+    return plaza.logged ? (plaza.items || []).filter(function (item) {
+      return item && /^[0-9A-Za-z]{4,16}$/.test(item.room_code || '') && Date.parse(item.expires_at) > Date.now() + (plaza.serverOffset || 0);
+    }) : [];
+  }
+
+  function enterPlaza(roomId) {
+    if (!plaza.logged || Date.now() - R.beat > 5000 || inRoom()) return 'unavailable';
+    if (!plazaItems().some(function (item) { return item.room_code === roomId; })) return 'expired';
+    plazaNote = '';
+    return join(roomId);
+  }
+
+  function randomJoin() {
+    if (!plaza.logged || Date.now() - R.beat > 5000 || inRoom()) return 'unavailable';
+    if (R.pending) return 'waiting';
+    var items = plazaItems();
+    if (!items.length) {
+      plazaNote = '当前列表没有可随机进入的房间，请稍后刷新。';
+      renderPlaza();
+      return 'empty';
+    }
+    return enterPlaza(items[Math.floor(Math.random() * items.length)].room_code);
+  }
+
+  function renderPlaza() {
+    var host = document.getElementById(HOST);
+    if (!host) return;
+    var view = host.querySelector('.wut-plaza-view');
+    if (!view) return; // Older test fixtures only model the original history list.
+    var show = activeTab === 'plaza';
+    view.hidden = !show;
+    host.querySelector('.wut-rooms-list').hidden = show;
+    host.querySelector('.wut-rooms-head').hidden = show;
+    host.querySelectorAll('[data-tab]').forEach(function (tab) {
+      var selected = tab.dataset.tab === activeTab;
+      tab.setAttribute('aria-selected', selected ? 'true' : 'false'); tab.tabIndex = selected ? 0 : -1;
+    });
+    var loading = plaza.loading || R.requests.some(function (r) { return r.action === 'plaza' && r.op === 'list'; });
+    var note = view.querySelector('.wut-plaza-note');
+    var noteText = R.pending ? '正在进入 ' + R.pending + '…' : R.error || plaza.error || (plaza.logged == null ? '正在同步登录状态…' : !plaza.logged ? '登录 Wuwa Tappo 后可浏览广场。' : plazaNote ||
+      (loading ? '正在读取…' : ''));
+    if (note.textContent !== noteText) note.textContent = noteText;
+    var cooldown = Math.max(0, Math.ceil(((plaza.nextRefreshAt || 0) - Date.now()) / 1000));
+    var page = plaza.page || 0;
+    view.querySelector('.wut-plaza-page').textContent = '第 ' + (page + 1) + ' 页';
+    view.querySelector('[data-plaza="previous"]').disabled = loading || page === 0 || !plaza.logged;
+    view.querySelector('[data-plaza="next"]').disabled = loading || !plaza.hasMore || !plaza.logged;
+    var refresh = view.querySelector('[data-plaza="refresh"]');
+    refresh.disabled = loading || cooldown > 0 || !plaza.logged;
+    var refreshText = cooldown > 0 ? '刷新（' + cooldown + '秒）' : '刷新';
+    if (refresh.textContent !== refreshText) refresh.textContent = refreshText;
+    var reset = view.querySelector('[data-plaza="reset"]');
+    if (reset) { reset.hidden = !plaza.authExpired; reset.disabled = !!plaza.busy; }
+    var random = view.querySelector('[data-plaza="random"]');
+    random.disabled = !plaza.logged || !!R.pending || !plazaItems().length;
+    var items = plazaItems();
+    var key = JSON.stringify([plaza.logged, items, R.pending, Math.floor(Date.now() / 60000)]);
+    var list = view.querySelector('.wut-plaza-list');
+    if (key === plazaPainted && list.children.length) return;
+    plazaPainted = key;
+    if (!items.length) {
+      var emptyText = plaza.logged == null ? '正在同步登录状态…' : plaza.logged ? '暂时没有公开的房间。' : '请先在桌宠中登录。';
+      if (list.children.length === 1 && list.children[0].className === 'wut-rooms-empty') {
+        if (list.children[0].textContent !== emptyText) list.children[0].textContent = emptyText;
+        return;
+      }
+      list.textContent = '';
+      var empty = document.createElement('li'); empty.className = 'wut-rooms-empty';
+      empty.textContent = emptyText; list.appendChild(empty);
+      return;
+    }
+    var oldRows = new Map();
+    Array.from(list.children).forEach(function (child) {
+      if (child.dataset.room) oldRows.set(child.dataset.room, child);
+      else child.remove();
+    });
+    items.forEach(function (item, index) {
+      var row = oldRows.get(item.room_code) || document.createElement('li');
+      oldRows.delete(item.room_code);
+      row.className = 'wut-room wut-plaza-row'; row.dataset.room = item.room_code; row.dataset.source = 'plaza';
+      row.dataset.busy = R.pending === item.room_code ? 'true' : 'false';
+      row.tabIndex = 0; row.setAttribute('role', 'button'); row.setAttribute('aria-label', '进入房间 ' + item.room_code);
+      var code = row.querySelector('.wut-room-id');
+      if (!code) { code = document.createElement('span'); code.className = 'wut-room-id'; row.appendChild(code); }
+      if (code.textContent !== item.room_code) code.textContent = item.room_code;
+      var detail = row.querySelector('.wut-room-detail');
+      if (detail) detail.remove();
+      var enter = row.querySelector('.wut-plaza-enter');
+      if (!enter) { enter = document.createElement('button'); enter.type = 'button'; enter.className = 'wut-plaza-enter wut-rooms-tab'; enter.style.marginLeft = 'auto'; enter.textContent = '进入'; row.appendChild(enter); }
+      enter.disabled = !!R.pending;
+      if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
+    });
+    oldRows.forEach(function (row) { row.remove(); });
+  }
+
   function note() {
     if (R.pending) return '正在进入 ' + R.pending + '…';
     if (R.error) return R.error;
@@ -381,6 +699,7 @@
   }
 
   function render() {
+    renderPlaza();
     var host = document.getElementById(HOST);
     if (!host) return;
     var key = JSON.stringify([R.rooms, R.pending, R.error, Date.now() - R.beat > 5000,
@@ -494,7 +813,12 @@
 
   R.update = function (state) {
     R.beat = Date.now();
-    R.rooms = (state && state.rooms) || [];
+    if (state && Object.prototype.hasOwnProperty.call(state, 'rooms')) R.rooms = state.rooms || [];
+    if (state && state.plaza && !(state.plaza.instance && state.plaza.instance === plaza.instance && state.plaza.revision < plaza.revision)) {
+      var wasLogged = plaza.logged;
+      plaza = state.plaza;
+      if (plaza.logged && !wasLogged && activeTab === 'plaza') plazaRequest('list', 0);
+    }
     var ack = (state && state.ack) || [];
     var answered = {};
     ack.forEach(function (item) { answered[item.id] = true; });
@@ -517,7 +841,11 @@
     mount();
     render();
   };
+  R.selectTab = function (tab) { activeTab = tab === "plaza" ? "plaza" : "recent"; if (activeTab === "plaza") plazaRequest("list", 0); renderPlaza(); };
+  R.plazaRequest = plazaRequest;
   R.join = join;
+  R.enterPlaza = enterPlaza;
+  R.randomJoin = randomJoin;
   R.togglePin = togglePin;
   R.parseRoomNumber = parseRoomNumber;
   R.tick = tick;
@@ -528,8 +856,11 @@
 
   R.uninstall = function () {
     observer.disconnect();
+    var container = document.querySelector('.room-module .panel-content');
+    if (container && container.classList) container.classList.remove('wut-room-browser');
+    if (confirmation) confirmation.cancel();
     clearInterval(timeout);
-    [HOST, STYLE, VISIBILITY].forEach(function (id) {
+    [HOST, STYLE, VISIBILITY, PLAZA_CONTROLS].forEach(function (id) {
       var element = document.getElementById(id);
       if (element) element.remove();
     });

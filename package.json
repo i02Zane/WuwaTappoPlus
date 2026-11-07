@@ -1,0 +1,11 @@
+{
+  "name": "wuwa-tappo-plus-web",
+  "private": true,
+  "scripts": {
+    "build:plaza": "node tools/build_plaza.mjs",
+    "test:plaza": "node --test tests/test_plaza*.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

@@ -239,7 +239,7 @@ class RoomBridge:
         self.seen = False
         self.last_error = None
 
-    def sync(self, history, clock=None):
+    def sync(self, history, clock=None, plaza=None):
         clock = clock or (lambda: datetime.now().timestamp())
         try:
             if clock() - self.last_scan >= 3:
@@ -261,9 +261,13 @@ class RoomBridge:
             state = self._inject_if_needed()
             if not state:
                 return
-            ack = self._apply_requests(history, state.get("requests") or [])
+            if plaza is not None:
+                plaza.bind_panel(self.session)
+            ack = self._apply_requests(history, state.get("requests") or [], plaza=plaza)
             self._observe(history, state.get("current"), clock)
             payload = json.dumps({"rooms": history.recent(), "ack": ack}, ensure_ascii=False)
+            if plaza is not None:
+                payload = json.dumps({"rooms": history.recent(), "ack": ack, "plaza": plaza.state}, ensure_ascii=False)
             self.session.js("window.__WUT_ROOMS__.update(%s); 1" % payload)
         except (cdp.CDPError, OSError, ValueError, TypeError) as exc:
             self._warn(exc)
@@ -288,14 +292,16 @@ class RoomBridge:
         return json.loads(self.session.js(READ_JS) or "null")
 
     @staticmethod
-    def _apply_requests(history, requests):
+    def _apply_requests(history, requests, plaza=None):
         ack = []
         for request in requests[:10]:
             if not isinstance(request, dict) or not isinstance(request.get("id"), str):
                 continue
             result = {"id": request["id"]}
             action = request.get("action")
-            if action == "forget":
+            if action == "plaza" and plaza is not None:
+                stored = plaza.queue(request)
+            elif action == "forget":
                 stored = history.forget(request.get("room_id"))
             elif action == "pin":
                 stored = history.set_pinned(request.get("room_id"), request.get("pinned"))

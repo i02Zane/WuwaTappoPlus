@@ -6,6 +6,7 @@ analysis = Analysis(
     [str(root / "launch.py")],
     pathex=[str(root / "src")],
     datas=[(str(root / "src/wuwa_tappo_plus/scripts/*.js"), "wuwa_tappo_plus/scripts"),
+           (str(root / "src/wuwa_tappo_plus/scripts/plaza-config.json"), "wuwa_tappo_plus/scripts"),
            (str(root / "build/licenses"), "licenses")],
     hiddenimports=[],
     hookspath=[],

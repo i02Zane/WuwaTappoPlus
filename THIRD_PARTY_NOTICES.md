@@ -22,3 +22,7 @@ build dependencies are not runtime requirements of Wuwa Tappo Plus.
 
 Wuwa Tappo itself is a separate third-party application. Its executable,
 artwork and game assets are not included in this project or the release executable.
+
+## JavaScript build tooling
+
+esbuild is used only during development to bundle project-owned scripts. No CloudBase SDK or other third-party JavaScript runtime is shipped.

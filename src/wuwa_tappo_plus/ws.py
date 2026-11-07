@@ -9,6 +9,7 @@ import hashlib
 import os
 import socket
 import struct
+import threading
 from urllib.parse import urlparse
 
 OP_CONT = 0x0
@@ -37,6 +38,7 @@ def _recv_exact(sock, n):
 
 class WebSocket:
     def __init__(self, url, timeout=20.0):
+        self._send_lock = threading.Lock()
         u = urlparse(url)
         if u.scheme != "ws":
             raise WSError("only ws:// is supported, got %r" % u.scheme)
@@ -101,7 +103,13 @@ class WebSocket:
         mask = os.urandom(4)
         header += mask
         masked = bytes(b ^ mask[i & 3] for i, b in enumerate(payload))
-        self.sock.sendall(bytes(header) + masked)
+        # The event-driven CDP channel may send a command while its reader
+        # answers a WebSocket ping. Keep their frames from interleaving.
+        lock = getattr(self, "_send_lock", None)
+        if lock is None:
+            lock = self._send_lock = threading.Lock()
+        with lock:
+            self.sock.sendall(bytes(header) + masked)
 
     def send(self, text):
         self._send_frame(OP_TEXT, text.encode("utf-8"))

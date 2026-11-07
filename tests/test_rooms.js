@@ -15,10 +15,11 @@ function button() {
 }
 
 function load(nodes = {}, extras = {}) {
+  const plazaCommands = [];
   const context = {
     window: extras.window || {},
     document: {
-      body: {},
+      body: extras.body || {},
       head: { appendChild() {} },
       documentElement: { appendChild() {} },
       querySelector: selector => nodes[selector] || null,
@@ -38,9 +39,11 @@ function load(nodes = {}, extras = {}) {
     set(value) { this._value = value; },
     get() { return this._value; }
   });
+  context.window.__wutPlazaAction = value => plazaCommands.push(JSON.parse(value));
   context.window.HTMLInputElement = HTMLInputElement;
   context.window.Event = context.Event;
   vm.runInNewContext(loadScript('rooms.js'), context);
+  context.window.__WUT_ROOMS__.plazaCommands = plazaCommands;
   return context.window.__WUT_ROOMS__;
 }
 
@@ -225,7 +228,7 @@ test('a failed acknowledgement is surfaced', () => {
   assert.match(rooms.error, /未能保存/);
 });
 
-function historyView() {
+function historyView(withPlaza = false) {
   let insertions = 0;
   function element() {
     let content = '';
@@ -263,8 +266,19 @@ function historyView() {
   list.className = 'wut-rooms-list';
   host.appendChild(badge);
   host.appendChild(list);
+  let plazaList, plazaControls;
+  if (withPlaza) {
+    const head = element(); head.className = 'wut-rooms-head'; host.appendChild(head);
+    const view = element(); view.className = 'wut-plaza-view'; host.appendChild(view);
+    plazaList = element();
+    plazaControls = Object.fromEntries(['.wut-plaza-note', '.wut-plaza-page', '[data-plaza="previous"]',
+      '[data-plaza="next"]', '[data-plaza="refresh"]', '[data-plaza="reset"]', '[data-plaza="random"]'].map(key => [key, element()]));
+    plazaControls['.wut-plaza-list'] = plazaList;
+    view.querySelector = selector => plazaControls[selector] || null;
+    host.querySelectorAll = () => [];
+  }
   const rooms = load({}, { hosts: { 'wut-rooms': host }, createElement: element });
-  return { rooms, list, insertions: () => insertions };
+  return { rooms, list, plazaList, plazaControls, insertions: () => insertions };
 }
 
 test('unchanged background heartbeats preserve hovered rows and their children', () => {
@@ -369,42 +383,59 @@ function visibilityView(hidden = [false, true], delayed = false) {
     click() { this.clicks++; if (!delayed) this.hidden = !this.hidden; } }));
   eyes.forEach(eye => { eye.classList.eye = eye; });
   const leave = { offsetWidth: 120, disabled: false };
-  const info = { insertBefore(node, before) { assert.equal(before, leave); hosts[node.id] = node; } };
-  const container = { contains: node => hosts[node.id] === node, appendChild() {},
-    querySelector: selector => !inRoom ? null : selector === '.leave-room-btn' ? leave : selector === '.room-info' ? info : null,
+  let members = {};
+  const container = { insertBefore(node, before) { assert.equal(before, members); hosts[node.id] = node; node.parentNode = this; node.nextElementSibling = members; }, contains: node => hosts[node.id] === node, appendChild() {},
+    querySelector: selector => !inRoom ? null : selector === '.leave-room-btn' ? leave : selector === '.room-members' ? members : null,
     querySelectorAll: () => eyes };
+  members.parentNode = container;
   const module = { querySelector: selector => inRoom && selector === '.leave-room-btn' ? leave : null };
   const list = { children: [{ className: 'wut-rooms-empty' }] }, note = { dataset: {} };
-  const history = { querySelector: selector => selector === '.wut-rooms-list' ? list : note };
-  function createElement() {
+  const history = { querySelector: selector => selector === '.wut-rooms-list' ? list : selector === '.wut-plaza-view' ? null : note };
+  function createElement(tag = 'div') {
     let text = '';
-    return { style: {}, children: [], setAttribute() {},
+    return { tagName: tag.toUpperCase(), style: {}, children: [], attributes: {}, setAttribute(key, value) { this.attributes[key] = value; },
       get textContent() { return text; }, set textContent(value) { if ((this.id || '').startsWith('wut-room-visibility')) writes++; text = value; },
       addEventListener(type, handler) { listeners[this.id + ':' + type] = handler; },
       appendChild(child) { this.children.push(child); },
       querySelector(selector) { return this.children.find(child => '#' + child.id === selector); },
-      querySelectorAll() { return this.children; },
+      querySelectorAll(selector) { return this.children.filter(child => selector !== 'button' || child.tagName === 'BUTTON'); },
       remove() { delete hosts[this.id]; } };
   }
   const rooms = load({ '.room-module': module, '.room-module .panel-content': container }, { hosts, createElement });
-  return { rooms, eyes, leave, hosts, get control() { return hosts['wut-room-visibility']; },
+  return { rooms, eyes, leave, hosts, get members() { return members; }, get control() { return hosts['wut-room-visibility']; },
     get show() { return hosts['wut-room-visibility']?.querySelector('#wut-room-visibility-show'); },
     get hide() { return hosts['wut-room-visibility']?.querySelector('#wut-room-visibility-hide'); },
     writes: () => writes,
     click(action = 'hide') { listeners['wut-room-visibility-' + action + ':click']({ preventDefault() {}, stopPropagation() {} }); },
+    rebuildMembers() { members = { parentNode: container }; rooms.tick(); },
     leaveRoom() { inRoom = false; hosts['wut-rooms'] = history; rooms.tick(); } };
 }
 
 test('one-click room visibility hides only visible native members and can show everyone again', () => {
   const f = visibilityView([false, true, false]);
-  assert.equal(f.show.textContent, '显示他人桌宠'); assert.equal(f.hide.textContent, '隐藏他人桌宠');
+  assert.equal(f.control.children[0].textContent, '房间成员');
+  assert.equal(f.control.nextElementSibling, f.members);
+  assert.equal(f.show.title, '显示他人桌宠'); assert.equal(f.hide.title, '隐藏他人桌宠');
+  assert.equal(f.show.attributes['aria-label'], '显示他人桌宠');
+  assert.equal(f.hide.attributes['aria-label'], '隐藏他人桌宠');
+  assert.equal(f.show.textContent, ''); assert.equal(f.hide.textContent, '');
+  assert.match(f.show.className, /room-visible-btn/); assert.match(f.hide.className, /room-invisible/);
   assert.equal(f.show.disabled, false); assert.equal(f.hide.disabled, false);
-  assert.equal(f.control.style.right, '130px');
+  assert.equal(f.control.style.right, undefined);
   f.click(); assert.deepEqual(f.eyes.map(eye => eye.clicks), [1, 0, 1]);
   assert.equal(f.show.disabled, false); assert.equal(f.hide.disabled, true);
   f.click('show'); assert.deepEqual(f.eyes.map(eye => eye.clicks), [2, 1, 2]);
   assert.equal(f.show.disabled, true); assert.equal(f.hide.disabled, false);
   const writes = f.writes(); f.rooms.tick(); f.rooms.tick(); assert.equal(f.writes(), writes);
+});
+
+test('member header follows a rebuilt native list without duplicating controls', () => {
+  const f = visibilityView([false, true]);
+  const header = f.control, previous = f.members;
+  f.rebuildMembers();
+  assert.equal(f.control, header); assert.notEqual(f.members, previous);
+  assert.equal(f.control.nextElementSibling, f.members);
+  assert.equal(f.control.querySelectorAll('button').length, 2);
 });
 
 test('room visibility waits for native state and ignores repeated clicks during IPC updates', () => {
@@ -420,4 +451,129 @@ test('room visibility has no targets for a solo room and is removed on leave or 
   solo.click(); assert.equal(solo.hide.disabled, true); assert.equal(solo.show.disabled, true);
   solo.leaveRoom(); assert.equal(solo.control, undefined);
   const room = visibilityView([true]); room.rooms.uninstall(); assert.equal(room.control, undefined);
+});
+
+test('owner actions sit beside leave and require confirmation before publication or withdrawal', async () => {
+  const hosts = {};
+  let label = '', writes = 0;
+  const controlButton = { get textContent() { return label; }, set textContent(value) { label = value; writes++; },
+    addEventListener(name, callback) { this[name] = callback; } };
+  const status = { textContent: '' };
+  const parent = { insertBefore(node, before) { assert.equal(before, leave); hosts[node.id] = node; node.parentNode = parent; } };
+  const leave = { offsetWidth: 135, parentNode: parent, disabled: false };
+  const control = { style: {}, setAttribute() {}, querySelector: selector => selector === 'button' ? controlButton : status,
+    remove() { delete hosts['wut-plaza-controls']; } };
+  let dialog;
+  function createElement(tag) {
+    if (tag !== 'dialog') return control;
+    const message = {};
+    const cancel = { addEventListener(name, handler) { this[name] = handler; } };
+    const ok = { addEventListener(name, handler) { this[name] = handler; } };
+    dialog = { message, cancel, ok, setAttribute() {}, addEventListener() {}, showModal() { this.open = true; },
+      remove() { this.open = false; delete hosts['wut-plaza-confirm']; },
+      querySelector(selector) { return selector === 'p' ? message : selector === '.wut-confirm-cancel' ? cancel : ok; }
+    };
+    return dialog;
+  }
+  const module = { querySelector: selector => selector === '.room-number' ? { textContent: 'Room1234' } : null };
+  const container = { querySelector: () => null, appendChild(node) { hosts[node.id] = node; } };
+  const rooms = load({ '.room-module': module, '.room-module .panel-content': container, '.room-module .leave-room-btn': leave },
+    { hosts, createElement, body: { appendChild(node) { hosts[node.id] = node; } } });
+  const plaza = { logged: true, owner: false, room: 'Room1234', published: false, canWithdraw: false, items: [] };
+  rooms.update({ rooms: [], plaza }); assert.equal(hosts['wut-plaza-controls'], undefined);
+  rooms.update({ rooms: [], plaza: { ...plaza, owner: true } });
+  assert.equal(control.parentNode, leave.parentNode); assert.equal(control.style.right, '145px');
+  assert.equal(controlButton.textContent, '发布到广场');
+  Object.defineProperty(hosts, 'wut-room-visibility', { configurable: true,
+    get: () => ({ offsetWidth: 280, remove() {} }) });
+  rooms.update({ rooms: [], plaza: { ...plaza, owner: true } });
+  assert.equal(control.style.right, '145px');
+  const priorWrites = writes;
+  rooms.update({ rooms: [], plaza: { ...plaza, owner: true } }); assert.equal(writes, priorWrites);
+  let pending = controlButton.click();
+  assert.equal(dialog.message.textContent, '发布到广场的房间将可以被任何人访问，是否要发布？');
+  assert.equal(rooms.plazaCommands.length, 0); dialog.cancel.click(); await pending;
+  assert.equal(rooms.plazaCommands.length, 0); assert.equal(controlButton.disabled, false);
+  pending = controlButton.click(); dialog.ok.click(); await pending;
+  assert.equal(rooms.plazaCommands[0].op, 'publish'); assert.equal(controlButton.textContent, '处理中…');
+  let id = rooms.plazaCommands[0].id; rooms.plazaCommands.length = 0; rooms.plazaCommands.length = 0;
+  rooms.update({ rooms: [], plaza: { ...plaza, owner: true, published: true, canWithdraw: true }, ack: [{ id }] });
+  assert.equal(controlButton.textContent, '从广场撤下');
+  leave.disabled = true;
+  rooms.update({ rooms: [], plaza: { ...plaza, owner: false, published: false, canWithdraw: true, withdrawRoom: 'Room1234' } });
+  assert.equal(controlButton.disabled, false);
+  assert.equal(controlButton.textContent, '从广场撤下');
+  pending = controlButton.click();
+  assert.equal(dialog.message.textContent, '是否要将房间从广场撤下？');
+  assert.equal(rooms.plazaCommands.length, 0); dialog.ok.click(); await pending;
+  assert.equal(rooms.plazaCommands[0].op, 'withdraw'); id = rooms.plazaCommands[0].id; rooms.plazaCommands.length = 0;
+  leave.disabled = false;
+  rooms.update({ rooms: [], plaza: { ...plaza, owner: true }, ack: [{ id }] });
+  pending = controlButton.click();
+  rooms.update({ rooms: [], plaza: { ...plaza, owner: false } }); await pending;
+  assert.equal(rooms.plazaCommands.length, 0); assert.equal(hosts['wut-plaza-controls'], undefined);
+});
+
+test('an already selected plaza loads once when native login state becomes available', () => {
+  const rooms = load(); rooms.selectTab('plaza'); assert.equal(rooms.plazaCommands.length, 0);
+  rooms.update({ rooms: [], plaza: { logged: true, owner: false, items: [] } });
+  assert.equal(rooms.plazaCommands.length, 1); assert.equal(rooms.plazaCommands[0].op, 'list');
+  rooms.update({ rooms: [], plaza: { logged: true, owner: false, items: [] } });
+  assert.equal(rooms.plazaCommands.length, 1);
+});
+
+test('switching tabs and reopening a panel respects the backend-wide refresh deadline', () => {
+  const plaza = { logged: true, owner: false, items: [], nextRefreshAt: Date.now() + 30000 };
+  for (let i = 0; i < 2; i++) {
+    const rooms = load(); rooms.update({ rooms: [], plaza });
+    rooms.selectTab('plaza'); rooms.selectTab('recent'); rooms.selectTab('plaza'); rooms.plazaRequest('list', 1);
+    assert.equal(rooms.plazaCommands.length, 0);
+  }
+});
+
+function plazaRoom(room_code, expires_at = new Date(Date.now() + 60000).toISOString()) {
+  return { room_code, expires_at };
+}
+
+test('plaza row entry uses the native input and waits before clicking join', () => {
+  const field = input(), nativeJoin = button();
+  const rooms = load({ '.join-rooms-input': field, '.join-rooms-btn': nativeJoin });
+  rooms.update({ plaza: { logged: true, items: [plazaRoom('Room1234')] } });
+  assert.equal(rooms.enterPlaza('Room1234'), 'waiting');
+  assert.equal(field._value, 'Room1234'); assert.equal(nativeJoin.clicks, 0);
+  rooms.tick(); assert.equal(nativeJoin.clicks, 1); assert.equal(rooms.requests.length, 0);
+});
+
+test('random entry skips only expired and invalid rooms without requesting a list', () => {
+  const field = input(), nativeJoin = button();
+  const rooms = load({ '.join-rooms-input': field, '.join-rooms-btn': nativeJoin });
+  rooms.update({ plaza: { logged: true, items: [plazaRoom('Gone1234', new Date(Date.now() - 1).toISOString()), plazaRoom('bad!'), plazaRoom('Good1234')] } });
+  assert.equal(rooms.randomJoin(), 'waiting'); assert.equal(field._value, 'Good1234');
+  assert.equal(rooms.randomJoin(), 'waiting'); assert.equal(field.events.length, 1);
+  rooms.tick(); assert.equal(nativeJoin.clicks, 1); assert.equal(rooms.requests.length, 0);
+});
+
+test('random entry and row entry reject unavailable or expired cached rooms', () => {
+  const field = input(), nativeJoin = button();
+  const rooms = load({ '.join-rooms-input': field, '.join-rooms-btn': nativeJoin });
+  rooms.update({ plaza: { logged: true, items: [plazaRoom('Gone1234', new Date(Date.now() - 1).toISOString())] } });
+  assert.equal(rooms.randomJoin(), 'empty'); assert.equal(rooms.enterPlaza('Gone1234'), 'expired');
+  rooms.update({ plaza: { logged: false, items: [plazaRoom('Good1234')] } });
+  assert.equal(rooms.randomJoin(), 'unavailable'); assert.equal(rooms.enterPlaza('Good1234'), 'unavailable');
+  assert.equal(nativeJoin.clicks, 0); assert.equal(field.events.length, 0); assert.equal(rooms.requests.length, 0);
+});
+
+
+test('empty plaza message follows login changes and pagination stays enabled during refresh cooldown', () => {
+  const view = historyView(true);
+  assert.match(view.plazaList.children[0].textContent, /同步/);
+  view.rooms.update({ plaza: { logged: true, items: [], page: 1, hasMore: true, nextRefreshAt: Date.now() + 30000 } });
+  assert.match(view.plazaList.children[0].textContent, /暂时没有/);
+  assert.equal(view.plazaControls['[data-plaza="previous"]'].disabled, false);
+  assert.equal(view.plazaControls['[data-plaza="next"]'].disabled, false);
+  assert.equal(view.plazaControls['[data-plaza="refresh"]'].disabled, true);
+  view.rooms.plazaRequest('list', 2, false);
+  assert.equal(view.rooms.plazaCommands.at(-1).refresh, false);
+  view.rooms.update({ plaza: { logged: false, items: [] } });
+  assert.match(view.plazaList.children[0].textContent, /请先/);
 });

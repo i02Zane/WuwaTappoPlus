@@ -42,7 +42,7 @@ def validate_executable(executable, build):
     payload = json.loads(report.read_text(encoding="utf-8"))
     if (not payload.get("frozen") or payload.get("version") != __version__
             or payload.get("scripts") != dict.fromkeys(
-                ("pet", "settings", "rooms", "toast", "game_mode"), __version__)
+                ("pet", "settings", "rooms", "toast", "game_mode", "plaza"), __version__)
             or len(payload.get("licenses", [])) != 6):
         raise RuntimeError("Packaged EXE returned inconsistent release metadata; see %s" % report)
 
@@ -101,9 +101,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.notes is not None and not args.notes.is_file():
         parser.error("release notes file does not exist: %s" % args.notes)
+    subprocess.run(["npm.cmd", "run", "build:plaza"], cwd=ROOT, check=True)
     build = ROOT / "build"
     licenses = build / "licenses"
     licenses.mkdir(parents=True, exist_ok=True)
+    (licenses / "JavaScript-components.txt").unlink(missing_ok=True)
     for notice in (ROOT / "packaging/licenses").glob("*.txt"):
         shutil.copy2(notice, licenses / notice.name)
     shutil.copy2(ROOT / "LICENSE", licenses / "WuwaTappoPlus.txt")

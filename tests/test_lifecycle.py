@@ -193,7 +193,7 @@ class PurgeDataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             removed = ["accessory_overrides.json", ".plus-accessories-sample.tmp",
-                       "chests.json", "chests.tmp", "config.toml", ".state.json", ".state.tmp", ".daemon.lock",
+                       "chests.json", "chests.tmp", "plaza_auth.json", "plaza_auth.tmp", "config.toml", ".state.json", ".state.tmp", ".daemon.lock",
                        ".stop", ".disabled", ".plus-config-sample.tmp", "logs/auto.log",
                        "logs/auto.log.1", "reports/input.sqlite3", "reports/input.sqlite3-wal",
                        "reports/rooms.sqlite3", "reports/rooms.sqlite3-shm"]

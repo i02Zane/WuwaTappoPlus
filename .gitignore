@@ -25,3 +25,13 @@ dist/
 
 chests.json
 chests.tmp
+
+# Local environment files and generated plaza client
+.env*
+!.env.example
+node_modules/
+src/wuwa_tappo_plus/scripts/plaza-client.bundle.js
+src/wuwa_tappo_plus/scripts/plaza-config.json
+
+plaza_auth.json
+plaza_auth.tmp

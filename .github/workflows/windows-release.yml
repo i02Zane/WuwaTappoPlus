@@ -16,7 +16,8 @@ jobs:
           node-version: '22'
       - run: python -m pip install -e '.[build]'
       - run: python -m unittest discover -s tests -v
-      - run: node --test tests/test_game_mode.js tests/test_bubble.js tests/test_panel.js tests/test_rooms.js
+      - run: node --test tests/test_game_mode.js tests/test_bubble.js tests/test_panel.js tests/test_rooms.js tests/test_toast.js tests/test_plaza.js
+      - run: npm ci
       - run: python tools/build_release.py
       - run: python tools/smoke_release.py
       - uses: actions/upload-artifact@v4

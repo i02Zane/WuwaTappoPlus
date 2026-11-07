@@ -17,6 +17,7 @@ from .rooms import RoomBridge, RoomHistory
 from .screens import ScreenKeeper
 from .toasts import ToastBridge
 from .chests import ChestCache
+from .plaza import PlazaBridge
 
 POLL_JS = r"""
 (function(){
@@ -80,6 +81,7 @@ class Runner:
         self.settings = SettingsBridge(self.cfg.port, self.cfg.host, self.log)
         self.reports = DailyReport(self.log)
         self.rooms = RoomBridge(self.cfg.port, self.cfg.host, self.log)
+        self.plaza = PlazaBridge(self.log)
         self.history = RoomHistory(self.log, limit=self.cfg.room_history)
         self.toasts = ToastBridge(self.cfg.port, self.cfg.host, self.log)
         self.screens = ScreenKeeper(self.log)
@@ -501,7 +503,8 @@ class Runner:
                     self.drain_clicks(payload.get("clicks"))
                     self.note_block(payload.get("block"), snapshot)
                     self.alert_balance(snapshot, payload.get("alert"))
-                    self.rooms.sync(self.history)
+                    self.rooms.sync(self.history, plaza=self.plaza)
+                    self.plaza.sync(self.session)
 
                     try:
                         self.screens.tick(self.session, self.cfg.panel_remember_screen)
@@ -566,6 +569,7 @@ class Runner:
             self.reports.close()
             self.rooms.close()
             self.history.close()
+            self.plaza.close(self.session)
             self.toasts.close()
             self.session.close()
             self.release_lock()
