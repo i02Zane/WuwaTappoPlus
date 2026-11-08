@@ -306,7 +306,22 @@
     return document.querySelector('.reward-anchor--' + name + ' .reward-btn');
   }
 
-  function chestTime(name, now, loggedIn) {
+  // Both the confirmed-open cache and the profile carry a "ready at" time for a
+  // slot. The later one reflects the most recent open we know about, so use it:
+  // the other source may predate that open.
+  function chestReadyAt(name, now, userInfo) {
+    var times = [];
+    var cached = A.chestCache && A.chestCache[name];
+    if (chestAccount && cached && Number.isFinite(cached.ready_at) &&
+        cached.ready_at > 0 && cached.ready_at <= now + COOLDOWN_MS) {
+      times.push(cached.ready_at);
+    }
+    var field = userInfo && Number(userInfo[name + '_treasure_chest']);
+    if (Number.isFinite(field) && field > 0) times.push(field);
+    return times.length ? Math.max.apply(null, times) : 0;
+  }
+
+  function chestTime(name, now, loggedIn, userInfo) {
     var record = chestUi[name];
     if (loggedIn && chestButton(name)) {
       delete A.chestCache[name];
@@ -319,9 +334,10 @@
       + ' .reward-countdown__text');
     var match = text && /^(\d{1,3}):([0-5]\d)$/.exec((text.textContent || '').trim());
     if (!match) {
-      var cached = A.chestCache[name];
-      return chestAccount && cached && Number.isFinite(cached.ready_at) && cached.ready_at > now &&
-        cached.ready_at <= now + COOLDOWN_MS ? cached.ready_at : 0;
+      // A past time is not a clickable chest: the native button is the only
+      // thing that authorises a click.
+      var ready = chestReadyAt(name, now, userInfo);
+      return ready > now ? ready : 0;
     }
     var seconds = Number(match[1]) * 60 + Number(match[2]);
     var known = A.chestCache[name];
@@ -334,19 +350,16 @@
 
   // A low wallet makes the page stop drawing the chest slots entirely, so both
   // timers read 0 and the bubble loses its second line exactly when the user
-  // needs to know a chest is ready again. The local cache only feeds this hint;
-  // it never authorises a click, which still needs the native button.
-  function chestHint(name, now) {
+  // needs to know a chest is ready again. This hint only feeds the bubble; it
+  // never authorises a click, which still needs the native button.
+  function chestHint(name, now, userInfo) {
     if (chestButton(name)) return 0;
     if (document.querySelector('.reward-anchor--' + name + ' .reward-countdown__text')) return 0;
-    var cached = A.chestCache && A.chestCache[name];
-    if (!A.chestCache || !A.chestCache.account) return 0;
-    if (!cached || !Number.isFinite(cached.ready_at)) return 0;
+    var ready = chestReadyAt(name, now, userInfo);
     // The page only draws the slot again once the wallet recovers, and that
     // countdown then corrects this record. A day is just an upper bound for a
-    // cache left over from an old session.
-    if (cached.ready_at < now - 86400000) return 0;
-    return cached.ready_at;
+    // hint left over from an old session.
+    return ready >= now - 86400000 ? ready : 0;
   }
 
   function snapshot() {
@@ -363,8 +376,10 @@
       var now = Date.now();
       return {
         now: now,
-        left: chestTime('left', now, store.isLoggedIn),
-        right: chestTime('right', now, store.isLoggedIn),
+        left: chestTime('left', now, store.isLoggedIn, u),
+        right: chestTime('right', now, store.isLoggedIn, u),
+        left_hint: chestHint('left', now, u),
+        right_hint: chestHint('right', now, u),
         native_chests: true,
         click: u.total_click_count || 0,
         spend: u.total_click_consume || 0,
@@ -792,8 +807,8 @@
         // announced while the balance is too low to draw it.
         var known = {
           now: snap.now,
-          left: snap.left > 0 ? snap.left : chestHint('left', snap.now),
-          right: snap.right > 0 ? snap.right : chestHint('right', snap.now)
+          left: snap.left > 0 ? snap.left : (snap.left_hint || 0),
+          right: snap.right > 0 ? snap.right : (snap.right_hint || 0)
         };
         var wait = slotWait(known, want === 1);
         if (wait !== null) {
