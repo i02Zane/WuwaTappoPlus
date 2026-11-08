@@ -11,6 +11,7 @@ import time
 from ctypes import wintypes
 from pathlib import Path
 
+from . import cdp
 from .config import ROOT
 
 RECORD_PATH = ROOT / "screen.json"
@@ -176,6 +177,24 @@ def _fills(window_rect, monitor_rect, tolerance=2):
             and abs((window_rect.bottom - window_rect.top) - height) <= tolerance)
 
 
+def _large(window_rect, monitor_rect):
+    """True when the window is about monitor-sized rather than a small pet box.
+
+    A stale scale factor can make it larger than the monitor, so only the
+    lower bound matters.
+    """
+    if not monitor_rect or len(monitor_rect) != 4:
+        return False
+    try:
+        width, height = int(monitor_rect[2]), int(monitor_rect[3])
+    except (TypeError, ValueError):
+        return False
+    if width <= 0 or height <= 0:
+        return False
+    return (window_rect.right - window_rect.left) >= width * 0.8 and \
+        (window_rect.bottom - window_rect.top) >= height * 0.8
+
+
 class ScreenKeeper:
     """Follow the pet across monitors and restore it when the app restarts.
 
@@ -259,36 +278,74 @@ class ScreenKeeper:
                     return monitor if self._same_monitor(self.target, monitor) else None
         return None
 
-    def _move_to(self, hwnd, target):
-        """Move the pet window onto the target monitor.
+    def _target_bounds(self, hwnd, rect):
+        """Window bounds that put the pet on the target monitor.
 
         The app draws the pet inside a transparent window that fills the
         monitor. On two displays with different resolutions the window must be
         resized to the destination too: keeping the source size would place the
         dock (anchored to the window's bottom-right) outside the target.
         """
-        rect = target.get("rect") or []
-        if len(rect) != 4:
-            return False
         try:
             current_rect = wintypes.RECT()
             if not _api().GetWindowRect(hwnd, ctypes.byref(current_rect)):
-                return False
+                return None
             width = current_rect.right - current_rect.left
             height = current_rect.bottom - current_rect.top
             if width <= 0 or height <= 0:
-                return False
+                return None
             source = monitor_of_window(hwnd)
-            shell = bool(source and _fills(current_rect, source.get("rect")))
-            if shell:
-                x, y = int(rect[0]), int(rect[1])
-                cx, cy = int(rect[2]), int(rect[3])
-                flags = _SWP_NOZORDER | _SWP_NOACTIVATE
-            else:
-                x = int(rect[0] + (rect[2] - width) / 2)
-                y = int(rect[1] + (rect[3] - height) / 2)
+            if source and (_fills(current_rect, source.get("rect"))
+                           or _large(current_rect, source.get("rect"))):
+                return (int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]))
+            return (int(rect[0] + (rect[2] - width) / 2),
+                    int(rect[1] + (rect[3] - height) / 2), width, height)
+        except (OSError, AttributeError):
+            return None
+
+    def _official_switch(self, session, hwnd, rect):
+        """Move the window with the command the app's own switch uses.
+
+        The app treats the move as a state machine: the bounds command holds a
+        native lock until finish_main_window_monitor_switch runs, and a stuck
+        lock also disables the app's own display switch. Always finish.
+        """
+        bounds = self._target_bounds(hwnd, rect)
+        if bounds is None:
+            return False
+        try:
+            expression = (
+                "(async function(){var n=window.__TAURI_INTERNALS__;"
+                "if(!n)return 'no-bridge';"
+                "try{await n.invoke('set_main_window_monitor_bounds',"
+                "{payload:{x:%d,y:%d,width:%d,height:%d}});"
+                "try{await n.invoke('sync_aux_windows_to_main_monitor')}catch(e){}"
+                "return 'ok'}catch(e){return 'err:'+e}"
+                "finally{try{await n.invoke('finish_main_window_monitor_switch')}catch(e){}}"
+                "})()" % bounds)
+            return str(session.js(expression)).strip() == "ok"
+        except (cdp.CDPError, OSError, AttributeError) as exc:
+            self.log.warn("screen: native monitor switch failed: %s" % str(exc)[:160])
+            return False
+
+    def _move_to(self, hwnd, target):
+        """Fallback: move the window with SetWindowPos when the page is gone."""
+        rect = target.get("rect") or []
+        if len(rect) != 4:
+            return False
+        bounds = self._target_bounds(hwnd, rect)
+        if bounds is None:
+            return False
+        try:
+            current_rect = wintypes.RECT()
+            _api().GetWindowRect(hwnd, ctypes.byref(current_rect))
+            width = current_rect.right - current_rect.left
+            height = current_rect.bottom - current_rect.top
+            x, y, cx, cy = bounds
+            flags = _SWP_NOZORDER | _SWP_NOACTIVATE
+            if (cx, cy) == (width, height):
+                flags |= _SWP_NOSIZE
                 cx = cy = 0
-                flags = _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE
             moved = _api().SetWindowPos(hwnd, None, x, y, cx, cy, flags)
             if not moved:
                 self.log.warn("screen: cannot move the pet window: %s"
@@ -298,8 +355,34 @@ class ScreenKeeper:
             self.log.warn("screen: cannot move the pet window: %s" % str(exc)[:160])
             return False
 
-    def _dispatch(self, hwnd, target):
-        """Move the pet window directly; the app's F8 shortcut is not reliable."""
+    def _settled(self, hwnd, target):
+        """True when the window really sits on the target monitor.
+
+        Being the monitor nearest the window is not enough: a monitor-sized
+        window on a smaller display still overlaps the old screen, leaving part
+        of the pet on it.
+        """
+        bounds = target.get("rect") or []
+        if len(bounds) != 4:
+            return False
+        rect = wintypes.RECT()
+        try:
+            if not _api().GetWindowRect(hwnd, ctypes.byref(rect)):
+                return False
+        except (OSError, AttributeError):
+            return False
+        if _large(rect, bounds):
+            return _fills(rect, bounds)
+        centre_x = (rect.left + rect.right) / 2
+        centre_y = (rect.top + rect.bottom) / 2
+        return (bounds[0] <= centre_x <= bounds[0] + bounds[2]
+                and bounds[1] <= centre_y <= bounds[1] + bounds[3])
+
+    def _dispatch(self, session, hwnd, target):
+        """Prefer the app's own switch; SetWindowPos keeps working without it."""
+        rect = target.get("rect") or []
+        if len(rect) == 4 and self._official_switch(session, hwnd, rect):
+            return True
         return self._move_to(hwnd, target)
 
     def tick(self, session, enabled=True):
@@ -341,7 +424,7 @@ class ScreenKeeper:
         if self.restoring:
             if self.clock() < self.next_check:
                 return
-            if current["device"] == target["device"]:
+            if current["device"] == target["device"] and self._settled(hwnd, target):
                 self.restoring = False
                 self.remember(current)
                 self.log.info("screen: pet is back on %s" % target["device"])
@@ -351,7 +434,7 @@ class ScreenKeeper:
                 self.log.warn("screen: could not move the pet back to %s; left it on %s"
                               % (target["device"], current["device"]))
                 return
-            if self._dispatch(hwnd, target):
+            if self._dispatch(session, hwnd, target):
                 self.attempts += 1
                 self.next_check = self.clock() + self.settle
             else:
@@ -367,11 +450,15 @@ class ScreenKeeper:
             return
 
         self.checked_hwnd = hwnd
-        if current["device"] != target["device"]:
+        if current["device"] != target["device"] or not self._settled(hwnd, target):
             self.restoring = True
             self.attempts = 1
             self.next_check = self.clock() + self.settle
-            self.log.info("screen: pet is on %s, moving it to %s"
-                          % (current["device"], target["device"]))
-            if not self._dispatch(hwnd, target):
+            if current["device"] != target["device"]:
+                self.log.info("screen: pet is on %s, moving it to %s"
+                              % (current["device"], target["device"]))
+            else:
+                self.log.info("screen: pet window does not fit %s, moving it back"
+                              % target["device"])
+            if not self._dispatch(session, hwnd, target):
                 self.restoring = False

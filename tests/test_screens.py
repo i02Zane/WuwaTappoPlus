@@ -51,6 +51,7 @@ class ScreenKeeperTests(unittest.TestCase):
             patch("wuwa_tappo_plus.screens.pet_window", lambda: self.pet["hwnd"]),
             patch("wuwa_tappo_plus.screens.list_monitors", lambda: list(self.monitors)),
             patch("wuwa_tappo_plus.screens.monitor_of_window", self.current),
+            patch.object(ScreenKeeper, "_settled", return_value=True),
             patch.object(ScreenKeeper, "_move_to", side_effect=move),
         ):
             patcher.start()
@@ -127,6 +128,14 @@ class ScreenKeeperTests(unittest.TestCase):
         self.pet = {"hwnd": 2, "device": RIGHT["device"]}
         keeper.tick(self.session)
         self.assertEqual(len(self.moves), 1, "new window on the wrong monitor")
+
+    def test_a_window_that_only_overlaps_the_target_is_moved_again(self):
+        keeper = self.keeper({"device": LEFT["device"], "rect": LEFT["rect"],
+                              "name": LEFT["name"], "id": LEFT["id"]})
+        with patch.object(ScreenKeeper, "_settled", return_value=False):
+            keeper.tick(self.session)
+        self.assertEqual(len(self.moves), 1,
+                         "a window straddling the target is not 'on' it")
 
     def test_a_breakdown_in_the_switch_request_is_not_fatal(self):
         keeper = self.keeper({"device": LEFT["device"], "rect": LEFT["rect"]})
@@ -243,6 +252,57 @@ class MoveToTests(unittest.TestCase):
         self.assertTrue(self.keeper()._move_to(1, smaller))
         self.assertEqual(api.calls,
                          [(810, 340, 0, 0, 0x0001 | 0x0004 | 0x0010)])
+
+
+class FakeSession:
+    """Page session double: records the expression and returns a fixed reply."""
+
+    def __init__(self, reply="ok"):
+        self.reply = reply
+        self.calls = []
+
+    def js(self, expression, await_promise=True):
+        self.calls.append(expression)
+        return self.reply
+
+
+class DispatchTests(unittest.TestCase):
+    """The app's own switch is preferred, with SetWindowPos as the fallback."""
+
+    SMALLER = {"device": "\\.\\DISPLAY2", "rect": [0, 0, 1920, 1080]}
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "screen.json"
+        self.api = FakeApi((-3840, 0, 3840, 2160))
+        patch("wuwa_tappo_plus.screens.monitor_of_window",
+              lambda _hwnd: LEFT).start()
+        patch("wuwa_tappo_plus.screens._api", lambda: self.api).start()
+        self.addCleanup(patch.stopall)
+
+    def keeper(self):
+        return ScreenKeeper(Mock(), path=self.path, clock=lambda: 0, settle=2.5)
+
+    def test_the_native_switch_is_used_and_always_finished(self):
+        session = FakeSession("ok")
+        self.assertTrue(self.keeper()._dispatch(session, 1, self.SMALLER))
+        expression = session.calls[0]
+        self.assertIn("set_main_window_monitor_bounds", expression)
+        self.assertIn("x:0,y:0,width:1920,height:1080", expression)
+        self.assertIn("finish_main_window_monitor_switch", expression,
+                      "a missing finish leaves the app's own switch locked")
+        self.assertEqual(self.api.calls, [], "SetWindowPos is only a fallback")
+
+    def test_a_failed_native_switch_falls_back_to_set_window_pos(self):
+        session = FakeSession("err:monitor switch already in progress")
+        self.assertTrue(self.keeper()._dispatch(session, 1, self.SMALLER))
+        self.assertEqual(len(self.api.calls), 1)
+        self.assertEqual(self.api.calls[0][:4], (0, 0, 1920, 1080))
+
+    def test_without_a_page_the_window_is_still_moved(self):
+        self.assertTrue(self.keeper()._dispatch(None, 1, self.SMALLER))
+        self.assertEqual(len(self.api.calls), 1)
 
 
 if __name__ == "__main__":
