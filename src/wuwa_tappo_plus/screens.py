@@ -162,6 +162,20 @@ def monitor_of_window(hwnd):
     return _monitor_from_handle(handle)
 
 
+def _fills(window_rect, monitor_rect, tolerance=2):
+    """True when a window rect matches a monitor rect, allowing small drift."""
+    if not monitor_rect or len(monitor_rect) != 4:
+        return False
+    try:
+        x, y, width, height = (int(value) for value in monitor_rect)
+    except (TypeError, ValueError):
+        return False
+    return (abs(window_rect.left - x) <= tolerance
+            and abs(window_rect.top - y) <= tolerance
+            and abs((window_rect.right - window_rect.left) - width) <= tolerance
+            and abs((window_rect.bottom - window_rect.top) - height) <= tolerance)
+
+
 class ScreenKeeper:
     """Follow the pet across monitors and restore it when the app restarts.
 
@@ -246,7 +260,13 @@ class ScreenKeeper:
         return None
 
     def _move_to(self, hwnd, target):
-        """Move the pet window to the target monitor without resizing it."""
+        """Move the pet window onto the target monitor.
+
+        The app draws the pet inside a transparent window that fills the
+        monitor. On two displays with different resolutions the window must be
+        resized to the destination too: keeping the source size would place the
+        dock (anchored to the window's bottom-right) outside the target.
+        """
         rect = target.get("rect") or []
         if len(rect) != 4:
             return False
@@ -258,11 +278,18 @@ class ScreenKeeper:
             height = current_rect.bottom - current_rect.top
             if width <= 0 or height <= 0:
                 return False
-            x = int(rect[0] + (rect[2] - width) / 2)
-            y = int(rect[1] + (rect[3] - height) / 2)
-            moved = _api().SetWindowPos(
-                hwnd, None, x, y, 0, 0,
-                _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE)
+            source = monitor_of_window(hwnd)
+            shell = bool(source and _fills(current_rect, source.get("rect")))
+            if shell:
+                x, y = int(rect[0]), int(rect[1])
+                cx, cy = int(rect[2]), int(rect[3])
+                flags = _SWP_NOZORDER | _SWP_NOACTIVATE
+            else:
+                x = int(rect[0] + (rect[2] - width) / 2)
+                y = int(rect[1] + (rect[3] - height) / 2)
+                cx = cy = 0
+                flags = _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE
+            moved = _api().SetWindowPos(hwnd, None, x, y, cx, cy, flags)
             if not moved:
                 self.log.warn("screen: cannot move the pet window: %s"
                               % ctypes.get_last_error())

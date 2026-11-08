@@ -191,5 +191,59 @@ class ScreenKeeperTests(unittest.TestCase):
         self.assertEqual(keeper._recorded(self.monitors)["device"], LEFT["device"])
 
 
+class FakeApi:
+    """Minimal user32 stand-in for the window geometry calls."""
+
+    def __init__(self, rect):
+        self.rect = rect
+        self.calls = []
+
+    def GetWindowRect(self, _hwnd, pointer):
+        left, top, width, height = self.rect
+        pointer._obj.left = left
+        pointer._obj.top = top
+        pointer._obj.right = left + width
+        pointer._obj.bottom = top + height
+        return 1
+
+    def SetWindowPos(self, _hwnd, _after, x, y, cx, cy, flags):
+        self.calls.append((x, y, cx, cy, flags))
+        return 1
+
+
+class MoveToTests(unittest.TestCase):
+    """Unequal displays: the monitor-sized pet window must be resized too."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "screen.json"
+        patch("wuwa_tappo_plus.screens.monitor_of_window",
+              lambda _hwnd: LEFT).start()
+        self.addCleanup(patch.stopall)
+
+    def keeper(self):
+        return ScreenKeeper(Mock(), path=self.path, clock=lambda: 0, settle=2.5)
+
+    def test_a_monitor_sized_window_is_resized_to_the_target(self):
+        api = FakeApi((-3840, 0, 3840, 2160))
+        patch("wuwa_tappo_plus.screens._api", lambda: api).start()
+        smaller = {"device": "\\.\\DISPLAY2", "rect": [0, 0, 1920, 1080]}
+
+        self.assertTrue(self.keeper()._move_to(1, smaller))
+        self.assertEqual(api.calls, [(0, 0, 1920, 1080, 0x0004 | 0x0010)],
+                         "the dock would sit outside a 1080p target if the "
+                         "4K window size were kept")
+
+    def test_a_small_window_is_only_centred(self):
+        api = FakeApi((-3000, 100, 300, 400))
+        patch("wuwa_tappo_plus.screens._api", lambda: api).start()
+        smaller = {"device": "\\.\\DISPLAY2", "rect": [0, 0, 1920, 1080]}
+
+        self.assertTrue(self.keeper()._move_to(1, smaller))
+        self.assertEqual(api.calls,
+                         [(810, 340, 0, 0, 0x0001 | 0x0004 | 0x0010)])
+
+
 if __name__ == "__main__":
     unittest.main()
