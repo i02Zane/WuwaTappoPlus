@@ -27,13 +27,19 @@ class ChestCacheTests(unittest.TestCase):
             cache.observe({"account": "b"})
             self.assertEqual(json.loads(path.read_text()), {"account": "b"})
 
-    def test_invalid_expired_and_future_records_are_ignored(self):
+    def test_invalid_and_too_old_records_are_ignored(self):
         now = int(time.time() * 1000)
-        for opened, ready in [(0, now + 1800000), (now - 2000000, now - 200000),
+        for opened, ready in [(0, now + 1800000), (now - 92000000, now - 90200000),
                               (now + 10000, now + 1810000), ("x", now),
                               (float("nan"), float("inf"))]:
             self.assertEqual(ChestCache.clean({"account": "a", "left": {
                 "opened_at": opened, "ready_at": ready}}), {"account": "a"})
+
+    def test_a_due_chest_is_kept_while_the_page_hides_it(self):
+        now = int(time.time() * 1000)
+        record = {"opened_at": now - 1900000, "ready_at": now - 100000}
+        self.assertEqual(ChestCache.clean({"account": "a", "left": record}),
+                         {"account": "a", "left": record})
 
     def test_corrupt_file_and_failed_save_do_not_stop_daemon(self):
         with tempfile.TemporaryDirectory() as directory:

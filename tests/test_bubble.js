@@ -410,6 +410,52 @@ test('native hidden chest timers ignore stale userInfo timestamps', () => {
   assert.equal(f.a.clicks.length, 0);
 });
 
+test('a ready chest is announced while the balance hides its slot', () => {
+  const f = nativeChests();
+  f.a.configure({ bubble: true, animation: false });
+  const now = 5_000_000;
+  f.a.chestCache = { account: 'acc',
+                     left: { opened_at: now - 1_801_000, ready_at: now - 1000 },
+                     right: { opened_at: now - 1_700_000, ready_at: now + 84_000 } };
+  // Under min_balance the page draws no anchor at all, so both timers are 0.
+  f.a.updateAlert(479, { now, left: 0, right: 0 });
+  const host = f.elements.get('wut-alert-host');
+  assert.equal(host.spans['.wut-main'].textContent, '不够开宝箱了');
+  assert.equal(host.spans['.wut-cd'].textContent, '宝箱已刷新');
+});
+
+test('a hidden chest that is still cooling keeps its countdown', () => {
+  const f = nativeChests();
+  f.a.configure({ bubble: true, animation: false });
+  const now = 5_000_000;
+  f.a.chestCache = { account: 'acc',
+                     left: { opened_at: now, ready_at: now + 60_000 },
+                     right: { opened_at: now, ready_at: now + 120_000 } };
+  f.a.updateAlert(479, { now, left: 0, right: 0 });
+  assert.equal(f.elements.get('wut-alert-host').spans['.wut-cd'].textContent,
+               '宝箱 1:00 后刷新');
+});
+
+test('a hidden chest with no usable cache entry says nothing', () => {
+  const f = nativeChests();
+  f.a.configure({ bubble: true, animation: false });
+  const now = 5_000_000;
+  f.a.chestCache = { account: 'acc' };
+  f.a.updateAlert(479, { now, left: 0, right: 0 });
+  assert.equal(f.elements.get('wut-alert-host').spans['.wut-cd'].textContent, '');
+});
+
+test('a hidden chest never authorizes a click', () => {
+  const f = nativeChests();
+  const now = 5_000_000;
+  f.a.chestCache = { account: 'acc',
+                     left: { opened_at: now - 1_801_000, ready_at: now - 1000 } };
+  f.a.snapshot = () => ({ now, left: 0, right: 0, native_chests: true,
+                          bal: 479, click: 0, spend: 0 });
+  f.a.tick();
+  assert.equal(f.a.clicks.length, 0);
+});
+
 test('native countdown is read from its own slot and malformed text is unknown', () => {
   const f = nativeChests();
   f.nodes.set('.reward-anchor--right .reward-countdown__text', { textContent: '12:34' });

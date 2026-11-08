@@ -332,6 +332,23 @@
     return seconds > 0 ? now + seconds * 1000 : 0;
   }
 
+  // A low wallet makes the page stop drawing the chest slots entirely, so both
+  // timers read 0 and the bubble loses its second line exactly when the user
+  // needs to know a chest is ready again. The local cache only feeds this hint;
+  // it never authorises a click, which still needs the native button.
+  function chestHint(name, now) {
+    if (chestButton(name)) return 0;
+    if (document.querySelector('.reward-anchor--' + name + ' .reward-countdown__text')) return 0;
+    var cached = A.chestCache && A.chestCache[name];
+    if (!A.chestCache || !A.chestCache.account) return 0;
+    if (!cached || !Number.isFinite(cached.ready_at)) return 0;
+    // The page only draws the slot again once the wallet recovers, and that
+    // countdown then corrects this record. A day is just an upper bound for a
+    // cache left over from an old session.
+    if (cached.ready_at < now - 86400000) return 0;
+    return cached.ready_at;
+  }
+
   function snapshot() {
     try {
       var el = document.querySelector('#app');
@@ -771,7 +788,14 @@
       // leaving a one-line bubble).
       var cd = '';
       if (snap) {
-        var wait = slotWait(snap, want === 1);
+        // Hidden slots fall back to the local cache so a ready chest is still
+        // announced while the balance is too low to draw it.
+        var known = {
+          now: snap.now,
+          left: snap.left > 0 ? snap.left : chestHint('left', snap.now),
+          right: snap.right > 0 ? snap.right : chestHint('right', snap.now)
+        };
+        var wait = slotWait(known, want === 1);
         if (wait !== null) {
           cd = wait > 0 ? '宝箱 ' + fmtCd(wait) + ' 后刷新' : '宝箱已刷新';
         }

@@ -32,8 +32,13 @@ class ChestCache:
             if not isinstance(record, dict):
                 continue
             opened, ready = record.get("opened_at"), record.get("ready_at")
+            # A due chest stays hidden in the page while the wallet is low, so
+            # this record is the only way the reminder can still say
+            # "宝箱已刷新". Keep it for a day: the first real countdown the page
+            # draws again corrects or removes it. It never authorises a click -
+            # that still needs the native button.
             if (type(opened) in (int, float) and type(ready) in (int, float)
-                    and 0 < opened <= now and now < ready <= now + 1800000
+                    and 0 < opened <= now and now < ready + 86400000
                     and ready - opened == 1800000):
                 result[slot] = {"opened_at": opened, "ready_at": ready}
         return result
