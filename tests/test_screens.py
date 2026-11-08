@@ -42,17 +42,18 @@ class ScreenKeeperTests(unittest.TestCase):
         self.pet = {"hwnd": 1, "device": LEFT["device"]}
         self.session = FakeSession()
         self.moves = []
+        self.dispatch_ok = True
 
-        def move(hwnd, target):
+        def move(session, hwnd, target):
             self.moves.append((hwnd, dict(target)))
-            return True
+            return self.dispatch_ok
 
         for patcher in (
             patch("wuwa_tappo_plus.screens.pet_window", lambda: self.pet["hwnd"]),
             patch("wuwa_tappo_plus.screens.list_monitors", lambda: list(self.monitors)),
             patch("wuwa_tappo_plus.screens.monitor_of_window", self.current),
             patch.object(ScreenKeeper, "_settled", return_value=True),
-            patch.object(ScreenKeeper, "_move_to", side_effect=move),
+            patch.object(ScreenKeeper, "_dispatch", side_effect=move),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -140,7 +141,7 @@ class ScreenKeeperTests(unittest.TestCase):
     def test_a_breakdown_in_the_switch_request_is_not_fatal(self):
         keeper = self.keeper({"device": LEFT["device"], "rect": LEFT["rect"]})
         self.pet["device"] = RIGHT["device"]
-        with patch.object(ScreenKeeper, "_move_to", return_value=False):
+        with patch.object(ScreenKeeper, "_dispatch", return_value=False):
             keeper.tick(self.session)
         self.assertFalse(keeper.restoring)
 
@@ -201,11 +202,10 @@ class ScreenKeeperTests(unittest.TestCase):
 
 
 class FakeApi:
-    """Minimal user32 stand-in for the window geometry calls."""
+    """Minimal user32 stand-in for the window geometry call."""
 
     def __init__(self, rect):
         self.rect = rect
-        self.calls = []
 
     def GetWindowRect(self, _hwnd, pointer):
         left, top, width, height = self.rect
@@ -215,13 +215,11 @@ class FakeApi:
         pointer._obj.bottom = top + height
         return 1
 
-    def SetWindowPos(self, _hwnd, _after, x, y, cx, cy, flags):
-        self.calls.append((x, y, cx, cy, flags))
-        return 1
 
-
-class MoveToTests(unittest.TestCase):
+class TargetBoundsTests(unittest.TestCase):
     """Unequal displays: the monitor-sized pet window must be resized too."""
+
+    SMALLER = {"device": "\\.\\DISPLAY2", "rect": [0, 0, 1920, 1080]}
 
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -234,24 +232,19 @@ class MoveToTests(unittest.TestCase):
     def keeper(self):
         return ScreenKeeper(Mock(), path=self.path, clock=lambda: 0, settle=2.5)
 
-    def test_a_monitor_sized_window_is_resized_to_the_target(self):
-        api = FakeApi((-3840, 0, 3840, 2160))
-        patch("wuwa_tappo_plus.screens._api", lambda: api).start()
-        smaller = {"device": "\\.\\DISPLAY2", "rect": [0, 0, 1920, 1080]}
-
-        self.assertTrue(self.keeper()._move_to(1, smaller))
-        self.assertEqual(api.calls, [(0, 0, 1920, 1080, 0x0004 | 0x0010)],
+    def test_a_monitor_sized_window_covers_the_target(self):
+        patch("wuwa_tappo_plus.screens._api",
+              lambda: FakeApi((-3840, 0, 3840, 2160))).start()
+        self.assertEqual(self.keeper()._target_bounds(1, self.SMALLER["rect"]),
+                         (0, 0, 1920, 1080),
                          "the dock would sit outside a 1080p target if the "
                          "4K window size were kept")
 
     def test_a_small_window_is_only_centred(self):
-        api = FakeApi((-3000, 100, 300, 400))
-        patch("wuwa_tappo_plus.screens._api", lambda: api).start()
-        smaller = {"device": "\\.\\DISPLAY2", "rect": [0, 0, 1920, 1080]}
-
-        self.assertTrue(self.keeper()._move_to(1, smaller))
-        self.assertEqual(api.calls,
-                         [(810, 340, 0, 0, 0x0001 | 0x0004 | 0x0010)])
+        patch("wuwa_tappo_plus.screens._api",
+              lambda: FakeApi((-3000, 100, 300, 400))).start()
+        self.assertEqual(self.keeper()._target_bounds(1, self.SMALLER["rect"]),
+                         (810, 340, 300, 400))
 
 
 class FakeSession:
@@ -267,7 +260,7 @@ class FakeSession:
 
 
 class DispatchTests(unittest.TestCase):
-    """The app's own switch is preferred, with SetWindowPos as the fallback."""
+    """The app's own switch is the only way the window is moved."""
 
     SMALLER = {"device": "\\.\\DISPLAY2", "rect": [0, 0, 1920, 1080]}
 
@@ -275,34 +268,39 @@ class DispatchTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name) / "screen.json"
-        self.api = FakeApi((-3840, 0, 3840, 2160))
         patch("wuwa_tappo_plus.screens.monitor_of_window",
               lambda _hwnd: LEFT).start()
-        patch("wuwa_tappo_plus.screens._api", lambda: self.api).start()
+        patch("wuwa_tappo_plus.screens._api",
+              lambda: FakeApi((-3840, 0, 3840, 2160))).start()
         self.addCleanup(patch.stopall)
 
     def keeper(self):
         return ScreenKeeper(Mock(), path=self.path, clock=lambda: 0, settle=2.5)
 
-    def test_the_native_switch_is_used_and_always_finished(self):
+    def test_the_whole_official_switch_runs(self):
         session = FakeSession("ok")
         self.assertTrue(self.keeper()._dispatch(session, 1, self.SMALLER))
         expression = session.calls[0]
-        self.assertIn("set_main_window_monitor_bounds", expression)
-        self.assertIn("x:0,y:0,width:1920,height:1080", expression)
-        self.assertIn("finish_main_window_monitor_switch", expression,
-                      "a missing finish leaves the app's own switch locked")
-        self.assertEqual(self.api.calls, [], "SetWindowPos is only a fallback")
+        for step in ("cat-main-monitor-switch-prepare-request",
+                     "cat-main-monitor-switch-prepare-done",
+                     "set_main_window_monitor_bounds",
+                     "cat-main-monitor-switch-layout-request",
+                     "cat-main-monitor-switch-layout-done",
+                     "sync_aux_windows_to_main_monitor",
+                     "cat-display-switched",
+                     "finish_main_window_monitor_switch"):
+            self.assertIn(step, expression)
+        self.assertIn("x: 0, y: 0, width: 1920, height: 1080", expression)
 
-    def test_a_failed_native_switch_falls_back_to_set_window_pos(self):
+    def test_finish_only_runs_after_the_bounds_command_started(self):
         session = FakeSession("err:monitor switch already in progress")
-        self.assertTrue(self.keeper()._dispatch(session, 1, self.SMALLER))
-        self.assertEqual(len(self.api.calls), 1)
-        self.assertEqual(self.api.calls[0][:4], (0, 0, 1920, 1080))
+        self.assertFalse(self.keeper()._dispatch(session, 1, self.SMALLER))
+        expression = session.calls[0]
+        self.assertIn("if (moved) {", expression,
+                      "finishing an unowned switch would release another one")
 
-    def test_without_a_page_the_window_is_still_moved(self):
-        self.assertTrue(self.keeper()._dispatch(None, 1, self.SMALLER))
-        self.assertEqual(len(self.api.calls), 1)
+    def test_without_a_page_nothing_is_moved(self):
+        self.assertFalse(self.keeper()._dispatch(None, 1, self.SMALLER))
 
 
 if __name__ == "__main__":

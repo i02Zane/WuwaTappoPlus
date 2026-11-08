@@ -1,8 +1,9 @@
 """Remember which monitor the pet is on and put it back after a restart.
 
-The pet window is moved directly with SetWindowPos; the app's F8 page listener
-proved unreliable after app updates. Nothing here touches the app's files or
-memory, and a missing monitor is never fatal: the pet stays where it is.
+The window is moved through the app's own display switch (prepare, bounds,
+viewport, layout, aux windows, notify, finish) instead of the deprecated F8
+page event. Nothing here touches the app's files or memory, and a missing
+monitor is never fatal: the pet stays where it is.
 """
 
 import ctypes
@@ -20,9 +21,6 @@ PET_TITLE = "Wuwa Tappo"
 
 _MONITORINFOF_PRIMARY = 0x1
 _MONITOR_DEFAULTTONEAREST = 0x2
-_SWP_NOSIZE = 0x0001
-_SWP_NOZORDER = 0x0004
-_SWP_NOACTIVATE = 0x0010
 
 _MONITORENUMPROC = ctypes.WINFUNCTYPE(
     wintypes.BOOL, ctypes.c_void_p, wintypes.HDC,
@@ -74,10 +72,6 @@ def _api():
         user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
         user32.MonitorFromWindow.restype = ctypes.c_void_p
         user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
-        user32.SetWindowPos.argtypes = [
-            wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-            ctypes.c_int, ctypes.c_int, wintypes.UINT]
-        user32.SetWindowPos.restype = wintypes.BOOL
         user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         _user32 = user32
@@ -303,57 +297,103 @@ class ScreenKeeper:
         except (OSError, AttributeError):
             return None
 
-    def _official_switch(self, session, hwnd, rect):
-        """Move the window with the command the app's own switch uses.
+    # Mirrors the app's own display switch: prepare -> bounds -> viewport ->
+    # layout -> aux windows -> notify, and finish in finally. The bounds command
+    # holds a native lock; a missing finish also breaks the app's own switch.
+    _SWITCH_JS = r"""
+(async function(){
+  var n = window.__TAURI_INTERNALS__;
+  if (!n) return 'no-bridge';
+  var invoke = n.invoke.bind(n);
+  var id = 'wut-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  var target = {x: %(x)d, y: %(y)d, width: %(w)d, height: %(h)d};
+  var fingerprint = [target.x, target.y, target.width, target.height].join(',');
+  var moved = false;
+  function once(event){
+    var handler, unlisten = null, resolveDone;
+    var done = new Promise(function(r){ resolveDone = r; });
+    handler = n.transformCallback(function(p){
+      if (p && p.payload && p.payload.requestId === id) resolveDone(true);
+    });
+    var ready = invoke('plugin:event|listen',
+      {event: event, target: {kind: 'Any'}, handler: handler})
+      .then(function(u){ unlisten = u; }, function(){});
+    var timeout = new Promise(function(r){ setTimeout(function(){ r(false); }, 1200); });
+    return {
+      ready: ready,
+      done: Promise.race([done, timeout]),
+      cleanup: function(){
+        try { if (unlisten !== null) invoke('plugin:event|unlisten', {event: event, eventId: unlisten}); } catch (e) {}
+        try { if (n.unregisterCallback) n.unregisterCallback(handler); } catch (e) {}
+      }
+    };
+  }
+  async function roundTrip(send, finish, payload){
+    var link = once(finish);
+    await link.ready;
+    invoke('plugin:event|emit', {event: send, payload: payload}).catch(function(){});
+    var ok = await link.done;
+    link.cleanup();
+    return ok;
+  }
+  async function sourceFingerprint(){
+    try {
+      var pos = await invoke('plugin:window|outer_position', {label: 'main'});
+      var size = await invoke('plugin:window|outer_size', {label: 'main'});
+      return [pos.x, pos.y, size.width, size.height].join(',');
+    } catch (e) { return null; }
+  }
+  try {
+    var source = await sourceFingerprint();
+    await roundTrip('cat-main-monitor-switch-prepare-request',
+      'cat-main-monitor-switch-prepare-done',
+      {requestId: id, sourceFingerprint: source, targetFingerprint: fingerprint});
+    await invoke('set_main_window_monitor_bounds', {payload: target});
+    moved = true;
+    var deadline = Date.now() + 1500;
+    do {
+      var size = await invoke('plugin:window|inner_size', {label: 'main'});
+      if (Math.abs(size.width - target.width) <= 2
+          && Math.abs(size.height - target.height) <= 2) break;
+      await new Promise(function(r){ setTimeout(r, 16); });
+    } while (Date.now() < deadline);
+    await roundTrip('cat-main-monitor-switch-layout-request',
+      'cat-main-monitor-switch-layout-done',
+      {requestId: id, targetFingerprint: fingerprint,
+       targetWidth: target.width, targetHeight: target.height});
+    try { await invoke('sync_aux_windows_to_main_monitor'); } catch (e) {}
+    invoke('plugin:event|emit', {event: 'cat-display-switched',
+      payload: {fromFingerprint: source, toFingerprint: fingerprint}}).catch(function(){});
+    return 'ok';
+  } catch (e) {
+    return 'err:' + e;
+  } finally {
+    if (moved) {
+      try { await invoke('finish_main_window_monitor_switch'); } catch (e) {}
+    }
+  }
+})()
+"""
 
-        The app treats the move as a state machine: the bounds command holds a
-        native lock until finish_main_window_monitor_switch runs, and a stuck
-        lock also disables the app's own display switch. Always finish.
-        """
+    def _official_switch(self, session, hwnd, rect):
+        """Switch displays exactly the way the app's own settings button does."""
         bounds = self._target_bounds(hwnd, rect)
         if bounds is None:
             return False
+        if session is None:
+            self.log.warn("screen: no page session, cannot switch displays")
+            return False
+        expression = self._SWITCH_JS % {"x": bounds[0], "y": bounds[1],
+                                        "w": bounds[2], "h": bounds[3]}
         try:
-            expression = (
-                "(async function(){var n=window.__TAURI_INTERNALS__;"
-                "if(!n)return 'no-bridge';"
-                "try{await n.invoke('set_main_window_monitor_bounds',"
-                "{payload:{x:%d,y:%d,width:%d,height:%d}});"
-                "try{await n.invoke('sync_aux_windows_to_main_monitor')}catch(e){}"
-                "return 'ok'}catch(e){return 'err:'+e}"
-                "finally{try{await n.invoke('finish_main_window_monitor_switch')}catch(e){}}"
-                "})()" % bounds)
-            return str(session.js(expression)).strip() == "ok"
+            result = str(session.js(expression)).strip()
         except (cdp.CDPError, OSError, AttributeError) as exc:
             self.log.warn("screen: native monitor switch failed: %s" % str(exc)[:160])
             return False
-
-    def _move_to(self, hwnd, target):
-        """Fallback: move the window with SetWindowPos when the page is gone."""
-        rect = target.get("rect") or []
-        if len(rect) != 4:
+        if result != "ok":
+            self.log.warn("screen: native monitor switch rejected: %s" % result[:160])
             return False
-        bounds = self._target_bounds(hwnd, rect)
-        if bounds is None:
-            return False
-        try:
-            current_rect = wintypes.RECT()
-            _api().GetWindowRect(hwnd, ctypes.byref(current_rect))
-            width = current_rect.right - current_rect.left
-            height = current_rect.bottom - current_rect.top
-            x, y, cx, cy = bounds
-            flags = _SWP_NOZORDER | _SWP_NOACTIVATE
-            if (cx, cy) == (width, height):
-                flags |= _SWP_NOSIZE
-                cx = cy = 0
-            moved = _api().SetWindowPos(hwnd, None, x, y, cx, cy, flags)
-            if not moved:
-                self.log.warn("screen: cannot move the pet window: %s"
-                              % ctypes.get_last_error())
-            return bool(moved)
-        except (OSError, AttributeError) as exc:
-            self.log.warn("screen: cannot move the pet window: %s" % str(exc)[:160])
-            return False
+        return True
 
     def _settled(self, hwnd, target):
         """True when the window really sits on the target monitor.
@@ -379,11 +419,11 @@ class ScreenKeeper:
                 and bounds[1] <= centre_y <= bounds[1] + bounds[3])
 
     def _dispatch(self, session, hwnd, target):
-        """Prefer the app's own switch; SetWindowPos keeps working without it."""
+        """Only the app's own switch moves the window; there is no second path."""
         rect = target.get("rect") or []
-        if len(rect) == 4 and self._official_switch(session, hwnd, rect):
-            return True
-        return self._move_to(hwnd, target)
+        if len(rect) != 4:
+            return False
+        return self._official_switch(session, hwnd, rect)
 
     def tick(self, session, enabled=True):
         if not enabled:
