@@ -335,13 +335,13 @@
     var input = document.createElement('input');
     input.id = 'wut-apps-input';
     input.type = 'text';
-    input.className = 'wut-game-input';
+    input.className = 'setting-input';
     input.placeholder = '或输入程序名，例如 SomeGame.exe';
     input.setAttribute('aria-label', '程序名');
     var manual = document.createElement('button');
     manual.id = 'wut-apps-manual';
     manual.type = 'button';
-    manual.className = 'wut-game-add';
+    manual.className = 'setting-btn';
     manual.textContent = '添加';
     function addByName() {
       var value = String(input.value || '').trim();
@@ -393,7 +393,7 @@
         text.textContent = name;
         var remove = document.createElement('button');
         remove.type = 'button';
-        remove.className = 'wut-game-app-remove';
+        remove.className = 'setting-shortcut-clear';
         remove.setAttribute('aria-label', '移除 ' + name);
         remove.textContent = '×';
         remove.addEventListener('click', function () {
@@ -408,7 +408,8 @@
     if (empty) empty.style.display = apps.length ? 'none' : '';
     var open = document.getElementById('wut-apps-open');
     if (!open) return;
-    var state = S.appsLoading ? 'loading' : JSON.stringify(S.appList || []);
+    var state = (S.appsLoading ? 'loading' : JSON.stringify(S.appList || [])) +
+      '|' + JSON.stringify(apps);
     if (open.dataset.state === state) return;
     open.dataset.state = state;
     while (open.firstChild) open.removeChild(open.firstChild);
@@ -485,41 +486,61 @@
         + '#wut-plus-settings .wut-export .setting-content{flex-shrink:0;}'
         + '#wut-plus-settings .wut-export button{white-space:nowrap;}'
         + '#wut-plus-settings .wut-export button:disabled{cursor:wait;opacity:.5;}'
-        + '#wut-plus-settings .wut-game-content{flex-direction:column;align-items:flex-end;gap:6px;}'
-        + '#wut-plus-settings .wut-game-apps{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;}'
-        + '#wut-plus-settings .wut-game-app{display:inline-flex;align-items:center;gap:4px;max-width:190px;'
-        + 'padding:2px 4px 2px 8px;border-radius:10px;background:rgba(142,94,67,.1);font-size:12px;color:#8e5e43;}'
-        + '#wut-plus-settings .wut-game-app span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
-        + '#wut-plus-settings .wut-game-app-remove{border:0;background:none;color:#b4543c;padding:0 2px;'
-        + 'font-size:14px;line-height:1;cursor:pointer;}'
-        + '#wut-plus-settings .wut-game-apps-empty{font-size:12px;color:#8e7b6a;}'
-        + '#wut-plus-settings .wut-game-manual{display:flex;gap:6px;justify-content:flex-end;}'
-        + '#wut-plus-settings .wut-game-input{flex:1 1 160px;min-width:0;padding:4px 8px;font-size:12px;'
-        + 'border:1px solid #e0cfc0;border-radius:6px;background:#fff;color:#8e5e43;}'
-        + '#wut-plus-settings .wut-game-add{border:1px solid #e0cfc0;border-radius:6px;background:#fff;'
-        + 'color:#8e5e43;font-size:12px;padding:4px 8px;cursor:pointer;}'
+        + '#wut-plus-settings .wut-game-row .setting-content{flex-shrink:0;}'
         + '#wut-apps-modal{position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;'
-        + 'justify-content:center;padding:20px;background:rgba(60,38,20,.35);}'
-        + '#wut-apps-modal .wut-apps-panel{width:min(460px,100%);max-height:min(560px,88vh);overflow:auto;'
-        + 'padding:14px 16px;border:1px solid rgba(142,94,67,.25);border-radius:12px;background:#fffdf8;'
-        + 'color:#8e5e43;font-size:13px;box-shadow:0 18px 48px rgba(60,38,20,.32);}'
+        + 'justify-content:center;padding:24px;background:rgba(60,35,20,.28);}'
+        + '#wut-apps-modal .wut-apps-panel{display:flex;flex-direction:column;width:min(420px,100%);'
+        + 'max-height:min(560px,86vh);box-sizing:border-box;padding:16px 18px 18px;'
+        + 'border:2px solid rgb(235,206,155);border-radius:18px;background:rgb(251,237,213);'
+        + 'color:rgb(142,94,67);font-size:16px;box-shadow:0 18px 48px rgba(60,35,20,.3);}'
         + '#wut-apps-modal .wut-apps-head{display:flex;align-items:center;justify-content:space-between;'
-        + 'margin-bottom:6px;font-size:16px;}'
-        + '#wut-apps-modal .wut-apps-close{border:0;background:none;color:#8e7b6a;font-size:20px;'
-        + 'line-height:1;cursor:pointer;}'
-        + '#wut-apps-modal .wut-apps-title{margin:10px 0 4px;font-size:12px;color:#8e7b6a;}'
-        + '#wut-apps-modal .wut-apps-open{display:flex;flex-direction:column;gap:4px;}'
-        + '#wut-apps-modal .wut-apps-item{display:flex;align-items:center;gap:8px;width:100%;'
-        + 'padding:6px 8px;border:1px solid #eadbcd;border-radius:8px;background:#fff;color:#8e5e43;'
-        + 'font-size:12px;text-align:left;cursor:pointer;}'
-        + '#wut-apps-modal .wut-apps-item:hover{border-color:#d7bfa8;}'
-        + '#wut-apps-modal .wut-apps-item.is-added{opacity:.6;cursor:default;}'
-        + '#wut-apps-modal .wut-apps-item-name{font-weight:600;white-space:nowrap;}'
-        + '#wut-apps-modal .wut-apps-item-title{flex:1;overflow:hidden;text-overflow:ellipsis;'
-        + 'white-space:nowrap;color:#8e7b6a;}'
-        + '#wut-apps-modal .wut-apps-item-state{font-size:12px;color:#b4543c;}'
-        + '#wut-apps-modal .wut-apps-foot{display:flex;gap:6px;margin-top:12px;}'
-        + '#wut-apps-modal .wut-apps-note{font-size:12px;color:#8e7b6a;}'
+        + 'gap:12px;}'
+        + '#wut-apps-modal .wut-apps-head strong{font-size:18px;font-weight:400;color:rgb(142,94,67);}'
+        + '#wut-apps-modal .wut-apps-close{flex:none;width:22px;height:22px;padding:0;border:0;'
+        + 'border-radius:50%;background:transparent;color:rgb(142,123,106);font-size:20px;line-height:1;'
+        + 'cursor:pointer;}'
+        + '#wut-apps-modal .wut-apps-close:hover{background:rgb(235,206,155);color:rgb(254,246,221);}'
+        + '#wut-apps-modal .wut-apps-title{margin:12px 0 6px;font-size:14px;color:rgb(142,123,106);}'
+        + '#wut-apps-modal .wut-game-apps{display:flex;flex-wrap:wrap;gap:6px;}'
+        + '#wut-apps-modal .wut-game-app{display:inline-flex;align-items:center;gap:6px;max-width:100%;'
+        + 'height:28px;box-sizing:border-box;padding:0 6px 0 12px;border-radius:14px;'
+        + 'border:1px solid rgb(231,183,124);background:rgb(254,210,145);color:rgb(142,94,67);'
+        + 'font-size:16px;filter:drop-shadow(rgb(231,183,124) 0 2px 0);}'
+        + '#wut-apps-modal .wut-game-app>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
+        + '#wut-apps-modal .wut-game-app .setting-shortcut-clear{position:static;flex:none;width:16px;'
+        + 'height:16px;padding:0;border:0;border-radius:50%;background:rgb(235,206,155);'
+        + 'color:rgb(254,246,221);font-size:12px;line-height:1;cursor:pointer;}'
+        + '#wut-apps-modal .wut-game-apps-empty{font-size:14px;color:rgb(142,123,106);}'
+        + '#wut-apps-modal .wut-apps-open{display:flex;flex-direction:column;gap:6px;overflow-y:auto;'
+        + 'flex:1 1 auto;min-height:96px;padding:2px;scrollbar-width:thin;'
+        + 'scrollbar-color:rgb(231,183,124) transparent;}'
+        + '#wut-apps-modal .wut-apps-open::-webkit-scrollbar{width:8px;}'
+        + '#wut-apps-modal .wut-apps-open::-webkit-scrollbar-thumb{background:rgb(231,183,124);'
+        + 'border-radius:4px;}'
+        + '#wut-apps-modal .wut-apps-item{display:flex;align-items:center;gap:10px;width:100%;'
+        + 'box-sizing:border-box;min-height:40px;padding:4px 12px;border:1px solid rgb(235,206,155);'
+        + 'border-radius:10px;background:rgb(254,246,221);color:rgb(142,94,67);font-size:18px;'
+        + 'font-family:inherit;text-align:left;cursor:pointer;}'
+        + '#wut-apps-modal .wut-apps-item:hover{border-color:rgb(153,94,63);}'
+        + '#wut-apps-modal .wut-apps-item.is-added{opacity:.55;cursor:default;}'
+        + '#wut-apps-modal .wut-apps-item-name{flex:0 1 auto;max-width:66%;overflow:hidden;'
+        + 'text-overflow:ellipsis;white-space:nowrap;}'
+        + '#wut-apps-modal .wut-apps-item-title{flex:1 1 0;min-width:0;overflow:hidden;'
+        + 'text-overflow:ellipsis;white-space:nowrap;font-size:14px;color:rgb(142,123,106);}'
+        + '#wut-apps-modal .wut-apps-item-state{flex:none;font-size:14px;color:rgb(142,123,106);}'
+        + '#wut-apps-modal .wut-apps-foot{display:flex;align-items:center;gap:8px;margin-top:12px;}'
+        + '#wut-apps-modal .wut-apps-foot .setting-input{flex:1 1 auto;min-width:0;max-width:none;'
+        + 'box-sizing:border-box;height:30px;padding:0 14px;border:2px solid rgb(235,206,155);'
+        + 'border-radius:18px;background:rgb(254,246,221);color:rgb(142,94,67);font-size:16px;'
+        + 'font-family:inherit;}'
+        + '#wut-apps-modal .wut-apps-foot .setting-input::placeholder{color:rgb(235,206,155);}'
+        + '#wut-apps-modal .wut-apps-foot .setting-btn{flex:none;min-width:64px;height:30px;'
+        + 'padding:0 16px;border:1px solid rgb(231,183,124);border-radius:18px;'
+        + 'background:rgb(254,210,145);color:rgb(142,94,67);font-size:16px;line-height:30px;'
+        + 'font-family:inherit;text-align:center;cursor:pointer;'
+        + 'filter:drop-shadow(rgb(231,183,124) 0 2px 0);}'
+        + '#wut-apps-modal .wut-apps-foot .setting-btn:disabled{opacity:.5;cursor:wait;}'
+        + '#wut-apps-modal .wut-apps-note{padding:8px 2px;font-size:14px;color:rgb(142,123,106);}'
         + '#wut-export-status{overflow-wrap:anywhere;}'
         + '#wut-daily-report{padding:12px 18px;margin:12px 0;border-radius:8px;'
         + 'background:rgba(213,169,108,.09);color:#8e5e43;}'
@@ -726,7 +747,7 @@
     }
     function appendGameModeAppsRow() {
       var row = document.createElement('div');
-      row.className = 'setting-item';
+      row.className = 'setting-item wut-game-row';
       row.id = 'wut-setting-game-mode-apps-row';
       var label = document.createElement('div');
       label.className = 'setting-label';
@@ -745,7 +766,7 @@
       var button = document.createElement('button');
       button.id = 'wut-game-apps-manage';
       button.type = 'button';
-      button.className = 'wut-game-add';
+      button.className = 'setting-btn';
       button.textContent = '选择应用…';
       button.setAttribute('aria-haspopup', 'dialog');
       button.addEventListener('click', openAppsDialog);
