@@ -5,7 +5,8 @@
 
   var S = window.__WUT_SETTINGS__ = {
     version: VERSION, requests: [], beat: 0, report: null,
-    exportPath: null, exportError: false, accessories: {}, foregroundApp: '',
+    exportPath: null, exportError: false, accessories: {},
+    appsOpen: false, appList: null, appsLoading: false,
     _test: { emitLoginSuccess: emitLoginSuccess },
     preferences: { auto_open: true, balance_reminder: true, bubble: true, animation: true,
                    remember_screen: true, auto_emote: false, pause_clicks: false,
@@ -259,43 +260,197 @@
     render();
   }
 
-  function renderGameModeApps() {
-    var list = document.getElementById('wut-game-apps');
-    if (!list) return;
-    var online = Date.now() - S.beat <= 5000;
-    var add = document.getElementById('wut-game-apps-add');
-    if (add) {
-      var candidate = S.foregroundApp || '';
-      var label = candidate ? '添加 ' + candidate : '添加最近使用的程序';
-      if (add.textContent !== label) add.textContent = label;
-      add.disabled = !candidate || !online;
-    }
-    var manual = document.getElementById('wut-game-apps-manual');
-    if (manual) manual.disabled = !online;
+  function addGameModeApp(name) {
+    if (Date.now() - S.beat > 5000) { render(); return; }
+    S.requests.push({ id: instance + '-' + (++serial), action: 'whitelist_add', name: name });
+    error = ''; saved = false;
+    render();
+  }
+
+  function renderAppsRow() {
+    var button = document.getElementById('wut-game-apps-manage');
+    if (!button) return;
     var apps = Array.isArray(S.preferences.game_mode_apps) ? S.preferences.game_mode_apps : [];
-    var key = JSON.stringify(apps);
-    if (list.dataset.state === key) return;
-    list.dataset.state = key;
-    while (list.firstChild) list.removeChild(list.firstChild);
-    apps.forEach(function (name) {
-      var chip = document.createElement('span');
-      chip.className = 'wut-game-app';
-      var text = document.createElement('span');
-      text.textContent = name;
-      var remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'wut-game-app-remove';
-      remove.setAttribute('aria-label', '移除 ' + name);
-      remove.textContent = '×';
-      remove.addEventListener('click', function () {
-        saveGameModeApps(apps.filter(function (item) { return item !== name; }));
-      });
-      chip.appendChild(text);
-      chip.appendChild(remove);
-      list.appendChild(chip);
+    var label = apps.length ? '管理白名单（' + apps.length + '）' : '选择应用…';
+    if (button.textContent !== label) button.textContent = label;
+    button.disabled = Date.now() - S.beat > 5000;
+  }
+
+  function closeAppsDialog() {
+    S.appsOpen = false;
+    var mask = document.getElementById('wut-apps-modal');
+    if (mask) mask.remove();
+  }
+
+  function openAppsDialog() {
+    if (Date.now() - S.beat > 5000) { render(); return; }
+    if (document.getElementById('wut-apps-modal')) return;
+    S.appsOpen = true;
+    S.appList = null;
+    S.appsLoading = true;
+    S.requests.push({ id: instance + '-' + (++serial), action: 'list_apps' });
+    renderAppsDialog();
+  }
+
+  function mountAppsDialog() {
+    var mask = document.createElement('div');
+    mask.id = 'wut-apps-modal';
+    mask.className = 'wut-apps-mask';
+    mask.setAttribute('role', 'dialog');
+    mask.setAttribute('aria-modal', 'true');
+    mask.setAttribute('aria-label', '自动游戏模式白名单');
+    var panel = document.createElement('div');
+    panel.className = 'wut-apps-panel';
+    var head = document.createElement('div');
+    head.className = 'wut-apps-head';
+    var title = document.createElement('strong');
+    title.textContent = '自动游戏模式白名单';
+    var close = document.createElement('button');
+    close.id = 'wut-apps-close';
+    close.type = 'button';
+    close.className = 'wut-apps-close';
+    close.setAttribute('aria-label', '关闭');
+    close.textContent = '×';
+    close.addEventListener('click', closeAppsDialog);
+    head.appendChild(title);
+    head.appendChild(close);
+    var chosenTitle = document.createElement('div');
+    chosenTitle.className = 'wut-apps-title';
+    chosenTitle.textContent = '已添加';
+    var chosen = document.createElement('div');
+    chosen.id = 'wut-apps-chosen';
+    chosen.className = 'wut-game-apps';
+    var empty = document.createElement('div');
+    empty.id = 'wut-apps-empty';
+    empty.className = 'wut-game-apps-empty';
+    empty.textContent = '尚未添加程序';
+    var openTitle = document.createElement('div');
+    openTitle.className = 'wut-apps-title';
+    openTitle.textContent = '当前打开的应用';
+    var open = document.createElement('div');
+    open.id = 'wut-apps-open';
+    open.className = 'wut-apps-open';
+    var foot = document.createElement('div');
+    foot.className = 'wut-apps-foot';
+    var input = document.createElement('input');
+    input.id = 'wut-apps-input';
+    input.type = 'text';
+    input.className = 'wut-game-input';
+    input.placeholder = '或输入程序名，例如 SomeGame.exe';
+    input.setAttribute('aria-label', '程序名');
+    var manual = document.createElement('button');
+    manual.id = 'wut-apps-manual';
+    manual.type = 'button';
+    manual.className = 'wut-game-add';
+    manual.textContent = '添加';
+    function addByName() {
+      var value = String(input.value || '').trim();
+      if (!value) { return; }
+      input.value = '';
+      addGameModeApp(value);
+    }
+    manual.addEventListener('click', addByName);
+    input.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') { event.preventDefault(); addByName(); }
     });
-    var empty = document.getElementById('wut-game-apps-empty');
+    foot.appendChild(input);
+    foot.appendChild(manual);
+    panel.appendChild(head);
+    panel.appendChild(chosenTitle);
+    panel.appendChild(chosen);
+    panel.appendChild(empty);
+    panel.appendChild(openTitle);
+    panel.appendChild(open);
+    panel.appendChild(foot);
+    mask.appendChild(panel);
+    mask.addEventListener('click', function (event) {
+      if (event.target === mask) closeAppsDialog();
+    });
+    (document.body || document.documentElement).appendChild(mask);
+  }
+
+  function renderAppsDialog() {
+    var mask = document.getElementById('wut-apps-modal');
+    if (!S.appsOpen) {
+      if (mask) closeAppsDialog();
+      return;
+    }
+    if (!mask) {
+      mountAppsDialog();
+      mask = document.getElementById('wut-apps-modal');
+    }
+    if (!mask) return;
+    var apps = Array.isArray(S.preferences.game_mode_apps) ? S.preferences.game_mode_apps : [];
+    var chosen = document.getElementById('wut-apps-chosen');
+    var key = JSON.stringify(apps);
+    if (chosen && chosen.dataset.state !== key) {
+      chosen.dataset.state = key;
+      while (chosen.firstChild) chosen.removeChild(chosen.firstChild);
+      apps.forEach(function (name) {
+        var chip = document.createElement('span');
+        chip.className = 'wut-game-app';
+        var text = document.createElement('span');
+        text.textContent = name;
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'wut-game-app-remove';
+        remove.setAttribute('aria-label', '移除 ' + name);
+        remove.textContent = '×';
+        remove.addEventListener('click', function () {
+          saveGameModeApps(apps.filter(function (item) { return item !== name; }));
+        });
+        chip.appendChild(text);
+        chip.appendChild(remove);
+        chosen.appendChild(chip);
+      });
+    }
+    var empty = document.getElementById('wut-apps-empty');
     if (empty) empty.style.display = apps.length ? 'none' : '';
+    var open = document.getElementById('wut-apps-open');
+    if (!open) return;
+    var state = S.appsLoading ? 'loading' : JSON.stringify(S.appList || []);
+    if (open.dataset.state === state) return;
+    open.dataset.state = state;
+    while (open.firstChild) open.removeChild(open.firstChild);
+    if (S.appsLoading) {
+      var loading = document.createElement('div');
+      loading.className = 'wut-apps-note';
+      loading.textContent = '正在读取…';
+      open.appendChild(loading);
+      return;
+    }
+    var list = (S.appList || []).filter(function (app) { return app && app.name; });
+    if (!list.length) {
+      var none = document.createElement('div');
+      none.className = 'wut-apps-note';
+      none.textContent = '没有可添加的应用';
+      open.appendChild(none);
+      return;
+    }
+    list.forEach(function (app) {
+      var row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'wut-apps-item';
+      var label = document.createElement('span');
+      label.className = 'wut-apps-item-name';
+      label.textContent = app.name;
+      var text = document.createElement('span');
+      text.className = 'wut-apps-item-title';
+      text.textContent = app.title || '';
+      row.appendChild(label);
+      row.appendChild(text);
+      if (apps.indexOf(String(app.name).toLowerCase()) >= 0) {
+        row.classList.add('is-added');
+        var mark = document.createElement('span');
+        mark.className = 'wut-apps-item-state';
+        mark.textContent = '已添加';
+        row.appendChild(mark);
+        row.disabled = true;
+      } else {
+        row.addEventListener('click', function () { addGameModeApp(app.name); });
+      }
+      open.appendChild(row);
+    });
   }
 
   function mount() {
@@ -343,6 +498,28 @@
         + 'border:1px solid #e0cfc0;border-radius:6px;background:#fff;color:#8e5e43;}'
         + '#wut-plus-settings .wut-game-add{border:1px solid #e0cfc0;border-radius:6px;background:#fff;'
         + 'color:#8e5e43;font-size:12px;padding:4px 8px;cursor:pointer;}'
+        + '#wut-apps-modal{position:fixed;inset:0;z-index:2147483600;display:flex;align-items:center;'
+        + 'justify-content:center;padding:20px;background:rgba(60,38,20,.35);}'
+        + '#wut-apps-modal .wut-apps-panel{width:min(460px,100%);max-height:min(560px,88vh);overflow:auto;'
+        + 'padding:14px 16px;border:1px solid rgba(142,94,67,.25);border-radius:12px;background:#fffdf8;'
+        + 'color:#8e5e43;font-size:13px;box-shadow:0 18px 48px rgba(60,38,20,.32);}'
+        + '#wut-apps-modal .wut-apps-head{display:flex;align-items:center;justify-content:space-between;'
+        + 'margin-bottom:6px;font-size:16px;}'
+        + '#wut-apps-modal .wut-apps-close{border:0;background:none;color:#8e7b6a;font-size:20px;'
+        + 'line-height:1;cursor:pointer;}'
+        + '#wut-apps-modal .wut-apps-title{margin:10px 0 4px;font-size:12px;color:#8e7b6a;}'
+        + '#wut-apps-modal .wut-apps-open{display:flex;flex-direction:column;gap:4px;}'
+        + '#wut-apps-modal .wut-apps-item{display:flex;align-items:center;gap:8px;width:100%;'
+        + 'padding:6px 8px;border:1px solid #eadbcd;border-radius:8px;background:#fff;color:#8e5e43;'
+        + 'font-size:12px;text-align:left;cursor:pointer;}'
+        + '#wut-apps-modal .wut-apps-item:hover{border-color:#d7bfa8;}'
+        + '#wut-apps-modal .wut-apps-item.is-added{opacity:.6;cursor:default;}'
+        + '#wut-apps-modal .wut-apps-item-name{font-weight:600;white-space:nowrap;}'
+        + '#wut-apps-modal .wut-apps-item-title{flex:1;overflow:hidden;text-overflow:ellipsis;'
+        + 'white-space:nowrap;color:#8e7b6a;}'
+        + '#wut-apps-modal .wut-apps-item-state{font-size:12px;color:#b4543c;}'
+        + '#wut-apps-modal .wut-apps-foot{display:flex;gap:6px;margin-top:12px;}'
+        + '#wut-apps-modal .wut-apps-note{font-size:12px;color:#8e7b6a;}'
         + '#wut-export-status{overflow-wrap:anywhere;}'
         + '#wut-daily-report{padding:12px 18px;margin:12px 0;border-radius:8px;'
         + 'background:rgba(213,169,108,.09);color:#8e5e43;}'
@@ -560,68 +737,25 @@
       var desc = document.createElement('div');
       desc.className = 'setting-sub';
       desc.textContent = '这些程序打开时即使不是全屏也进入游戏模式；全屏窗口无需添加。'
-        + '在目标程序里切回设置页后点下面第一个按钮，也可以直接输入程序名。';
+        + '在对话框里选择当前打开的应用，或手动输入程序名。';
       label.appendChild(name);
       label.appendChild(desc);
       var content = document.createElement('div');
-      content.className = 'setting-content wut-game-content';
-      var list = document.createElement('div');
-      list.id = 'wut-game-apps';
-      list.className = 'wut-game-apps';
-      list.setAttribute('aria-labelledby', name.id);
-      var empty = document.createElement('div');
-      empty.id = 'wut-game-apps-empty';
-      empty.className = 'wut-game-apps-empty';
-      empty.textContent = '尚未添加程序';
-      var add = document.createElement('button');
-      add.id = 'wut-game-apps-add';
-      add.type = 'button';
-      add.className = 'wut-game-add';
-      add.textContent = '添加当前前台程序';
-      add.addEventListener('click', function () {
-        if (Date.now() - S.beat > 5000) { render(); return; }
-        if (S.requests.some(function (r) { return r.action === 'whitelist_add_foreground'; })) return;
-        S.requests.push({ id: instance + '-' + (++serial), action: 'whitelist_add_foreground' });
-        error = ''; saved = false;
-        render();
-      });
-      var manualRow = document.createElement('div');
-      manualRow.className = 'wut-game-manual';
-      var input = document.createElement('input');
-      input.id = 'wut-game-apps-input';
-      input.type = 'text';
-      input.className = 'wut-game-input';
-      input.placeholder = '程序名，例如 SomeGame.exe';
-      input.setAttribute('aria-label', '程序名');
-      var manual = document.createElement('button');
-      manual.id = 'wut-game-apps-manual';
-      manual.type = 'button';
-      manual.className = 'wut-game-add';
-      manual.textContent = '添加';
-      function addByName() {
-        var value = String(input.value || '').trim();
-        if (!value) { return; }
-        if (Date.now() - S.beat > 5000) { render(); return; }
-        S.requests.push({ id: instance + '-' + (++serial), action: 'whitelist_add', name: value });
-        input.value = '';
-        error = ''; saved = false;
-        render();
-      }
-      manual.addEventListener('click', addByName);
-      input.addEventListener('keydown', function (event) {
-        if (event.key === 'Enter') { event.preventDefault(); addByName(); }
-      });
-      manualRow.appendChild(input);
-      manualRow.appendChild(manual);
-      content.appendChild(list);
-      content.appendChild(empty);
-      content.appendChild(add);
-      content.appendChild(manualRow);
+      content.className = 'setting-content';
+      var button = document.createElement('button');
+      button.id = 'wut-game-apps-manage';
+      button.type = 'button';
+      button.className = 'wut-game-add';
+      button.textContent = '选择应用…';
+      button.setAttribute('aria-haspopup', 'dialog');
+      button.addEventListener('click', openAppsDialog);
+      content.appendChild(button);
       row.appendChild(label);
       row.appendChild(content);
       host.appendChild(row);
-      renderGameModeApps();
+      renderAppsRow();
     }
+
     var report = document.createElement('div');
     report.id = 'wut-daily-report';    report.innerHTML = '<div class="wut-report-title">昨日点击数</div>'
       + '<div><span class="wut-report-count">—</span>次</div>'
@@ -799,7 +933,8 @@
     status.dataset.error = error ? 'true' : 'false';
     renderReport();
     updateTokenExpiry();
-    renderGameModeApps();
+    renderAppsRow();
+    renderAppsDialog();
     var exportButton = document.getElementById('wut-export-button');
     var exportStatus = document.getElementById('wut-export-status');
     if (exportButton && exportStatus) {
@@ -859,12 +994,16 @@
   S.update = function (state) {
     S.beat = Date.now();
     S.preferences = state.preferences;
-    S.foregroundApp = state.foreground_app || '';
     S.accessories = state.accessories || S.accessories || {};
     S.petAccessory = state.pet_accessory || null;
     S.report = state.report || null;
     (state.ack || []).forEach(function (ack) {
       S.requests = S.requests.filter(function (r) { return r.id !== ack.id; });
+      if (ack.action === 'list_apps') {
+        S.appList = Array.isArray(ack.apps) ? ack.apps : [];
+        S.appsLoading = false;
+        return;
+      }
       if (ack.action === 'export_logs') {
         S.exportError = !!ack.error;
         S.exportPath = ack.path || null;

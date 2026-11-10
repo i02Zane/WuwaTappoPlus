@@ -301,13 +301,30 @@ test('token row shows expiry and uses the official toast for extract/renew', asy
   assert.equal(loginRow.style.display, '');
 });
 
-test('auto game mode switch owns a whitelist of programs', () => {
+test('auto game mode whitelist is managed in its own dialog', () => {
   const f = fixture();
   const nodes = new Map();
   function element() {
     return { dataset: {}, style: { setProperty() {} }, children: [], textContent: '',
+      classList: { add() {} },
       setAttribute() {}, addEventListener(name, handler) { this[name] = handler; },
-      appendChild(child) { this.children.push(child); if (child.id) nodes.set(child.id, child); },
+      get firstChild() { return this.children.length ? this.children[0] : null; },
+      removeChild(child) {
+        const index = this.children.indexOf(child);
+        if (index >= 0) this.children.splice(index, 1);
+      },
+      appendChild(child) {
+        this.children.push(child);
+        child.parentNode = this;
+        if (child.id) nodes.set(child.id, child);
+      },
+      remove() {
+        if (this.parentNode) {
+          const index = this.parentNode.children.indexOf(this);
+          if (index >= 0) this.parentNode.children.splice(index, 1);
+        }
+        if (this.id) nodes.delete(this.id);
+      },
       querySelectorAll() { return []; },
       querySelector(selector) {
         if (selector === '.wut-status') return { dataset: {}, textContent: '' };
@@ -319,47 +336,51 @@ test('auto game mode switch owns a whitelist of programs', () => {
   container.insertBefore = child => container.appendChild(child);
   f.context.document.createElement = element;
   f.context.document.head = element();
+  f.context.document.body = element();
   f.context.document.querySelector = () => container;
   f.context.document.getElementById = id =>
     id === 'wut-daily-report' ? null : nodes.get(id);
-  f.settings.update({ preferences: { game_mode_apps: ['game.exe'] }, ack: [] });
-  assert.equal(nodes.get('wut-game-apps-add').textContent, '添加最近使用的程序');
-  assert.equal(nodes.get('wut-game-apps-add').disabled, true);
 
-  f.settings.update({ preferences: { game_mode_apps: ['game.exe'] },
-                      foreground_app: 'game.exe', ack: [] });
-  assert.equal(nodes.get('wut-game-apps-add').textContent, '添加 game.exe');
-  assert.equal(nodes.get('wut-game-apps-add').disabled, false);
-
-  assert.equal(nodes.get('wut-setting-game-mode-apps').textContent, '自动游戏模式白名单');
-  const list = nodes.get('wut-game-apps');
-  assert.equal(list.children.length, 1);
-  assert.equal(list.children[0].children[0].textContent, 'game.exe');
-  assert.equal(nodes.get('wut-game-apps-empty').style.display, 'none');
-
-  list.children[0].children[1].click();
-  assert.equal(f.settings.requests.length, 1);
-  assert.equal(f.settings.requests[0].key, 'game_mode_apps');
-  assert.deepEqual(f.settings.requests[0].value, []);
   f.settings.update({ preferences: { game_mode_apps: [] }, ack: [] });
-  assert.equal(nodes.get('wut-game-apps-empty').style.display, '');
+  assert.equal(nodes.get('wut-setting-game-mode-apps').textContent, '自动游戏模式白名单');
+  const manage = nodes.get('wut-game-apps-manage');
+  assert.equal(manage.textContent, '选择应用…');
 
-  nodes.get('wut-game-apps-add').click();
-  const last = f.settings.requests[f.settings.requests.length - 1];
-  assert.equal(last.action, 'whitelist_add_foreground');
-  nodes.get('wut-game-apps-add').click();
-  assert.equal(f.settings.requests.filter(r => r.action === 'whitelist_add_foreground').length, 1,
-               'one add request at a time');
+  manage.click();
+  assert.equal(nodes.get('wut-apps-modal').id, 'wut-apps-modal');
+  assert.equal(f.settings.requests[0].action, 'list_apps');
+  assert.equal(nodes.get('wut-apps-open').children[0].textContent, '正在读取…');
 
-  // Typing a name works too: the panel can never be the candidate itself.
-  const input = nodes.get('wut-game-apps-input');
+  f.settings.update({ preferences: { game_mode_apps: [] },
+    ack: [{ id: f.settings.requests[0].id, action: 'list_apps',
+            apps: [{ name: 'Game.exe', title: 'Some game' },
+                   { name: 'chat.exe', title: 'Chat' }] }] });
+  const open = nodes.get('wut-apps-open');
+  assert.equal(open.children.length, 2);
+  assert.equal(open.children[0].children[0].textContent, 'Game.exe');
+  open.children[0].click();
+  const add = f.settings.requests[f.settings.requests.length - 1];
+  assert.equal(add.action, 'whitelist_add');
+  assert.equal(add.name, 'Game.exe');
+
+  f.settings.update({ preferences: { game_mode_apps: ['game.exe'] }, ack: [] });
+  assert.equal(nodes.get('wut-game-apps-manage').textContent, '管理白名单（1）');
+  const chosen = nodes.get('wut-apps-chosen');
+  assert.equal(chosen.children.length, 1);
+  assert.equal(chosen.children[0].children[0].textContent, 'game.exe');
+  chosen.children[0].children[1].click();
+  const remove = f.settings.requests[f.settings.requests.length - 1];
+  assert.equal(remove.key, 'game_mode_apps');
+  assert.deepEqual(remove.value, []);
+
+  const input = nodes.get('wut-apps-input');
   input.value = '  Other.EXE  ';
-  nodes.get('wut-game-apps-manual').click();
+  nodes.get('wut-apps-manual').click();
   const manual = f.settings.requests[f.settings.requests.length - 1];
   assert.equal(manual.action, 'whitelist_add');
   assert.equal(manual.name, 'Other.EXE');
-  assert.equal(input.value, '');
-  // The old wording promised fullscreen-only behaviour.
-  assert.doesNotMatch(loadScript('settings.js'), /全屏进入游戏模式·Plus/);
-});
 
+  nodes.get('wut-apps-close').click();
+  assert.equal(nodes.get('wut-apps-modal'), undefined);
+  assert.equal(f.settings.appsOpen, false);
+});

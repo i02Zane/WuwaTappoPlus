@@ -22,6 +22,8 @@ EXCLUDED_PROCESSES = {
     "lockapp.exe",
 }
 EXCLUDED_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
+GWL_EXSTYLE = -20
+WS_EX_TOOLWINDOW = 0x00000080
 
 
 class _MONITORINFO(ctypes.Structure):
@@ -54,6 +56,12 @@ kernel32.QueryFullProcessImageNameW.argtypes = [
     wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
 kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+user32.EnumWindows.argtypes = [ctypes.WINFUNCTYPE(
+    wintypes.BOOL, wintypes.HWND, wintypes.LPARAM), wintypes.LPARAM]
+user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.GetWindowLongW.restype = ctypes.c_long
+user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetWindowTextW.restype = ctypes.c_int
 kernel32.CloseHandle.restype = wintypes.BOOL
 
 
@@ -142,3 +150,44 @@ def window_state(hwnd, tolerance=2):
         return client_covers_monitor(client_rect, monitor_rect, tolerance), name
     except (OSError, ValueError):
         return None, ""
+
+
+def open_apps(limit=60):
+    """Visible top-level programs the user could whitelist: [{"name", "title"}].
+
+    The settings panel is itself the foreground window, so a picker needs the
+    real list instead of the current foreground process.
+    """
+    found = {}
+    window_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def callback(hwnd, _param):
+        try:
+            if len(found) >= limit:
+                return False
+            if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+                return True
+            if user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW:
+                return True
+            title = ctypes.create_unicode_buffer(256)
+            if not user32.GetWindowTextW(hwnd, title, len(title)):
+                return True
+            if not title.value.strip():
+                return True
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            name = _process_name(pid.value)
+            if not name or name.lower() in EXCLUDED_PROCESSES:
+                return True
+            key = name.lower()
+            if key not in found:
+                found[key] = {"name": name, "title": title.value.strip()[:80]}
+        except (OSError, ValueError):
+            return True
+        return True
+
+    try:
+        user32.EnumWindows(window_proc(callback), 0)
+    except (OSError, ValueError):
+        return []
+    return sorted(found.values(), key=lambda item: item["name"].lower())

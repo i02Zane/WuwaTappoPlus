@@ -18,9 +18,8 @@ READ_JS = """JSON.stringify(window.__WUT_SETTINGS__ ? {
 
 
 class SettingsBridge:
-    def __init__(self, port, host, log, foreground_app=None):
+    def __init__(self, port, host, log):
         self.port = port
-        self.foreground_app = foreground_app
         self.host = host
         self.log = log
         self.session = None
@@ -31,14 +30,6 @@ class SettingsBridge:
         self.last_error = None
         self.export_results = {}
         self.pet_accessory = None
-
-    def _candidate(self):
-        """The program the user was in before opening this panel."""
-        try:
-            name = self.foreground_app() if self.foreground_app else ""
-        except Exception:
-            name = ""
-        return normalize_app_name(name)
 
     @property
     def accessories_path(self):
@@ -99,17 +90,14 @@ class SettingsBridge:
                             self.export_results.pop(next(iter(self.export_results)))
                     ack.append(result)
                     continue
-                if request.get("action") in ("whitelist_add_foreground",
-                                             "whitelist_add"):
-                    result["action"] = request["action"]
-                    if request.get("action") == "whitelist_add":
-                        app = normalize_app_name(request.get("name"))
-                    else:
-                        # The panel itself is the foreground window here, so the
-                        # remembered program is the one the user means; the live
-                        # foreground only helps when this is called elsewhere.
-                        _, name = fullscreen.foreground_window()
-                        app = self._candidate() or normalize_app_name(name)
+                if request.get("action") == "list_apps":
+                    result["action"] = "list_apps"
+                    result["apps"] = fullscreen.open_apps()
+                    ack.append(result)
+                    continue
+                if request.get("action") == "whitelist_add":
+                    result["action"] = "whitelist_add"
+                    app = normalize_app_name(request.get("name"))
                     if not app:
                         result["error"] = True
                         self._warn("whitelist: no foreground program to add")
@@ -150,7 +138,6 @@ class SettingsBridge:
                 ack.append(result)
             payload = json.dumps({"preferences": cfg.preferences, "accessories": overrides,
                                   "pet_accessory": self.pet_accessory,
-                                  "foreground_app": self._candidate(),
                                   "ack": ack, "report": report})
             self.session.js("window.__WUT_SETTINGS__.update(%s); 1" % payload)
         except (cdp.CDPError, OSError, ValueError, TypeError) as exc:

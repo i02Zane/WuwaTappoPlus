@@ -51,3 +51,38 @@ class DetectionFailureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class OpenAppsTests(unittest.TestCase):
+    def run_picker(self, titles, names, visible=True):
+        order = list(titles)
+        given = iter(names)
+
+        def enum_windows(callback, _param):
+            for hwnd in order:
+                callback(hwnd, 0)
+            return True
+
+        def get_text(hwnd, buffer, _size):
+            buffer.value = titles[hwnd]
+            return len(titles[hwnd])
+
+        with patch.object(fullscreen.user32, "EnumWindows", side_effect=enum_windows), \
+                patch.object(fullscreen.user32, "IsWindowVisible", return_value=visible), \
+                patch.object(fullscreen.user32, "IsIconic", return_value=False), \
+                patch.object(fullscreen.user32, "GetWindowLongW", return_value=0), \
+                patch.object(fullscreen.user32, "GetWindowTextW", side_effect=get_text), \
+                patch.object(fullscreen.user32, "GetWindowThreadProcessId", return_value=0), \
+                patch.object(fullscreen, "_process_name", side_effect=lambda pid: next(given)):
+            return fullscreen.open_apps()
+
+    def test_lists_one_entry_per_program(self):
+        found = self.run_picker({1: "Some game", 2: "Another", 3: "Wuwa Tappo"},
+                                ["Game.exe", "game.exe", "WuwaTappo.exe"])
+        self.assertEqual(found, [{"name": "Game.exe", "title": "Some game"}])
+
+    def test_hidden_windows_are_not_listed(self):
+        self.assertEqual(self.run_picker({1: "Some game"}, ["Game.exe"], visible=False), [])
+
+    def test_entries_without_a_name_are_skipped(self):
+        self.assertEqual(self.run_picker({1: "Some game"}, [""]), [])
+

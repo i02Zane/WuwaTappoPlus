@@ -231,19 +231,3 @@ class WhitelistSampleTests(unittest.TestCase):
 
     def test_an_unknown_sample_stays_unknown(self):
         self.assertIsNone(self.sample(None, ""))
-
-    def test_the_last_used_program_is_remembered_for_the_panel(self):
-        runner = object.__new__(Runner)
-        runner.cfg = Config({})
-        runner.last_app = ""
-        with patch.object(fullscreen, "foreground_window",
-                          return_value=(False, "SomeGame.exe")):
-            runner._game_mode_sample()
-        self.assertEqual(runner.last_app, "SomeGame.exe")
-        # The panel itself (and the shell) never becomes the candidate.
-        for name in ("WuwaTappo.exe", "WuwaTappoPlus.exe", "explorer.exe", ""):
-            with patch.object(fullscreen, "foreground_window",
-                              return_value=(False, name)):
-                runner._game_mode_sample()
-            self.assertEqual(runner.last_app, "SomeGame.exe")
-
