@@ -90,7 +90,8 @@ class CommandTests(unittest.TestCase):
         with patch.object(menu, "COLOR", False), \
                 patch.object(menu, "_clear"), \
                 patch.object(menu, "_wait_key", wait), \
-                patch.object(win, "is_admin", return_value=admin):
+                patch.object(win, "is_admin", return_value=admin), \
+                redirect_stdout(io.StringIO()):
             code = menu._run("install", lambda _argv: rc,
                              close_when_elevated=True)
         return code, wait
