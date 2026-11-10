@@ -6,7 +6,7 @@ import tempfile
 import tomllib
 from contextlib import ExitStack, redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from wuwa_tappo_plus import cli, menu, win
 from wuwa_tappo_plus.config import Config, DEFAULT_TOML, save_preferences
@@ -81,7 +81,34 @@ class CommandTests(unittest.TestCase):
         with patch.object(menu, "_collect", return_value={"daemon_alive": False}), \
                 patch.object(menu, "_run") as run:
             menu._install()
-        run.assert_called_once_with("安装 / 修复", cli.cmd_install)
+        run.assert_called_once_with("安装 / 修复", cli.cmd_install,
+                                    close_when_elevated=True)
+
+
+    def _run_handler(self, rc, admin):
+        wait = Mock()
+        with patch.object(menu, "COLOR", False), \
+                patch.object(menu, "_clear"), \
+                patch.object(menu, "_wait_key", wait), \
+                patch.object(win, "is_admin", return_value=admin):
+            code = menu._run("install", lambda _argv: rc,
+                             close_when_elevated=True)
+        return code, wait
+
+    def test_menu_closes_after_handing_off_to_uac(self):
+        code, wait = self._run_handler(0, admin=False)
+        self.assertEqual(code, 0)
+        wait.assert_not_called()
+
+    def test_menu_stays_when_the_handoff_failed(self):
+        code, wait = self._run_handler(1, admin=False)
+        self.assertEqual(code, 1)
+        wait.assert_called_once()
+
+    def test_menu_stays_when_the_install_ran_in_process(self):
+        code, wait = self._run_handler(0, admin=True)
+        self.assertEqual(code, 0)
+        wait.assert_called_once()
 
 
 class InstallTests(unittest.TestCase):

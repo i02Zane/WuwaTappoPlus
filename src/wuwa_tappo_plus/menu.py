@@ -307,8 +307,13 @@ class _Indent:
         return getattr(self._stream, "encoding", "utf-8")
 
 
-def _run(title, handler):
-    """Run one cli handler on a clean screen, then wait for a key."""
+def _run(title, handler, close_when_elevated=False):
+    """Run one cli handler on a clean screen, then wait for a key.
+
+    When the handler hands off to UAC (it relaunches itself elevated), the
+    elevated window owns the interaction from then on. Keeping this one open
+    would leave a second copy of the old program running next to it.
+    """
     _clear()
     if COLOR:
         sys.stdout.write("\x1b[?25h")
@@ -332,6 +337,9 @@ def _run(title, handler):
     finally:
         sys.stdout = real
 
+    if close_when_elevated and rc == 0 and not win.is_admin():
+        return rc
+
     sys.stdout.write("\n")
     if rc not in (0, None):
         sys.stdout.write("  " + _paint(YELLOW, "返回码 %s" % rc) + "\n")
@@ -346,7 +354,7 @@ def _run(title, handler):
 
 
 def _install():
-    _run("安装 / 修复", cli.cmd_install)
+    _run("安装 / 修复", cli.cmd_install, close_when_elevated=True)
 
 
 def _uninstall():
@@ -420,6 +428,8 @@ def main(argv):
             result = entry[1]()
             if key in ("2", "3") and result == 0:
                 break
+            if key == "1" and result == 0 and not win.is_admin():
+                break
             sys.stdout.write("\x1b[2J\x1b[?25l")
             sys.stdout.flush()
             _draw(_collect())
@@ -451,6 +461,8 @@ def _plain_menu():
         try:
             result = entry[1]()
             if choice in ("2", "3") and result == 0:
+                return 0
+            if choice == "1" and result == 0 and not win.is_admin():
                 return 0
         except Exception:
             traceback.print_exc()
