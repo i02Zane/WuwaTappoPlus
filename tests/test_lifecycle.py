@@ -169,14 +169,43 @@ class LifecycleTests(unittest.TestCase):
                 patch.object(menu, "_frame", return_value=["menu"]):
             self.assertEqual(menu.main(["--once"]), 0)
 
-    def test_kill_checks_exit_code_and_process_exit(self):
-        for returncode, alive, expected in ((1, True, False), (0, True, False),
-                                             (0, False, True)):
-            with self.subTest(returncode=returncode, alive=alive), \
+    def test_a_vanished_process_counts_as_stopped(self):
+        # taskkill exits 128 when the app closed itself between enumeration and
+        # the kill request; the installer used to abort on that.
+        with patch.object(win.subprocess, "run", return_value=
+                          subprocess.CompletedProcess([], 128)), \
+                patch.object(win, "_wait_gone", return_value=True) as wait:
+            self.assertTrue(win.kill_pid(42))
+        wait.assert_called_once_with(42, 1.0)
+
+    def test_kill_fails_only_when_the_process_survives_the_attempt(self):
+        for returncode in (0, 1, 5):
+            with self.subTest(returncode=returncode), \
                     patch.object(win.subprocess, "run", return_value=
                                  subprocess.CompletedProcess([], returncode)), \
-                    patch.object(win, "pid_alive", return_value=alive):
-                self.assertEqual(win.kill_pid(42), expected)
+                    patch.object(win, "_wait_gone", return_value=False):
+                self.assertFalse(win.kill_pid(42))
+
+    def test_kill_keeps_waiting_when_taskkill_reported_success(self):
+        seen = []
+
+        def wait(_pid, seconds):
+            seen.append(seconds)
+            return len(seen) > 1
+
+        with patch.object(win.subprocess, "run", return_value=
+                          subprocess.CompletedProcess([], 0)), \
+                patch.object(win, "_wait_gone", side_effect=wait):
+            self.assertTrue(win.kill_pid(42))
+        self.assertEqual(seen, [1.0, 5.0])
+
+    def test_stop_app_ignores_a_pid_that_vanished_before_the_kill(self):
+        with patch.object(win, "find_exe", return_value="WuwaTappo.exe"), \
+                patch.object(win, "running_pids", side_effect=[[42]] + [[]] * 10), \
+                patch.object(win, "kill_pid", return_value=False), \
+                patch.object(win, "pid_alive", return_value=False), \
+                patch.object(win.time, "sleep"):
+            self.assertEqual(win.stop_app(), "WuwaTappo.exe")
 
     def test_app_restart_does_not_launch_after_failed_kill(self):
         with patch.object(win, "find_exe", return_value="WuwaTappo.exe"), \

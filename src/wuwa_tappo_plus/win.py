@@ -8,6 +8,7 @@ set. That is why it works despite Tauri hard-coding its own arguments.
 import ctypes
 import os
 import subprocess
+import time
 import sys
 import threading
 from contextlib import contextmanager
@@ -764,15 +765,20 @@ def launch_app(exe_path):
 
 def stop_app(hint=""):
     """Close every running copy and wait until no main process remains."""
-    import time
-
     exe = find_exe(hint)
     if exe is None:
         return None
 
     for pid in running_pids():
-        if not kill_pid(pid):
-            raise OSError("无法停止 WuwaTappo.exe，进程号 %d。" % pid)
+        if kill_pid(pid):
+            continue
+        if not pid_alive(pid):
+            # It exited on its own between enumeration and the kill request;
+            # that is exactly what this function is for.
+            continue
+        raise OSError(
+            "无法停止 WuwaTappo.exe，进程号 %d。请手动关闭桌宠后重试，"
+            "或以管理员身份运行本程序。" % pid)
 
     deadline = time.time() + 8.0
     while time.time() < deadline and running_pids():
@@ -828,6 +834,14 @@ def launch_detached(argv):
 
 
 def kill_pid(pid, timeout=5.0):
+    """Terminate a pid; success means "gone", not "taskkill said so".
+
+    taskkill exits with 128 when the process already disappeared, and that is a
+    success for every caller here. Only a process that is still alive after the
+    attempt is a failure, which is also the only case that needs the caller's
+    attention (usually an elevation mismatch).
+    """
+    result = None
     try:
         result = run_external(
             ["taskkill", "/PID", str(pid), "/T", "/F"],
@@ -835,9 +849,24 @@ def kill_pid(pid, timeout=5.0):
             creationflags=0x08000000,
             timeout=timeout,
         )
-        return result.returncode == 0 and not pid_alive(pid)
     except Exception:
+        result = None
+    if _wait_gone(pid, 1.0):
+        return True
+    # taskkill failed and the process survived it: no point waiting longer.
+    if result is not None and result.returncode != 0:
         return False
+    return _wait_gone(pid, timeout)
+
+
+def _wait_gone(pid, seconds):
+    deadline = time.monotonic() + seconds
+    while True:
+        if not pid_alive(pid):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
 
 
 def pid_alive(pid):
