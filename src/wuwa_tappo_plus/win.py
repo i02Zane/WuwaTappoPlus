@@ -770,15 +770,21 @@ def stop_app(hint=""):
         return None
 
     for pid in running_pids():
-        if kill_pid(pid):
-            continue
-        if not pid_alive(pid):
-            # It exited on its own between enumeration and the kill request;
-            # that is exactly what this function is for.
-            continue
-        raise OSError(
-            "无法停止 WuwaTappo.exe，进程号 %d。请手动关闭桌宠后重试，"
-            "或以管理员身份运行本程序。" % pid)
+        # A busy or closing app can refuse the first taskkill; give it a couple
+        # of attempts before telling the user to close it by hand.
+        for attempt in range(3):
+            if kill_pid(pid):
+                break
+            if not pid_alive(pid):
+                # It exited on its own between enumeration and the kill
+                # request; that is exactly what this function is for.
+                break
+            if attempt < 2:
+                time.sleep(0.5)
+        else:
+            raise OSError(
+                "无法停止 WuwaTappo.exe，进程号 %d。请手动关闭桌宠后重试，"
+                "或以管理员身份运行本程序。" % pid)
 
     deadline = time.time() + 8.0
     while time.time() < deadline and running_pids():

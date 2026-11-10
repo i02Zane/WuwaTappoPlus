@@ -199,6 +199,26 @@ class LifecycleTests(unittest.TestCase):
             self.assertTrue(win.kill_pid(42))
         self.assertEqual(seen, [1.0, 5.0])
 
+    def test_stop_app_retries_a_transient_kill_failure(self):
+        results = [False, True]
+        with patch.object(win, "find_exe", return_value="WuwaTappo.exe"), \
+                patch.object(win, "running_pids", side_effect=[[42]] + [[]] * 10), \
+                patch.object(win, "kill_pid", side_effect=lambda _pid: results.pop(0)), \
+                patch.object(win, "pid_alive", return_value=True), \
+                patch.object(win.time, "sleep"):
+            self.assertEqual(win.stop_app(), "WuwaTappo.exe")
+        self.assertEqual(results, [])
+
+    def test_stop_app_reports_when_the_app_survives_every_attempt(self):
+        with patch.object(win, "find_exe", return_value="WuwaTappo.exe"), \
+                patch.object(win, "running_pids", side_effect=[[42]] + [[]] * 10), \
+                patch.object(win, "kill_pid", return_value=False) as kill, \
+                patch.object(win, "pid_alive", return_value=True), \
+                patch.object(win.time, "sleep"):
+            with self.assertRaises(OSError):
+                win.stop_app()
+        self.assertEqual(kill.call_count, 3)
+
     def test_stop_app_ignores_a_pid_that_vanished_before_the_kill(self):
         with patch.object(win, "find_exe", return_value="WuwaTappo.exe"), \
                 patch.object(win, "running_pids", side_effect=[[42]] + [[]] * 10), \
