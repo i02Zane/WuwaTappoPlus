@@ -5,8 +5,9 @@ import time
 import tomllib
 from urllib.parse import urlparse
 
-from . import __version__, accessories, cdp
-from .config import CONFIG_PATH, Config, save_preferences, with_preferences
+from . import __version__, accessories, cdp, fullscreen
+from .config import (CONFIG_PATH, Config, normalize_app_name,
+                     save_preferences, with_preferences)
 from .diagnostics import export_logs
 from .paths import SCRIPTS_DIR
 
@@ -87,6 +88,25 @@ class SettingsBridge:
                         self.export_results[request["id"]] = result
                         if len(self.export_results) > 32:
                             self.export_results.pop(next(iter(self.export_results)))
+                    ack.append(result)
+                    continue
+                if request.get("action") == "whitelist_add_foreground":
+                    result["action"] = "whitelist_add_foreground"
+                    state, name = fullscreen.foreground_window()
+                    app = normalize_app_name(name)
+                    if not app:
+                        result["error"] = True
+                        self._warn("whitelist: no foreground program to add")
+                    else:
+                        try:
+                            saved = save_preferences(
+                                {"game_mode_apps": cfg.game_mode_apps + [app]},
+                                path=self.config_path)
+                            cfg = with_preferences(cfg, saved.preferences)
+                            result["added"] = app
+                        except (OSError, ValueError, TypeError) as exc:
+                            result["error"] = True
+                            self._warn("whitelist: %s" % exc)
                     ack.append(result)
                     continue
                 if request.get("action") == "save_accessory":

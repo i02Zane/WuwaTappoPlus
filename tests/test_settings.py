@@ -28,7 +28,8 @@ class PreferenceTests(unittest.TestCase):
                           "remember_screen": True, "hello_boss": False, "pause_clicks": False,
                           "auto_emote": False,
                           "auto_emote_rate": 20,
-                          "game_mode_plus": True, "game_mode_opacity": 30})
+                          "game_mode_plus": True, "game_mode_opacity": 30,
+                          "game_mode_apps": []})
 
     def test_hello_boss_switch_is_saved_and_reaches_injection(self):
         self.assertFalse(Config({}).hello_boss)
@@ -64,6 +65,26 @@ class PreferenceTests(unittest.TestCase):
         self.assertEqual(saved.game_mode_opacity, 0)
         with self.assertRaises(ValueError):
             save_preferences({"game_mode_opacity": "50"}, self.path)
+
+    def test_game_mode_whitelist_is_saved_and_normalised(self):
+        saved = save_preferences(
+            {"game_mode_apps": ["C:\\Games\\Some Game.EXE", "game.exe", "GAME.EXE"]},
+            self.path)
+        self.assertEqual(saved.game_mode_apps, ["some game.exe", "game.exe"])
+        self.assertIn('game_mode_apps = ["some game.exe", "game.exe"]',
+                      self.path.read_text(encoding="utf-8"))
+        self.assertEqual(saved.preferences["game_mode_apps"],
+                         ["some game.exe", "game.exe"])
+
+    def test_game_mode_whitelist_rejects_unusable_entries(self):
+        for value in ("game.exe", [1], ["notes.txt"], ["/"], [""],
+                      ["a" * 120 + ".exe"]):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                save_preferences({"game_mode_apps": value}, self.path)
+        with self.assertRaises(ValueError):
+            save_preferences({"game_mode_apps": ["a.exe"] * 41}, self.path)
+        self.assertEqual(Config(tomllib.loads(
+            self.path.read_text(encoding="utf-8"))).game_mode_apps, [])
 
     def test_balance_reminder_and_bubble_are_saved_independently(self):
         saved = save_preferences({"balance_reminder": False, "bubble": True}, self.path)

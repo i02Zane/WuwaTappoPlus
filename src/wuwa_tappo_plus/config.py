@@ -1,6 +1,7 @@
 """Configuration: defaults, TOML loading, and project paths."""
 
 import copy
+import json
 import os
 import re
 import tempfile
@@ -18,6 +19,27 @@ VERIFY_MS = 2000
 STALE_MS = 30000
 
 ROOT = DATA_DIR
+MAX_GAME_MODE_APPS = 40
+_APP_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,99}")
+
+
+def normalize_app_name(value):
+    """Executable name for the game-mode whitelist, or "" when unusable.
+
+    The settings page and config.toml both accept a full path; only the file
+    name is stored, lower-cased so matching the foreground process is trivial.
+    """
+    if not isinstance(value, str):
+        return ""
+    name = value.strip().strip('"').strip("'").replace("\\", "/").rsplit("/", 1)[-1]
+    if not name.lower().endswith(".exe"):
+        return ""
+    stem = name[:-4]
+    if not _APP_NAME.fullmatch(stem):
+        return ""
+    return name.lower()
+
+
 CONFIG_PATH = ROOT / "config.toml"
 LOG_DIR = ROOT / "logs"
 STATE_PATH = ROOT / ".state.json"
@@ -73,8 +95,12 @@ remember_screen = true
 # Pet opacity while the app is in game mode, in percent (0-100). On exit the
 # normal opacity from the app's own setting is restored.
 game_mode_opacity = 30
-# Treat a windowed/borderless foreground window as game mode too.
+# Automatically enter game mode for fullscreen games, and for the programs
+# listed below even when they are not fullscreen.
 game_mode_plus = true
+# Executable names that always count as game mode (for example "SomeGame.exe").
+# Managed from the pet settings page; fullscreen windows need no entry here.
+game_mode_apps = []
 
 [rooms]
 # How many visited rooms the multiplayer tab remembers. Pinned rooms are kept
@@ -114,7 +140,8 @@ BUILTIN = {
     "clicks": {"pause": False, "auto_emote": False, "auto_emote_rate": 20},
     "alerts": {"balance": True, "bubble": True, "animation": True},
     "panel": {"remember_screen": True},
-    "appearance": {"game_mode_opacity": 30, "game_mode_plus": True},
+    "appearance": {"game_mode_opacity": 30, "game_mode_plus": True,
+                   "game_mode_apps": []},
     "rooms": {"history": 20, "hello_boss": False},
     "daemon": {"heartbeat": 300, "max_runtime": 0, "watchdog_min": 1},
     "log": {"max_bytes": 1048576, "keep": 3},
@@ -235,6 +262,18 @@ class Config:
         return bool(self.get("rooms", "hello_boss", False))
 
     @property
+    def game_mode_apps(self):
+        value = self.get("appearance", "game_mode_apps", [])
+        if not isinstance(value, list):
+            return []
+        names = []
+        for item in value:
+            name = normalize_app_name(item)
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    @property
     def preferences(self):
         return {"auto_open": self.auto_open, "balance_reminder": self.balance_reminder,
                 "bubble": self.alert_bubble,
@@ -244,7 +283,8 @@ class Config:
                 "pause_clicks": self.pause_clicks, "auto_emote": self.auto_emote,
                 "auto_emote_rate": self.auto_emote_rate,
                 "game_mode_plus": self.game_mode_plus,
-                "game_mode_opacity": self.game_mode_opacity}
+                "game_mode_opacity": self.game_mode_opacity,
+                "game_mode_apps": self.game_mode_apps}
 
     @property
     def heartbeat(self):
@@ -437,7 +477,8 @@ PREFERENCE_KEYS = {"auto_open": ("inject", "enabled"),
                    "auto_emote": ("clicks", "auto_emote"),
                    "auto_emote_rate": ("clicks", "auto_emote_rate"),
                    "game_mode_plus": ("appearance", "game_mode_plus"),
-                   "game_mode_opacity": ("appearance", "game_mode_opacity")}
+                   "game_mode_opacity": ("appearance", "game_mode_opacity"),
+                   "game_mode_apps": ("appearance", "game_mode_apps")}
 
 
 def with_preferences(cfg, preferences):
@@ -454,6 +495,17 @@ def with_preferences(cfg, preferences):
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError("invalid Plus preference")
             value = max(1, min(20, int(round(value))))
+        elif name == "game_mode_apps":
+            if not isinstance(value, list) or len(value) > MAX_GAME_MODE_APPS:
+                raise ValueError("invalid Plus preference")
+            cleaned = []
+            for item in value:
+                app = normalize_app_name(item)
+                if not app:
+                    raise ValueError("invalid Plus preference")
+                if app not in cleaned:
+                    cleaned.append(app)
+            value = cleaned
         elif type(value) is not bool:
             raise ValueError("invalid Plus preference")
         section, key = PREFERENCE_KEYS[name]
@@ -477,6 +529,8 @@ def save_preferences(preferences, path=None):
         header = next((m for m in headers if m.group(1) == section), None)
         if isinstance(value, bool):
             line = "%s = %s" % (key, "true" if value else "false")
+        elif isinstance(value, list):
+            line = "%s = %s" % (key, json.dumps(value))
         else:
             line = "%s = %s" % (key, value)
         if header is None:

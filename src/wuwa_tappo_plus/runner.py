@@ -8,7 +8,7 @@ import traceback
 from collections import deque
 from datetime import datetime
 
-from . import __version__, accessories, cdp, game_mode, win
+from . import __version__, accessories, cdp, fullscreen, game_mode, win
 from .config import INJECT_PATH, LOG_DIR, LOCK_PATH, STATE_PATH, load
 from .logs import Log
 from .settings import SettingsBridge
@@ -106,9 +106,26 @@ class Runner:
         self._stop = False
         self._accessory_key = None
         self._accessory_session = None
-        self.game_mode = game_mode.GameModeController(self.log)
+        self.game_mode = game_mode.GameModeController(
+            self.log, detector=self._game_mode_sample)
 
     # ------------------------------------------------------------- plumbing
+
+    def _game_mode_sample(self):
+        """True when the foreground window should count as game mode.
+
+        Fullscreen windows always count; anything else only when its executable
+        is in the whitelist. None means the sample failed and must not be
+        mistaken for leaving the mode.
+        """
+        fullscreen_state, name = fullscreen.foreground_window()
+        if fullscreen_state is None:
+            return None
+        if fullscreen_state:
+            return True
+        if not name:
+            return False
+        return name.lower() in self.cfg.game_mode_apps
 
     def acquire_lock(self):
         if not LOCK_PATH.parent.exists():

@@ -9,7 +9,8 @@
     _test: { emitLoginSuccess: emitLoginSuccess },
     preferences: { auto_open: true, balance_reminder: true, bubble: true, animation: true,
                    remember_screen: true, auto_emote: false, pause_clicks: false,
-                   game_mode_plus: true, game_mode_opacity: 30, auto_emote_rate: 20 }
+                   game_mode_plus: true, game_mode_opacity: 30, auto_emote_rate: 20,
+                   game_mode_apps: [] }
   };
   var HOST = 'wut-plus-settings';
   var STYLE = 'wut-plus-settings-style';
@@ -22,7 +23,7 @@
   var definitions = [
     ['auto_open', '自动开箱', '宝箱到期且余额充足时自动开启，关闭后仍显示倒计时。'],
     ['auto_emote', '自动发表情', '桌宠会跟随敲击自动发送一个已装备的表情；频率可在下方调整。'],
-    ['game_mode_plus', '全屏进入游戏模式·Plus', '开启后由 Plus 接管全屏自动进入游戏模式：窗口化/无边框全屏也生效，官方全屏开关会暂时关闭；关闭后恢复官方设置；手动退出后，本次全屏期间不再自动进入。'],
+    ['game_mode_plus', '自动游戏模式·Plus', '开启后由 Plus 接管自动进入游戏模式：全屏游戏、窗口化/无边框全屏，以及下面白名单里的程序都会生效；官方全屏开关会暂时关闭，关闭本项后恢复官方设置；手动退出后，本次期间不再自动进入。'],
     ['balance_reminder', '余额提醒', '余额不足时提醒，并显示宝箱倒计时；不影响其他气泡。'],
     ['bubble', '气泡显示', '显示 Plus 气泡，包括余额提醒和小黑屋模式文字。'],
     ['animation', '气泡动画', '让气泡轻轻跳动；关闭后保留静态气泡。'],
@@ -251,6 +252,42 @@
     } catch (e) {}
   }
 
+  function saveGameModeApps(next) {
+    if (Date.now() - S.beat > 5000) { render(); return; }
+    S.requests.push({ id: instance + '-' + (++serial), key: 'game_mode_apps', value: next });
+    error = ''; saved = false;
+    render();
+  }
+
+  function renderGameModeApps() {
+    var list = document.getElementById('wut-game-apps');
+    if (!list) return;
+    var apps = Array.isArray(S.preferences.game_mode_apps) ? S.preferences.game_mode_apps : [];
+    var key = JSON.stringify(apps);
+    if (list.dataset.state === key) return;
+    list.dataset.state = key;
+    while (list.firstChild) list.removeChild(list.firstChild);
+    apps.forEach(function (name) {
+      var chip = document.createElement('span');
+      chip.className = 'wut-game-app';
+      var text = document.createElement('span');
+      text.textContent = name;
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'wut-game-app-remove';
+      remove.setAttribute('aria-label', '移除 ' + name);
+      remove.textContent = '×';
+      remove.addEventListener('click', function () {
+        saveGameModeApps(apps.filter(function (item) { return item !== name; }));
+      });
+      chip.appendChild(text);
+      chip.appendChild(remove);
+      list.appendChild(chip);
+    });
+    var empty = document.getElementById('wut-game-apps-empty');
+    if (empty) empty.style.display = apps.length ? 'none' : '';
+  }
+
   function mount() {
     var container = document.querySelector('.settings-module .panel-content');
     if (!container || document.getElementById(HOST)) return;
@@ -283,6 +320,16 @@
         + '#wut-plus-settings .wut-export .setting-content{flex-shrink:0;}'
         + '#wut-plus-settings .wut-export button{white-space:nowrap;}'
         + '#wut-plus-settings .wut-export button:disabled{cursor:wait;opacity:.5;}'
+        + '#wut-plus-settings .wut-game-content{flex-direction:column;align-items:flex-end;gap:6px;}'
+        + '#wut-plus-settings .wut-game-apps{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;}'
+        + '#wut-plus-settings .wut-game-app{display:inline-flex;align-items:center;gap:4px;max-width:190px;'
+        + 'padding:2px 4px 2px 8px;border-radius:10px;background:rgba(142,94,67,.1);font-size:12px;color:#8e5e43;}'
+        + '#wut-plus-settings .wut-game-app span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
+        + '#wut-plus-settings .wut-game-app-remove{border:0;background:none;color:#b4543c;padding:0 2px;'
+        + 'font-size:14px;line-height:1;cursor:pointer;}'
+        + '#wut-plus-settings .wut-game-apps-empty{font-size:12px;color:#8e7b6a;}'
+        + '#wut-plus-settings .wut-game-add{border:1px solid #e0cfc0;border-radius:6px;background:#fff;'
+        + 'color:#8e5e43;font-size:12px;padding:4px 8px;cursor:pointer;}'
         + '#wut-export-status{overflow-wrap:anywhere;}'
         + '#wut-daily-report{padding:12px 18px;margin:12px 0;border-radius:8px;'
         + 'background:rgba(213,169,108,.09);color:#8e5e43;}'
@@ -356,7 +403,10 @@
       row.appendChild(content);
       host.appendChild(row);
       if (definition[0] === 'auto_emote') appendEmoteRateRow();
-      if (definition[0] === 'game_mode_plus') appendGameModeOpacityRow();
+      if (definition[0] === 'game_mode_plus') {
+        appendGameModeOpacityRow();
+        appendGameModeAppsRow();
+      }
     });
     function appendEmoteRateRow() {
       var emoteRow = document.createElement('div');
@@ -483,6 +533,51 @@
     gameRow.appendChild(gameLabel);
     gameRow.appendChild(gameContent);
     host.appendChild(gameRow);
+    }
+    function appendGameModeAppsRow() {
+      var row = document.createElement('div');
+      row.className = 'setting-item';
+      row.id = 'wut-setting-game-mode-apps-row';
+      var label = document.createElement('div');
+      label.className = 'setting-label';
+      var name = document.createElement('div');
+      name.className = 'setting-title';
+      name.id = 'wut-setting-game-mode-apps';
+      name.textContent = '自动游戏模式白名单';
+      var desc = document.createElement('div');
+      desc.className = 'setting-sub';
+      desc.textContent = '这些程序打开时即使不是全屏也进入游戏模式；全屏窗口无需添加。';
+      label.appendChild(name);
+      label.appendChild(desc);
+      var content = document.createElement('div');
+      content.className = 'setting-content wut-game-content';
+      var list = document.createElement('div');
+      list.id = 'wut-game-apps';
+      list.className = 'wut-game-apps';
+      list.setAttribute('aria-labelledby', name.id);
+      var empty = document.createElement('div');
+      empty.id = 'wut-game-apps-empty';
+      empty.className = 'wut-game-apps-empty';
+      empty.textContent = '尚未添加程序';
+      var add = document.createElement('button');
+      add.id = 'wut-game-apps-add';
+      add.type = 'button';
+      add.className = 'wut-game-add';
+      add.textContent = '添加当前前台程序';
+      add.addEventListener('click', function () {
+        if (Date.now() - S.beat > 5000) { render(); return; }
+        if (S.requests.some(function (r) { return r.action === 'whitelist_add_foreground'; })) return;
+        S.requests.push({ id: instance + '-' + (++serial), action: 'whitelist_add_foreground' });
+        error = ''; saved = false;
+        render();
+      });
+      content.appendChild(list);
+      content.appendChild(empty);
+      content.appendChild(add);
+      row.appendChild(label);
+      row.appendChild(content);
+      host.appendChild(row);
+      renderGameModeApps();
     }
     var report = document.createElement('div');
     report.id = 'wut-daily-report';    report.innerHTML = '<div class="wut-report-title">昨日点击数</div>'
@@ -661,6 +756,7 @@
     status.dataset.error = error ? 'true' : 'false';
     renderReport();
     updateTokenExpiry();
+    renderGameModeApps();
     var exportButton = document.getElementById('wut-export-button');
     var exportStatus = document.getElementById('wut-export-status');
     if (exportButton && exportStatus) {

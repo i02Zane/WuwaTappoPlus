@@ -83,50 +83,62 @@ def _process_name(pid):
 
 def foreground_client_covers_monitor(tolerance=2):
     """Check the foreground window's client area against its monitor."""
+    return foreground_window(tolerance)[0]
+
+
+def foreground_window(tolerance=2):
+    """(fullscreen, process name) of the foreground window.
+
+    The name is returned even when the window does not count as fullscreen, so
+    callers can also match a whitelisted program. None means the sample failed.
+    """
     try:
-        return window_client_covers_monitor(user32.GetForegroundWindow(), tolerance)
+        return window_state(user32.GetForegroundWindow(), tolerance)
     except (OSError, ValueError):
-        return None
+        return None, ""
 
 
 def window_client_covers_monitor(hwnd, tolerance=2):
     """Check one window's client area against the monitor it belongs to."""
+    return window_state(hwnd, tolerance)[0]
+
+
+def window_state(hwnd, tolerance=2):
+    """(fullscreen, process name) for one window; (None, "") when unknown."""
     try:
         if not hwnd:
-            return None
+            return None, ""
         hwnd = user32.GetAncestor(hwnd, GA_ROOT) or hwnd
         if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
-            return False
+            return False, ""
         class_name = ctypes.create_unicode_buffer(128)
         user32.GetClassNameW(hwnd, class_name, len(class_name))
-        if class_name.value in EXCLUDED_CLASSES:
-            return False
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        name = _process_name(pid.value).lower()
+        name = _process_name(pid.value)
         if not name:
-            return None
-        if name in EXCLUDED_PROCESSES:
-            return False
+            return None, ""
+        if class_name.value in EXCLUDED_CLASSES or name.lower() in EXCLUDED_PROCESSES:
+            return False, name
         client = wintypes.RECT()
         if not user32.GetClientRect(hwnd, ctypes.byref(client)):
-            return None
+            return None, ""
         if client.right <= 0 or client.bottom <= 0:
-            return False
+            return False, name
         origin = wintypes.POINT(0, 0)
         if not user32.ClientToScreen(hwnd, ctypes.byref(origin)):
-            return None
+            return None, ""
         monitor = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
         if not monitor:
-            return None
+            return None, ""
         info = _MONITORINFO()
         info.cbSize = ctypes.sizeof(info)
         if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
-            return None
+            return None, ""
         client_rect = (origin.x, origin.y,
                        origin.x + client.right, origin.y + client.bottom)
         monitor_rect = (info.rcMonitor.left, info.rcMonitor.top,
                         info.rcMonitor.right, info.rcMonitor.bottom)
-        return client_covers_monitor(client_rect, monitor_rect, tolerance)
+        return client_covers_monitor(client_rect, monitor_rect, tolerance), name
     except (OSError, ValueError):
-        return None
+        return None, ""

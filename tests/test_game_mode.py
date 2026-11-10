@@ -4,8 +4,12 @@ import copy
 import unittest
 from unittest.mock import Mock
 
-from wuwa_tappo_plus import cdp
+from unittest.mock import patch
+
+from wuwa_tappo_plus import cdp, fullscreen
+from wuwa_tappo_plus.config import Config
 from wuwa_tappo_plus.game_mode import GameModeController
+from wuwa_tappo_plus.runner import Runner
 
 
 class ControllerTests(unittest.TestCase):
@@ -203,3 +207,28 @@ class ControllerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class WhitelistSampleTests(unittest.TestCase):
+    """The detector combines fullscreen with the configured whitelist."""
+
+    def sample(self, state, name, apps=()):
+        runner = object.__new__(Runner)
+        runner.cfg = Config({"appearance": {"game_mode_apps": list(apps)}})
+        with patch.object(fullscreen, "foreground_window",
+                          return_value=(state, name)):
+            return runner._game_mode_sample()
+
+    def test_fullscreen_counts_without_any_entry(self):
+        self.assertTrue(self.sample(True, "anything.exe"))
+
+    def test_a_whitelisted_window_counts_even_when_not_fullscreen(self):
+        self.assertTrue(self.sample(False, "SomeGame.exe", ["somegame.exe"]))
+        self.assertTrue(self.sample(False, "other.exe", ["somegame.exe", "other.exe"]))
+
+    def test_an_unlisted_window_does_not_count(self):
+        self.assertFalse(self.sample(False, "browser.exe", ["somegame.exe"]))
+        self.assertFalse(self.sample(False, "", ["somegame.exe"]))
+
+    def test_an_unknown_sample_stays_unknown(self):
+        self.assertIsNone(self.sample(None, ""))
+

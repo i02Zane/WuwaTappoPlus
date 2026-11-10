@@ -300,3 +300,50 @@ test('token row shows expiry and uses the official toast for extract/renew', asy
   assert.equal(loginRow.hidden, false);
   assert.equal(loginRow.style.display, '');
 });
+
+test('auto game mode switch owns a whitelist of programs', () => {
+  const f = fixture();
+  const nodes = new Map();
+  function element() {
+    return { dataset: {}, style: { setProperty() {} }, children: [], textContent: '',
+      setAttribute() {}, addEventListener(name, handler) { this[name] = handler; },
+      appendChild(child) { this.children.push(child); if (child.id) nodes.set(child.id, child); },
+      querySelectorAll() { return []; },
+      querySelector(selector) {
+        if (selector === '.wut-status') return { dataset: {}, textContent: '' };
+        return null;
+      }
+    };
+  }
+  const container = element();
+  container.insertBefore = child => container.appendChild(child);
+  f.context.document.createElement = element;
+  f.context.document.head = element();
+  f.context.document.querySelector = () => container;
+  f.context.document.getElementById = id =>
+    id === 'wut-daily-report' ? null : nodes.get(id);
+  f.settings.update({ preferences: { game_mode_apps: ['game.exe'] }, ack: [] });
+
+  assert.equal(nodes.get('wut-setting-game-mode-apps').textContent, '自动游戏模式白名单');
+  const list = nodes.get('wut-game-apps');
+  assert.equal(list.children.length, 1);
+  assert.equal(list.children[0].children[0].textContent, 'game.exe');
+  assert.equal(nodes.get('wut-game-apps-empty').style.display, 'none');
+
+  list.children[0].children[1].click();
+  assert.equal(f.settings.requests.length, 1);
+  assert.equal(f.settings.requests[0].key, 'game_mode_apps');
+  assert.deepEqual(f.settings.requests[0].value, []);
+  f.settings.update({ preferences: { game_mode_apps: [] }, ack: [] });
+  assert.equal(nodes.get('wut-game-apps-empty').style.display, '');
+
+  nodes.get('wut-game-apps-add').click();
+  const last = f.settings.requests[f.settings.requests.length - 1];
+  assert.equal(last.action, 'whitelist_add_foreground');
+  nodes.get('wut-game-apps-add').click();
+  assert.equal(f.settings.requests.filter(r => r.action === 'whitelist_add_foreground').length, 1,
+               'one add request at a time');
+  // The old wording promised fullscreen-only behaviour.
+  assert.doesNotMatch(loadScript('settings.js'), /全屏进入游戏模式·Plus/);
+});
+
