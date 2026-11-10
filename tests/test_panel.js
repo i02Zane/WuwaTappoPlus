@@ -323,6 +323,13 @@ test('auto game mode switch owns a whitelist of programs', () => {
   f.context.document.getElementById = id =>
     id === 'wut-daily-report' ? null : nodes.get(id);
   f.settings.update({ preferences: { game_mode_apps: ['game.exe'] }, ack: [] });
+  assert.equal(nodes.get('wut-game-apps-add').textContent, '添加最近使用的程序');
+  assert.equal(nodes.get('wut-game-apps-add').disabled, true);
+
+  f.settings.update({ preferences: { game_mode_apps: ['game.exe'] },
+                      foreground_app: 'game.exe', ack: [] });
+  assert.equal(nodes.get('wut-game-apps-add').textContent, '添加 game.exe');
+  assert.equal(nodes.get('wut-game-apps-add').disabled, false);
 
   assert.equal(nodes.get('wut-setting-game-mode-apps').textContent, '自动游戏模式白名单');
   const list = nodes.get('wut-game-apps');
@@ -343,6 +350,15 @@ test('auto game mode switch owns a whitelist of programs', () => {
   nodes.get('wut-game-apps-add').click();
   assert.equal(f.settings.requests.filter(r => r.action === 'whitelist_add_foreground').length, 1,
                'one add request at a time');
+
+  // Typing a name works too: the panel can never be the candidate itself.
+  const input = nodes.get('wut-game-apps-input');
+  input.value = '  Other.EXE  ';
+  nodes.get('wut-game-apps-manual').click();
+  const manual = f.settings.requests[f.settings.requests.length - 1];
+  assert.equal(manual.action, 'whitelist_add');
+  assert.equal(manual.name, 'Other.EXE');
+  assert.equal(input.value, '');
   // The old wording promised fullscreen-only behaviour.
   assert.doesNotMatch(loadScript('settings.js'), /全屏进入游戏模式·Plus/);
 });

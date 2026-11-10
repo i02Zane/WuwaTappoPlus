@@ -5,7 +5,7 @@
 
   var S = window.__WUT_SETTINGS__ = {
     version: VERSION, requests: [], beat: 0, report: null,
-    exportPath: null, exportError: false, accessories: {},
+    exportPath: null, exportError: false, accessories: {}, foregroundApp: '',
     _test: { emitLoginSuccess: emitLoginSuccess },
     preferences: { auto_open: true, balance_reminder: true, bubble: true, animation: true,
                    remember_screen: true, auto_emote: false, pause_clicks: false,
@@ -262,6 +262,16 @@
   function renderGameModeApps() {
     var list = document.getElementById('wut-game-apps');
     if (!list) return;
+    var online = Date.now() - S.beat <= 5000;
+    var add = document.getElementById('wut-game-apps-add');
+    if (add) {
+      var candidate = S.foregroundApp || '';
+      var label = candidate ? '添加 ' + candidate : '添加最近使用的程序';
+      if (add.textContent !== label) add.textContent = label;
+      add.disabled = !candidate || !online;
+    }
+    var manual = document.getElementById('wut-game-apps-manual');
+    if (manual) manual.disabled = !online;
     var apps = Array.isArray(S.preferences.game_mode_apps) ? S.preferences.game_mode_apps : [];
     var key = JSON.stringify(apps);
     if (list.dataset.state === key) return;
@@ -328,6 +338,9 @@
         + '#wut-plus-settings .wut-game-app-remove{border:0;background:none;color:#b4543c;padding:0 2px;'
         + 'font-size:14px;line-height:1;cursor:pointer;}'
         + '#wut-plus-settings .wut-game-apps-empty{font-size:12px;color:#8e7b6a;}'
+        + '#wut-plus-settings .wut-game-manual{display:flex;gap:6px;justify-content:flex-end;}'
+        + '#wut-plus-settings .wut-game-input{flex:1 1 160px;min-width:0;padding:4px 8px;font-size:12px;'
+        + 'border:1px solid #e0cfc0;border-radius:6px;background:#fff;color:#8e5e43;}'
         + '#wut-plus-settings .wut-game-add{border:1px solid #e0cfc0;border-radius:6px;background:#fff;'
         + 'color:#8e5e43;font-size:12px;padding:4px 8px;cursor:pointer;}'
         + '#wut-export-status{overflow-wrap:anywhere;}'
@@ -546,7 +559,8 @@
       name.textContent = '自动游戏模式白名单';
       var desc = document.createElement('div');
       desc.className = 'setting-sub';
-      desc.textContent = '这些程序打开时即使不是全屏也进入游戏模式；全屏窗口无需添加。';
+      desc.textContent = '这些程序打开时即使不是全屏也进入游戏模式；全屏窗口无需添加。'
+        + '在目标程序里切回设置页后点下面第一个按钮，也可以直接输入程序名。';
       label.appendChild(name);
       label.appendChild(desc);
       var content = document.createElement('div');
@@ -571,9 +585,38 @@
         error = ''; saved = false;
         render();
       });
+      var manualRow = document.createElement('div');
+      manualRow.className = 'wut-game-manual';
+      var input = document.createElement('input');
+      input.id = 'wut-game-apps-input';
+      input.type = 'text';
+      input.className = 'wut-game-input';
+      input.placeholder = '程序名，例如 SomeGame.exe';
+      input.setAttribute('aria-label', '程序名');
+      var manual = document.createElement('button');
+      manual.id = 'wut-game-apps-manual';
+      manual.type = 'button';
+      manual.className = 'wut-game-add';
+      manual.textContent = '添加';
+      function addByName() {
+        var value = String(input.value || '').trim();
+        if (!value) { return; }
+        if (Date.now() - S.beat > 5000) { render(); return; }
+        S.requests.push({ id: instance + '-' + (++serial), action: 'whitelist_add', name: value });
+        input.value = '';
+        error = ''; saved = false;
+        render();
+      }
+      manual.addEventListener('click', addByName);
+      input.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') { event.preventDefault(); addByName(); }
+      });
+      manualRow.appendChild(input);
+      manualRow.appendChild(manual);
       content.appendChild(list);
       content.appendChild(empty);
       content.appendChild(add);
+      content.appendChild(manualRow);
       row.appendChild(label);
       row.appendChild(content);
       host.appendChild(row);
@@ -816,6 +859,7 @@
   S.update = function (state) {
     S.beat = Date.now();
     S.preferences = state.preferences;
+    S.foregroundApp = state.foreground_app || '';
     S.accessories = state.accessories || S.accessories || {};
     S.petAccessory = state.pet_accessory || null;
     S.report = state.report || null;

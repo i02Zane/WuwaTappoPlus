@@ -78,7 +78,8 @@ class Runner:
         self.cfg = cfg or load()
         self.log = log or Log(self.cfg.log_max_bytes, self.cfg.log_keep)
         self.session = cdp.Session(self.cfg.port, self.cfg.host)
-        self.settings = SettingsBridge(self.cfg.port, self.cfg.host, self.log)
+        self.settings = SettingsBridge(self.cfg.port, self.cfg.host, self.log,
+                                     foreground_app=self._last_app)
         self.reports = DailyReport(self.log)
         self.rooms = RoomBridge(self.cfg.port, self.cfg.host, self.log)
         self.plaza = PlazaBridge(self.log)
@@ -106,6 +107,7 @@ class Runner:
         self._stop = False
         self._accessory_key = None
         self._accessory_session = None
+        self.last_app = ""
         self.game_mode = game_mode.GameModeController(
             self.log, detector=self._game_mode_sample)
 
@@ -121,11 +123,19 @@ class Runner:
         fullscreen_state, name = fullscreen.foreground_window()
         if fullscreen_state is None:
             return None
+        if name and name.lower() not in fullscreen.EXCLUDED_PROCESSES:
+            # Remembered for the settings page: the user has to come back to the
+            # panel (our own window) before they can add the program, so the
+            # current foreground there is never the one they mean.
+            self.last_app = name
         if fullscreen_state:
             return True
         if not name:
             return False
         return name.lower() in self.cfg.game_mode_apps
+
+    def _last_app(self):
+        return self.last_app
 
     def acquire_lock(self):
         if not LOCK_PATH.parent.exists():

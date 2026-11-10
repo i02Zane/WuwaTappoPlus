@@ -205,6 +205,9 @@ class BridgeTests(unittest.TestCase):
         self.target = {"id": "panel", "url": "http://tauri.localhost/index.html#/panel"}
 
     def sync_request(self, request):
+        # Every call builds its own page mock; the bridge must rediscover it.
+        self.bridge.session = None
+        self.bridge.last_scan = -10.0
         session = Mock()
         session.target = self.target
         session.js.return_value = json.dumps({"version": __version__, "requests": [request]})
@@ -215,6 +218,27 @@ class BridgeTests(unittest.TestCase):
         payload = json.loads(update.removeprefix("window.__WUT_SETTINGS__.update(")
                              .removesuffix("); 1"))
         return result, payload
+
+    def test_whitelist_add_uses_the_program_used_before_the_panel(self):
+        self.bridge.foreground_app = lambda: "SomeGame.exe"
+        with patch("wuwa_tappo_plus.settings.fullscreen.foreground_window",
+                   return_value=(False, "WuwaTappo.exe")):
+            result, payload = self.sync_request(
+                {"id": "w1", "action": "whitelist_add_foreground"})
+        self.assertEqual(result.game_mode_apps, ["somegame.exe"])
+        self.assertEqual(payload["foreground_app"], "somegame.exe")
+        self.assertIn('game_mode_apps = ["somegame.exe"]',
+                      self.path.read_text(encoding="utf-8"))
+        self.assertFalse(payload["ack"][0].get("error"))
+
+    def test_whitelist_manual_name_is_normalised_and_validated(self):
+        result, payload = self.sync_request(
+            {"id": "w2", "action": "whitelist_add", "name": "C:\\Games\\Other.EXE"})
+        self.assertEqual(result.game_mode_apps, ["other.exe"])
+        result, payload = self.sync_request(
+            {"id": "w3", "action": "whitelist_add", "name": "not-a-program"})
+        self.assertTrue(payload["ack"][0].get("error"))
+        self.assertEqual(result.game_mode_apps, ["other.exe"])
 
     def test_export_is_a_separate_action_and_retries_do_not_duplicate_zip(self):
         original = self.path.read_bytes()
