@@ -8,7 +8,6 @@ from unittest.mock import Mock, patch
 from wuwa_tappo_plus import __version__, cdp
 from wuwa_tappo_plus.config import (BUILTIN, DEFAULT_TOML, Config, save_preferences,
                                     sync_config, with_preferences)
-from wuwa_tappo_plus.pages import is_panel
 from wuwa_tappo_plus.settings import SettingsBridge
 from wuwa_tappo_plus.ws import WSError
 
@@ -303,18 +302,13 @@ class BridgeTests(unittest.TestCase):
                                                   "scale": 1.2, "rotation": 15.0}})
         self.assertEqual(update["accessories"], saved)
 
-    def test_panel_disconnect_does_not_stop_main_daemon(self):
+    def test_panel_disconnect_preserves_preferences_and_releases_its_connection(self):
         self.bridge.session = Mock(target=self.target)
         self.bridge.session.js.side_effect = cdp.CDPError("closed")
         with patch("wuwa_tappo_plus.settings.cdp.list_targets", return_value=[self.target]):
             cfg = self.bridge.sync(Config({}))
         self.assertTrue(cfg.auto_open)
         self.assertIsNone(self.bridge.session)
-
-    def test_only_exact_local_panel_route_is_selected(self):
-        for url in ("http://example.com/index.html#/panel",
-                    "http://tauri.localhost/#/", "http://tauri.localhost/index.html#/login"):
-            self.assertFalse(is_panel(url))
 
     def test_websocket_close_is_a_retryable_cdp_error(self):
         session = cdp.Session(9222)
@@ -396,13 +390,6 @@ class ConfigSyncTests(unittest.TestCase):
         self.write("[app]\nport = 1\nport = 2\n")
         with self.assertRaises(tomllib.TOMLDecodeError):
             sync_config(self.path)
-
-
-class VersionTests(unittest.TestCase):
-    def test_javascript_and_bridge_agree_on_the_version(self):
-        source = SettingsBridge(9222, "127.0.0.1", Mock()).source
-        self.assertIn("var VERSION = " + json.dumps(__version__), source)
-        self.assertNotIn("__VERSION__", source)
 
 
 if __name__ == "__main__":

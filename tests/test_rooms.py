@@ -237,23 +237,19 @@ class RoomBridgeTests(unittest.TestCase):
         self.bridge.sync(self.history, clock=lambda: clock)
         return self.bridge.session
 
-    def test_current_room_is_stored_once_per_stay(self):
-        session = self.sync([state(current={"room_id": "32RH4VrDT", "owner": "白柳"}), "1"])
-        self.assertEqual(len(self.history.recent()), 1)
-        self.assertIn("__WUT_ROOMS__.update", session.sent[-1])
-
-    def test_staying_in_the_same_room_does_not_add_visits(self):
-        self.sync([state(current={"room_id": "32RH4VrDT", "owner": "白柳"}), "1"])
-        self.sync([state(current={"room_id": "32RH4VrDT", "owner": "白柳"}), "1"], clock=30.0)
-        self.assertEqual(self.history.recent()[0]["visits"], 1)
-        self.sync([state(current={"room_id": "32RH4VrDT", "owner": "白柳"}), "1"], clock=90.0)
-        self.assertEqual(self.history.recent()[0]["visits"], 1)
-
-    def test_leaving_and_returning_counts_another_visit(self):
-        self.sync([state(current={"room_id": "32RH4VrDT", "owner": "白柳"}), "1"])
-        self.sync([state(current=None), "1"], clock=10.0)
-        self.sync([state(current={"room_id": "32RH4VrDT", "owner": "白柳"}), "1"], clock=20.0)
-        self.assertEqual(self.history.recent()[0]["visits"], 2)
+    def test_room_visits_count_stays_not_polls_and_only_increment_after_returning(self):
+        for seconds, current, expected in (
+                (0, {"room_id": "32RH4VrDT", "owner": "白柳"}, 1),
+                (30, {"room_id": "32RH4VrDT", "owner": "白柳"}, 1),
+                (90, {"room_id": "32RH4VrDT", "owner": "白柳"}, 1),
+                (100, None, 1),
+                (110, {"room_id": "32RH4VrDT", "owner": "白柳"}, 2)):
+            with self.subTest(seconds=seconds):
+                session = self.sync([state(current=current), "1"], clock=seconds)
+                rows = self.history.recent()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["visits"], expected)
+                self.assertIn("__WUT_ROOMS__.update", session.sent[-1])
 
     def test_host_that_renders_late_does_not_add_a_visit(self):
         self.sync([state(current={"room_id": "32RH4VrDT", "owner": ""}), "1"])
@@ -292,7 +288,7 @@ class RoomBridgeTests(unittest.TestCase):
         self.assertFalse(self.history.recent()[0]["pinned"])
         self.assertIn('"error": true', session.sent[-1])
 
-    def test_missing_or_outdated_injection_is_reinstalled(self):
+    def test_missing_injection_is_installed_before_room_state_is_stored(self):
         session = self.sync([
             None,
             "installed v%s" % __version__,

@@ -26,25 +26,13 @@ class DailyClickTests(unittest.TestCase):
     def counts(self, tracker):
         return {row["date"]: row["count"] for row in tracker.yesterday()["days"]}
 
-    def test_first_sample_is_baseline_not_historical_daily_count(self):
+    def test_counter_stream_builds_a_baseline_and_counts_only_new_increments(self):
         tracker = self.tracker()
-        tracker.observe(self.sample(32531))
-        self.assertEqual(self.counts(tracker)["2026-10-27"], 0)
-        self.assertIsNone(tracker.yesterday()["yesterday_count"])
-
-    def test_positive_click_increments_are_counted(self):
-        tracker = self.tracker()
-        tracker.observe(self.sample(100))
-        tracker.observe(self.sample(107))
-        tracker.observe(self.sample(112))
-        self.assertEqual(self.counts(tracker)["2026-10-27"], 12)
-
-    def test_repeated_sample_does_not_double_count(self):
-        tracker = self.tracker()
-        tracker.observe(self.sample(100))
-        for _ in range(5):
-            tracker.observe(self.sample(103))
-        self.assertEqual(self.counts(tracker)["2026-10-27"], 3)
+        for total, expected in ((100, 0), (107, 7), (107, 7), (112, 12), (112, 12)):
+            with self.subTest(total=total, expected=expected):
+                tracker.observe(self.sample(total))
+                self.assertEqual(self.counts(tracker)["2026-10-27"], expected)
+                self.assertIsNone(tracker.yesterday()["yesterday_count"])
 
     def test_chest_clicks_and_wallet_spending_do_not_count(self):
         tracker = self.tracker()

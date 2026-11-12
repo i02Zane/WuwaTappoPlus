@@ -9,7 +9,7 @@ from unittest.mock import patch
 from wuwa_tappo_plus import cdp, fullscreen
 from wuwa_tappo_plus.config import Config
 from wuwa_tappo_plus.game_mode import GameModeController
-from wuwa_tappo_plus.runner import Runner
+from wuwa_tappo_plus.runtime_services import sample_game_mode
 
 
 class ControllerTests(unittest.TestCase):
@@ -205,18 +205,14 @@ class ControllerTests(unittest.TestCase):
         self.controller.detector.assert_not_called()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 class WhitelistSampleTests(unittest.TestCase):
     """The detector combines fullscreen with the configured whitelist."""
 
     def sample(self, state, name, apps=()):
-        runner = object.__new__(Runner)
-        runner.cfg = Config({"appearance": {"game_mode_apps": list(apps)}})
+        cfg = Config({"appearance": {"game_mode_apps": list(apps)}})
         with patch.object(fullscreen, "foreground_window",
                           return_value=(state, name)):
-            return runner._game_mode_sample()
+            return sample_game_mode(cfg)
 
     def test_fullscreen_counts_without_any_entry(self):
         self.assertTrue(self.sample(True, "anything.exe"))
@@ -231,3 +227,7 @@ class WhitelistSampleTests(unittest.TestCase):
 
     def test_an_unknown_sample_stays_unknown(self):
         self.assertIsNone(self.sample(None, ""))
+
+
+if __name__ == "__main__":
+    unittest.main()

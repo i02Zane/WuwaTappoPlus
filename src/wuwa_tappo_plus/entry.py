@@ -15,16 +15,14 @@ def probe():
     from .paths import APP_DIR, DATA_DIR, SCRIPTS_DIR, frozen
     from .rooms import RoomBridge
     from .settings import SettingsBridge
-    from .runner import Runner
+    from .pet_page import inject_source
     from .toasts import ToastBridge
     from .plaza import PlazaBridge
 
     class QuietLog:
         pass
 
-    runner = object.__new__(Runner)
-    runner.cfg = Config({})
-    sources = {"game_mode": game_mode.source(), "pet": runner.inject_source(),
+    sources = {"game_mode": game_mode.source(), "pet": inject_source(Config({})),
                "settings": SettingsBridge(9222, "127.0.0.1", QuietLog()).source,
                "rooms": RoomBridge(9222, "127.0.0.1", QuietLog()).source,
                "toast": ToastBridge(9222, "127.0.0.1", QuietLog()).source,

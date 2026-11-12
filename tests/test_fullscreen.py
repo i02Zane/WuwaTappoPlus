@@ -7,27 +7,21 @@ from wuwa_tappo_plus.fullscreen import client_covers_monitor
 
 
 class ClientCoverTests(unittest.TestCase):
-    def test_exact_client_covering_the_monitor(self):
-        self.assertTrue(client_covers_monitor((0, 0, 2560, 1440), (0, 0, 2560, 1440)))
-
-    def test_title_bar_above_the_client_is_not_fullscreen(self):
-        self.assertFalse(client_covers_monitor((0, 30, 2560, 1470), (0, 0, 2560, 1440)))
-
-    def test_maximized_work_area_does_not_cover_the_monitor(self):
-        self.assertFalse(client_covers_monitor((0, 0, 2560, 1392), (0, 0, 2560, 1440)))
-
-    def test_small_offset_is_tolerated(self):
-        self.assertTrue(client_covers_monitor((-2, -1, 2562, 1441), (0, 0, 2560, 1440)))
-
-    def test_overscan_is_tolerated(self):
-        self.assertTrue(client_covers_monitor((-8, 0, 2568, 1440), (0, 0, 2560, 1440)))
-
-    def test_a_window_that_does_not_reach_an_edge_is_not_fullscreen(self):
-        self.assertFalse(client_covers_monitor((0, 0, 2550, 1440), (0, 0, 2560, 1440)))
-        self.assertFalse(client_covers_monitor((0, 0, 2560, 1430), (0, 0, 2560, 1440)))
-
-    def test_smaller_window_is_not_fullscreen(self):
-        self.assertFalse(client_covers_monitor((0, 0, 1920, 1080), (0, 0, 2560, 1440)))
+    def test_client_coverage_accepts_tolerance_but_rejects_work_area_and_partial_windows(self):
+        monitor = (0, 0, 2560, 1440)
+        cases = (
+            ("exact", (0, 0, 2560, 1440), True),
+            ("title bar", (0, 30, 2560, 1470), False),
+            ("maximized work area", (0, 0, 2560, 1392), False),
+            ("two pixel tolerance", (-2, -1, 2562, 1441), True),
+            ("overscan", (-8, 0, 2568, 1440), True),
+            ("right edge missing", (0, 0, 2550, 1440), False),
+            ("bottom edge missing", (0, 0, 2560, 1430), False),
+            ("smaller window", (0, 0, 1920, 1080), False),
+        )
+        for label, client, covered in cases:
+            with self.subTest(window=label):
+                self.assertEqual(client_covers_monitor(client, monitor), covered)
 
 
 class DetectionFailureTests(unittest.TestCase):
@@ -48,9 +42,6 @@ class DetectionFailureTests(unittest.TestCase):
                 patch.object(fullscreen.user32, "GetClientRect", return_value=False):
             self.assertIsNone(fullscreen.window_client_covers_monitor(42))
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 class OpenAppsTests(unittest.TestCase):
     def run_picker(self, titles, names, visible=True):
@@ -86,3 +77,6 @@ class OpenAppsTests(unittest.TestCase):
     def test_entries_without_a_name_are_skipped(self):
         self.assertEqual(self.run_picker({1: "Some game"}, [""]), [])
 
+
+if __name__ == "__main__":
+    unittest.main()

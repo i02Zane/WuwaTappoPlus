@@ -1,331 +1,220 @@
-"""Daemon-side decisions that were previously only visible in the log file."""
+"""Daemon orchestration with fake clocks, connections and feature resources."""
 
-import json
 import tempfile
-import time
-import tomllib
 import unittest
-from collections import deque
 from pathlib import Path
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
-from wuwa_tappo_plus import __version__, accessories, cdp, config
+from wuwa_tappo_plus import cdp
 from wuwa_tappo_plus.config import Config
-from wuwa_tappo_plus.runner import Runner, _remaining
+from wuwa_tappo_plus.runner import Runner
 
 
-def bare_runner():
-    """A Runner with the file, socket and sqlite side effects left out."""
-    runner = object.__new__(Runner)
-    runner.log = Mock()
-    runner.cfg = Config({})
-    runner.session = Mock()
-    return runner
+class Clock:
+    def __init__(self):
+        self.now = 0.0
+        self.waits = []
+
+    def __call__(self):
+        return self.now
+
+    def wait(self, seconds):
+        self.waits.append(seconds)
+        self.now += seconds
 
 
-class ReinjectionTests(unittest.TestCase):
-    installed = json.dumps({"inject": __version__})
-
-    def runner(self, first_poll):
-        runner = bare_runner()
-        runner.cfg = Config({})
-        runner.session.js.side_effect = [first_poll, "1", "installed v" + __version__, self.installed]
-        return runner
-
-    def test_older_version_is_replaced(self):
-        runner = self.runner(json.dumps({"inject": "0.0.0"}))
-        runner.ensure_injected()
-        runner.log.info.assert_any_call("replacing injection v0.0.0 with v" + __version__)
-        message = runner.log.info.call_args_list[0][0][0]
-        self.assertIn("v0.0.0", message)
-        self.assertIn("v" + __version__, message)
-
-    def test_current_injection_is_left_alone(self):
-        runner = self.runner(self.installed)
-        runner.ensure_injected()
-        self.assertEqual(runner.session.js.call_count, 1)
-
-
-class AccessoryReconnectTests(unittest.TestCase):
+class RunnerTests(unittest.TestCase):
     def setUp(self):
+        signal_patch = patch("wuwa_tappo_plus.runner.signal.signal", return_value=None)
+        signal_patch.start()
+        self.addCleanup(signal_patch.stop)
+        self.make_runner()
+
+    def make_runner(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.path = Path(directory.name) / accessories.FILE_NAME
-        self.overrides = accessories.set_override(self.path, "hat.png", 10, -2, 1.2, 15)
-        self.runner = bare_runner()
-        self.runner.settings = Mock(accessories_path=self.path)
-        self.runner._accessory_key = None
-        self.runner._accessory_session = None
-        self.runner.apply_accessories()
-        self.runner.session.js.reset_mock()
+        self.stop_file = Path(directory.name) / ".stop"
+        self.clock = Clock()
+        self.events = []
+        self.services = SimpleNamespace(**{
+            name: Mock() for name in ("session", "pet", "settings", "reports", "rooms",
+                                     "plaza", "history", "toasts", "screens", "chests",
+                                     "observations", "game_mode", "close")})
+        self.services.session.ws = object()
+        self.services.session.target = {"url": "pet"}
+        self.services.chests.data = {}
+        self.services.observations.click_count = 0
+        self.services.observations.block_reason = None
+        self.services.observations.toast_floor_ms = 10
+        self.cfg = Config({"daemon": {"max_runtime": 2}})
+        self.payload = {"inject": "current", "state": {"now": 1000, "bal": 0}}
+        self.operations = (
+            ("reports.yesterday", {}), ("settings.sync", self.cfg),
+            ("pet.poll", self.payload), ("chests.observe", None),
+            ("reports.observe", None), ("pet.apply_accessories", None),
+            ("pet.accessory_base", {"file": "hat"}), ("game_mode.tick", None),
+            ("observations.drain_clicks", None), ("observations.note_block", None),
+            ("observations.alert_balance", None), ("rooms.sync", None),
+            ("plaza.sync", None), ("screens.tick", None), ("toasts.poll", [(10, "hi")]),
+            ("observations.log_toast", None), ("observations.drain_page_errors", None),
+            ("observations.heartbeat", None),
+        )
+        for name, result in self.operations:
+            self.method(name).side_effect = self.record(name, result)
+        self.factory = Mock(return_value=self.services)
+        self.lock = Mock()
+        self.publisher = Mock()
+        self.runner = Runner(self.cfg, Mock(), services_factory=self.factory, lock=self.lock,
+                             publisher=self.publisher, stop_file=self.stop_file,
+                             clock=self.clock, wait=self.clock.wait)
 
-    def test_the_rendered_scale_is_published_with_the_anchor(self):
-        runner = bare_runner()
-        runner.settings = Mock(pet_accessory=None)
-        runner.session.js.return_value = json.dumps({
-            "base": {"file": "hat.png", "x": -5, "y": 22},
-            "size": 136, "layout": 200,
-        })
-        runner.sync_accessory_base()
-        self.assertEqual(runner.settings.pet_accessory,
-                         {"file": "hat.png", "x": -5, "y": 22,
-                          "size": 136, "layout": 200})
+    def method(self, name):
+        resource, method = name.split(".")
+        return getattr(getattr(self.services, resource), method)
 
-    def test_a_page_without_layout_size_still_publishes_the_anchor(self):
-        runner = bare_runner()
-        runner.settings = Mock(pet_accessory=None)
-        runner.session.js.return_value = json.dumps({
-            "base": {"file": "hat.png", "x": 1, "y": 2}, "size": 136})
-        runner.sync_accessory_base()
-        self.assertEqual(runner.settings.pet_accessory,
-                         {"file": "hat.png", "x": 1, "y": 2, "size": 136})
+    def record(self, name, result):
+        def call(*args, **kwargs):
+            self.events.append(name)
+            return result
+        return call
 
-    def test_unchanged_page_does_not_resend_overrides(self):
-        self.runner.session.js.return_value = json.dumps({"inject": __version__})
-        self.runner.ensure_injected()
-        self.runner.session.js.reset_mock()
-        self.runner.apply_accessories()
-        self.runner.session.js.assert_not_called()
+    def test_normal_order_cadence_and_state_are_preserved(self):
+        self.assertEqual(self.runner.run(), 0)
+        # Check causal dependencies, not an exact copy of the job table.
+        first_round = self.events[:len(self.operations)]
+        for before, after in (("settings.sync", "pet.poll"),
+                              ("pet.poll", "reports.observe"),
+                              ("observations.drain_clicks", "observations.log_toast")):
+            self.assertLess(first_round.index(before), first_round.index(after))
+        self.assertEqual(self.clock.waits, [1.0, 1.0])
+        self.services.pet.poll.assert_called_with(self.cfg, {})
+        self.services.observations.alert_balance.assert_called_with(self.cfg, self.payload["state"], None)
+        self.services.rooms.sync.assert_called_with(self.services.history, plaza=self.services.plaza)
+        self.services.toasts.poll.assert_called_with(10)
+        self.assertEqual(self.services.settings.pet_accessory, {"file": "hat"})
+        state = self.publisher.publish.call_args.args[3]
+        self.assertEqual(state, {"inject": "current", "now": 1000, "bal": 0})
+        self.publisher.stopped.assert_called_once()
+        self.services.close.assert_called_once()
+        self.lock.release.assert_called_once()
 
-    def test_restarted_page_receives_overrides_with_the_same_session(self):
-        session = self.runner.session
-        # Restart/reload cleared the page globals, but connect() reused Session.
-        session.js.side_effect = [json.dumps({"inject": 0}), "installed",
-                                  json.dumps({"inject": __version__})]
-        self.runner.ensure_injected()
-        session.js.side_effect = None
-        session.js.reset_mock()
-        self.runner.apply_accessories()
-        self.assertIs(self.runner.session, session)
-        session.js.assert_called_once_with(
-            "window.__WUT_ACCESSORY_OVERRIDES__ = %s; 1"
-            % json.dumps(self.overrides, ensure_ascii=False))
-        session.js.reset_mock()
-        self.runner.apply_accessories()
-        session.js.assert_not_called()
+    def test_every_auxiliary_failure_leaves_later_features_and_next_round_running(self):
+        for name, result in self.operations:
+            if name == "pet.poll":
+                continue
+            with self.subTest(feature=name):
+                self.make_runner()
+                # Cover each isolation boundary once with a representative failure,
+                # then let it recover on the next iteration.
+                error = (OSError("disk unavailable") if name.startswith(("reports.", "chests."))
+                         else ValueError("bad record") if name.startswith("observations.")
+                         else cdp.CDPError("page unavailable"))
+                calls = []
 
-    def test_failed_restore_is_retried(self):
-        self.runner._accessory_session = None
-        self.runner.session.js.side_effect = cdp.CDPError("disconnected")
-        with self.assertRaises(cdp.CDPError):
-            self.runner.apply_accessories()
-        self.runner.session.js.side_effect = None
-        self.runner.session.js.reset_mock()
-        self.runner.apply_accessories()
-        self.runner.session.js.assert_called_once()
+                def recover(*args, **kwargs):
+                    calls.append(1)
+                    if len(calls) == 1:
+                        raise error
+                    return result
 
+                self.method(name).side_effect = recover
+                self.assertEqual(self.runner.run(), 0)
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(self.publisher.publish.call_count, 2)
+                self.services.session.close.assert_not_called()
+                self.assertEqual(self.clock.now, 2)
+                self.assertEqual(self.services.pet.poll.call_count, 2)
+                self.runner.log.warn.assert_called_once()
 
-class PageErrorTests(unittest.TestCase):
-    """The page reports a rolling window, so one note arrives on every poll."""
+    def test_primary_errors_back_off_and_a_success_resets_retry_budget(self):
+        self.runner.cfg = Config({"daemon": {"max_runtime": 9}})
+        self.services.settings.sync.side_effect = lambda cfg, report: cfg
+        times = []
+        replies = iter([cdp.CDPError("one"), OSError("two"), self.payload,
+                        cdp.CDPError("after success"), self.payload])
 
-    def test_a_note_is_logged_once_while_it_stays_in_the_window(self):
-        runner = bare_runner()
-        runner.page_errors = deque(maxlen=400)
-        note = {"t": 1000, "m": "click produced no state change"}
-        for _ in range(5):
-            runner.drain_page_errors([note])
-        runner.log.warn.assert_called_once()
-        self.assertIn("no state change", runner.log.warn.call_args[0][0])
+        def poll(*args):
+            times.append(self.clock.now)
+            reply = next(replies)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
 
-    def test_distinct_notes_are_each_logged(self):
-        runner = bare_runner()
-        runner.page_errors = deque(maxlen=400)
-        runner.drain_page_errors([{"t": 1, "m": "a"}, {"t": 2, "m": "b"}])
-        self.assertEqual(runner.log.warn.call_count, 2)
+        self.services.pet.poll.side_effect = poll
+        self.assertEqual(self.runner.run(), 0)
+        self.assertEqual(times, [0, 2, 5, 6, 8])
+        self.assertEqual(self.services.session.close.call_count, 3)
+        self.assertEqual(self.services.reports.observe.call_count, 2)
+        self.assertEqual(self.publisher.publish.call_count, 5)
 
-    def test_non_dict_entries_are_ignored(self):
-        runner = bare_runner()
-        runner.page_errors = deque(maxlen=400)
-        runner.drain_page_errors([None, "x", 3])
-        runner.log.warn.assert_not_called()
+    def test_primary_retry_delay_stays_capped_at_ten_seconds(self):
+        self.runner.cfg = Config({"daemon": {"max_runtime": 50}})
+        self.services.settings.sync.side_effect = lambda cfg, report: cfg
+        times = []
 
+        def fail(*args):
+            times.append(self.clock.now)
+            raise cdp.CDPError("offline")
 
-class BlockedClickTests(unittest.TestCase):
-    """A ready chest that never opens must say why."""
+        self.services.pet.poll.side_effect = fail
+        self.assertEqual(self.runner.run(), 0)
+        self.assertEqual(times, [0, 2, 5, 9.5, 16.25, 26.25, 36.25, 46.25])
+        self.services.reports.observe.assert_not_called()
 
-    def runner(self):
-        runner = bare_runner()
-        runner.block_reason = None
-        runner.block_key = (None, None, None)
-        runner.block_logged_at = 0.0
-        runner.last_click_ms = 0
-        return runner
+    def test_both_stop_mechanisms_interrupt_wait_before_another_retry(self):
+        for mechanism in ("file", "signal"):
+            with self.subTest(mechanism=mechanism):
+                self.make_runner()
+                self.services.pet.poll.side_effect = cdp.CDPError("offline")
 
-    @staticmethod
-    def snapshot():
-        # The left slot came due ten seconds ago.
-        return {"now": 1000000, "left": 990000, "right": 1600000, "bal": 740}
+                def stop(seconds):
+                    self.clock.wait(seconds)
+                    if mechanism == "file":
+                        self.stop_file.touch()
+                    else:
+                        self.runner.request_stop()
 
-    def test_the_first_reason_carries_balance_and_delay(self):
-        runner = self.runner()
-        runner.note_block({"reason": "no-button", "balance": 740}, self.snapshot())
-        runner.log.warn.assert_called_once()
-        message = runner.log.warn.call_args[0][0]
-        self.assertIn("no-button", message)
-        self.assertIn("balance=740", message)
-        self.assertIn("chest 10s overdue", message)
+                self.runner.wait = stop
+                self.assertEqual(self.runner.run(), 0)
+                self.assertEqual(self.clock.now, 1)
+                self.services.pet.poll.assert_called_once()
+                self.services.close.assert_called_once()
+                self.lock.release.assert_called_once()
 
-    def test_the_same_reason_is_not_repeated(self):
-        runner = self.runner()
-        block = {"reason": "no-button", "balance": 740}
-        for _ in range(5):
-            runner.note_block(block, self.snapshot())
-        self.assertEqual(runner.log.warn.call_count, 1)
+    def test_duplicate_opens_no_resources_and_does_not_remove_stop_marker(self):
+        self.lock.acquire.return_value = False
+        self.stop_file.touch()
+        self.assertEqual(self.runner.run(), 2)
+        self.factory.assert_not_called()
+        self.lock.release.assert_not_called()
+        self.assertTrue(self.stop_file.exists())
+        self.publisher.stopped.assert_not_called()
 
-    def test_a_new_reason_replaces_the_old_one(self):
-        runner = self.runner()
-        runner.note_block({"reason": "no-button", "balance": 740}, self.snapshot())
-        runner.note_block({"reason": "button-disabled", "balance": 740}, self.snapshot())
-        self.assertEqual(runner.log.warn.call_count, 2)
-        self.assertIn("button-disabled", runner.log.warn.call_args[0][0])
+    def test_startup_failure_releases_lock_without_marking_another_status_stopped(self):
+        self.factory.side_effect = OSError("cannot open database")
+        self.assertEqual(self.runner.run(), 1)
+        self.lock.release.assert_called_once()
+        self.publisher.stopped.assert_not_called()
 
-    def test_recovery_is_logged_once(self):
-        runner = self.runner()
-        runner.note_block({"reason": "no-button", "balance": 740}, self.snapshot())
-        runner.note_block(None, self.snapshot())
-        runner.note_block(None, self.snapshot())
-        self.assertEqual(runner.log.warn.call_count, 1)
-        runner.log.info.assert_called_once()
-        self.assertIn("open again", runner.log.info.call_args[0][0])
+    def test_shutdown_failures_cannot_strand_the_instance_lock(self):
+        for failing in ("services", "status"):
+            with self.subTest(failing=failing):
+                self.make_runner()
+                action = self.services.close if failing == "services" else self.publisher.stopped
+                action.side_effect = OSError("unavailable")
+                self.assertEqual(self.runner.run(), 0)
+                self.services.close.assert_called_once()
+                self.publisher.stopped.assert_called_once()
+                self.lock.release.assert_called_once()
 
-    def test_low_balance_is_reported_like_any_other_gate(self):
-        runner = self.runner()
-        runner.note_block({"reason": "low-balance", "balance": 740}, self.snapshot())
-        runner.log.warn.assert_called_once()
-        self.assertIn("low-balance", runner.log.warn.call_args[0][0])
-        self.assertEqual(runner.block_reason, "low-balance")
-
-    def test_a_second_chest_gets_its_own_line(self):
-        # Two chests land seconds apart: the first must not swallow the second.
-        runner = self.runner()
-        first = {"reason": "low-balance", "slot": "left", "ts": 1000000, "balance": 508}
-        second = {"reason": "low-balance", "slot": "right", "ts": 1005000, "balance": 508}
-        runner.note_block(first, self.snapshot())
-        runner.note_block(second, {"now": 1012000, "left": 1000000, "right": 1005000})
-        self.assertEqual(runner.log.warn.call_count, 2)
-
-    def test_the_same_chest_is_not_logged_twice(self):
-        runner = self.runner()
-        block = {"reason": "low-balance", "slot": "left", "ts": 1000000,
-                 "balance": 508}
-        for _ in range(5):
-            runner.note_block(block, self.snapshot())
-        self.assertEqual(runner.log.warn.call_count, 1)
-
-    def test_giving_up_carries_the_slot_and_attempt_count(self):
-        runner = self.runner()
-        block = {"reason": "give-up", "slot": "left", "ts": 1000000,
-                 "balance": 1508, "attempts": 5}
-        runner.note_block(block, self.snapshot())
-        runner.log.warn.assert_called_once()
-        message = runner.log.warn.call_args[0][0]
-        self.assertIn("give-up", message)
-        self.assertIn("slot=left", message)
-        self.assertIn("after 5 attempts", message)
-
-    def test_a_pause_is_reminded_after_ten_minutes_like_any_stall(self):
-        runner = self.runner()
-        block = {"reason": "paused", "slot": "left", "ts": 1000000, "balance": 740}
-        runner.note_block(block, self.snapshot())
-        runner.block_logged_at = time.time() - 601
-        runner.note_block(block, self.snapshot())
-        self.assertEqual(runner.log.info.call_count, 2)
-        runner.log.warn.assert_not_called()
-
-    def test_paused_is_information_not_a_warning(self):
-        runner = self.runner()
-        runner.note_block({"reason": "paused", "balance": 740}, self.snapshot())
-        runner.log.warn.assert_not_called()
-        runner.log.info.assert_called_once()
-
-    def test_a_block_that_persists_reminds_after_ten_minutes(self):
-        runner = self.runner()
-        block = {"reason": "no-button", "balance": 740}
-        runner.block_key = (None, "no-button", None)
-        runner.block_logged_at = time.time() - 601
-        runner.note_block(block, self.snapshot())
-        runner.log.warn.assert_called_once()
-        self.assertIn("still waiting", runner.log.warn.call_args[0][0])
-
-    def test_the_ui_settling_after_our_click_is_not_a_stall(self):
-        runner = self.runner()
-        runner.last_click_ms = int(time.time() * 1000) - 1000
-        runner.note_block({"reason": "button-disabled", "balance": 2385}, self.snapshot())
-        runner.log.warn.assert_not_called()
-        self.assertIsNone(runner.block_reason)
-
-    def test_a_block_after_the_click_settled_is_reported(self):
-        runner = self.runner()
-        runner.last_click_ms = int(time.time() * 1000) - 6000
-        runner.note_block({"reason": "button-disabled", "balance": 2385}, self.snapshot())
-        runner.log.warn.assert_called_once()
-
-
-class InjectionVersionTests(unittest.TestCase):
-    """Every page script belongs to the same Plus release."""
-
-    def test_version_is_not_a_user_setting(self):
-        self.assertNotIn("version", tomllib.loads(config.DEFAULT_TOML)["inject"])
-        self.assertNotIn("version", config.BUILTIN["inject"])
-        cfg = Config({"inject": {"enabled": False}})
-        self.assertEqual(cfg.inject_cfg["version"], __version__)
-        self.assertFalse(cfg.auto_open)
-
-    def test_all_rendered_scripts_use_the_product_version(self):
-        from wuwa_tappo_plus.rooms import RoomBridge
-        from wuwa_tappo_plus.settings import SettingsBridge
-        from wuwa_tappo_plus.toasts import ToastBridge
-
-        runner = bare_runner()
-        sources = [runner.inject_source(), RoomBridge(9222, "127.0.0.1", Mock()).source,
-                   SettingsBridge(9222, "127.0.0.1", Mock()).source,
-                   ToastBridge(9222, "127.0.0.1", Mock()).source]
-        for source in sources:
-            self.assertIn(json.dumps(__version__), source)
-            self.assertNotIn("__VERSION__", source)
-            self.assertNotIn("__CFG__", source)
-
-
-class NativeCountdownTests(unittest.TestCase):
-    def test_hidden_timer_is_unknown_instead_of_epoch_sized_overdue(self):
-        self.assertIsNone(_remaining({"left": 0}, "left", 1793158874936))
-        self.assertIsNone(_remaining({}, "right", 1793158874936))
-
-    def test_visible_timer_and_due_button_keep_their_remaining_time(self):
-        self.assertEqual(_remaining({"left": 130500}, "left", 100000), 30.5)
-        self.assertEqual(_remaining({"right": 98000}, "right", 100000), -2.0)
-
-
-class HiddenChestBalanceTests(unittest.TestCase):
-    def test_disabled_reminders_reset_baseline_without_false_recovery(self):
-        runner = bare_runner()
-        runner.alert_level = 2
-        runner.cfg = Config({"alerts": {"balance": False}})
-        runner.alert_balance({"bal": 500}, 0)
-        self.assertIsNone(runner.alert_level)
-        runner.log.info.assert_not_called()
-        runner.log.warn.assert_not_called()
-        runner.cfg = Config({})
-        runner.alert_balance({"bal": 500}, 2)
-        runner.log.warn.assert_not_called()
-        runner.alert_balance({"bal": 3000}, 0)
-        runner.log.info.assert_called_once()
-
-    def test_hidden_chests_do_not_suppress_balance_changes(self):
-        runner = bare_runner()
-        runner.alert_level = None
-        runner.alert_balance({"left": 0, "right": 0, "bal": 3000}, 0)
-        runner.alert_balance({"left": 0, "right": 0, "bal": 0}, 2)
-        self.assertEqual(runner.alert_level, 2)
-        runner.log.warn.assert_called_once()
-
-    def test_unreadable_wallet_does_not_change_baseline(self):
-        runner = bare_runner()
-        runner.alert_level = 0
-        runner.alert_balance({"left": 100000, "bal": None}, 2)
-        self.assertEqual(runner.alert_level, 0)
-        runner.log.warn.assert_not_called()
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_updated_config_reaches_all_features_and_the_foreground_detector(self):
+        cfg = Config({"appearance": {"game_mode_plus": False}})
+        self.services.settings.sync.side_effect = lambda *args: cfg
+        self.runner.wait = lambda seconds: self.runner.request_stop()
+        self.assertEqual(self.runner.run(), 0)
+        self.services.pet.poll.assert_called_once_with(cfg, {})
+        self.services.game_mode.tick.assert_called_once_with(self.services.session, False)
+        with patch("wuwa_tappo_plus.runner.sample_game_mode", return_value=None) as sample:
+            self.assertIsNone(self.factory.call_args.args[2]())
+            sample.assert_called_once_with(cfg)

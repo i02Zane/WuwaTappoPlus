@@ -48,12 +48,8 @@ class ToastBridgeTests(unittest.TestCase):
         self.bridge.session = FakeSession(replies)
         return self.bridge.poll(**kwargs)
 
-    def test_a_new_message_is_returned_once(self):
-        payload = [{"t": 1000, "m": "宝箱冷却中"}]
-        self.assertEqual(self.poll([state(payload)]), [(1000, "宝箱冷却中")])
-        self.assertEqual(self.poll([state(payload)]), [])
-
-    def test_messages_buffered_before_the_daemon_started_are_dropped(self):
+    def test_poll_filters_history_and_does_not_resurface_buffered_messages(self):
+        self.assertEqual(self.poll([state([])]), [])
         payload = [{"t": 100, "m": "旧消息"}, {"t": 900, "m": "新消息"}]
         self.assertEqual(self.poll([state(payload)], since_ms=500), [(900, "新消息")])
         # Still remembered, so a later poll cannot resurface the old one.
@@ -72,9 +68,6 @@ class ToastBridgeTests(unittest.TestCase):
         self.assertEqual(self.bridge.poll(), [(7, "宝箱冷却中")])
         self.bridge.log.info.assert_any_call("toast -> installed v%s" % __version__)
         self.assertIn("MutationObserver", session.sent[2])
-
-    def test_an_empty_page_returns_nothing(self):
-        self.assertEqual(self.poll([state([])]), [])
 
     def test_a_missing_toast_window_is_not_an_error(self):
         self.bridge.last_scan = -1e18

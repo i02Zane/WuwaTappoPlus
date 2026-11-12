@@ -186,7 +186,8 @@ class PageLifecycleTests(unittest.TestCase):
         self.assertTrue(is_panel(PANEL['url']))
         self.assertTrue(is_toast(TOAST['url']))
         for url in ('http://example.com/index.html#/panel', 'http://tauri.localhost/#/',
-                    'http://tauri.localhost/index.html#/panel-other'):
+                    'http://tauri.localhost/index.html#/panel-other',
+                    'http://tauri.localhost/index.html#/login'):
             self.assertFalse(is_panel(url))
 
 

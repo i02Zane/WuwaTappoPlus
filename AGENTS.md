@@ -7,7 +7,8 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 - `src/wuwa_tappo_plus/cli.py`、`src/wuwa_tappo_plus/menu.py`：命令分发与控制台面板。
 - `lifecycle.py`、`daemon_control.py`、`operations.py`：生命周期编排、后台启停与结构化进度结果。
 - `installer.py`、`installation.py`、`packaging/setup.iss`：安装器固定操作、目录/安装代次保护及标准安装与卸载；`scheduler.py` 用标准库 ctypes 调用任务计划程序 COM，禁止回退 PowerShell。
-- `src/wuwa_tappo_plus/runner.py`：守护进程生命周期、心跳与状态发布。
+- `runner.py`：后台主循环、调度、连接退避与退出编排；`runtime_services.py`：共享功能资源的创建、异常隔离与逐项释放。取得实例锁后才创建功能资源，辅助功能异常不触发主连接重连；退出先恢复游戏模式，再关闭各资源，单项失败不得阻断后续清理。
+- `pet_page.py`：主页面注入、快照读取与配件显示同步；`observations.py`：点击、余额、阻塞、toast、页面错误及心跳日志；`runtime_state.py`：实例锁与原子状态发布。正常执行顺序、页面发现频率和业务轮询节奏保持不变，退避等待期间每秒检查停止标记。
 - `src/wuwa_tappo_plus/cdp.py`、`src/wuwa_tappo_plus/ws.py`：WebView2 CDP 通信与 WebSocket 传输。
 - `pages.py`：每个后台实例共享三秒一次的页面发现（失败扫描也共享），设置/房间/toast 复用挂载与卸载流程、各自保留独立连接；主窗口仍须探测确认。连接标识同时包含目标 ID、WebSocket 地址、页面 URL、连接与文档代次。同步和事件通道启用 Runtime 上下文通知，刷新或替换后丢弃旧结果；关闭辅助连接后禁止自动改连主窗口。不得通过提高扫描/轮询频率或改页面业务协议来实现恢复。
 - `src/wuwa_tappo_plus/win.py`：Windows 注册表策略、进程、自启动与计划任务。

@@ -245,7 +245,11 @@ src/wuwa_tappo_plus/  Python 包
   daemon_control.py  后台启停、实例检查与看门狗拉起
   operations.py      生命周期步骤进度与操作结果
   installation.py    安装目录中的 EXE 部署与延迟清理
-  runner.py          后台生命周期与状态发布
+  runner.py          后台调度、连接退避与退出编排
+  runtime_services.py 功能资源创建、异常隔离与释放
+  pet_page.py        主页面注入、快照与配件同步
+  observations.py    业务观察与日志去重、心跳
+  runtime_state.py   实例锁与原子状态发布
   cdp.py / ws.py     本机 CDP 与 WebSocket
   pages.py           三秒共享页面发现、独立连接与注入挂载生命周期
   cdp_events.py      独立读线程的事件通道与页面代次校验
