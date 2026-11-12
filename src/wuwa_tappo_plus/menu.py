@@ -13,7 +13,7 @@ import traceback
 import unicodedata
 from datetime import datetime
 
-from . import __version__, cli, daemon_control, lifecycle, win
+from . import __version__, cli, console, daemon_control, lifecycle, win
 
 try:
     import msvcrt
@@ -434,7 +434,7 @@ def main(argv):
     finally:
         sys.stdout.write("\x1b[0m\x1b[?25h")
         sys.stdout.flush()
-    print("  已退出。")
+    console.write_line("  已退出。")
     return 0
 
 
@@ -443,8 +443,8 @@ def _plain_menu():
     while True:
         data = _collect()
         for line in _frame(data):
-            print(line)
-        print()
+            console.write_line(line)
+        console.write_line()
         try:
             choice = input("  选择 [1-3, 0=退出]: ").strip()
         except (EOFError, KeyboardInterrupt):

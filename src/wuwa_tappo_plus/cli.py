@@ -3,7 +3,7 @@
 import sys
 from datetime import datetime
 
-from . import __version__, cdp, daemon_control, installation, lifecycle, win
+from . import __version__, cdp, console, daemon_control, installation, lifecycle, win
 from .operations import OperationResult, StepResult
 from .config import (
     CONFIG_PATH,
@@ -20,7 +20,7 @@ WARN = "[提示] "
 
 
 def out(text=""):
-    print(text, flush=True)
+    console.write_line(text)
 
 
 def fmt_remain(ms_remain):

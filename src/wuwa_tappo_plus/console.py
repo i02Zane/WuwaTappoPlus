@@ -6,6 +6,21 @@ import msvcrt
 from ctypes import wintypes
 
 
+def write_line(text=""):
+    """Print a console line even when the code page cannot encode it.
+
+    A Chinese message on an English (cp1252) console must not abort the command;
+    the unrepresentable characters become replacement marks instead.
+    """
+    try:
+        print(text, flush=True)
+    except UnicodeEncodeError:
+        stream = sys.stdout
+        encoding = getattr(stream, "encoding", None) or "ascii"
+        stream.write(str(text).encode(encoding, "replace").decode(encoding, "replace") + "\n")
+        stream.flush()
+
+
 def open_console(force_new=False):
     """Reuse the caller's console, or create one for a double-click launch.
 

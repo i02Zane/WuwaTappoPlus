@@ -13,6 +13,23 @@ from wuwa_tappo_plus.operations import OperationResult
 from wuwa_tappo_plus.config import Config, DEFAULT_TOML, save_preferences
 
 
+class ConsoleEncodingTests(unittest.TestCase):
+    def test_chinese_output_survives_a_latin_console(self):
+        raw = io.BytesIO()
+        console = io.TextIOWrapper(raw, encoding="cp1252")
+        with redirect_stdout(console):
+            cli.out("完整卸载（清除数据）")
+        console.flush()
+        self.assertTrue(raw.getvalue().endswith(b"\n"))
+        self.assertTrue(raw.getvalue().strip())
+
+    def test_plain_output_is_unchanged(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            cli.out("ready")
+        self.assertEqual(output.getvalue(), "ready\n")
+
+
 class CommandTests(unittest.TestCase):
     def test_help_shows_only_public_commands(self):
         output = io.StringIO()
