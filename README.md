@@ -257,7 +257,14 @@ src/wuwa_tappo_plus/  Python 包
   installer.py       安装器固定操作与原用户/提权职责分离
   config.py          配置加载和原子保存
   settings.py / rooms.py / reports.py / toasts.py  设置桥接、房间历史、点击数统计、气泡日志
-  scripts/           注入脚本模板与生成的广场 bundle
+  script_source.py   按 manifest.json 装配本地脚本模块
+  scripts/           三个注入入口、私有功能模块与生成的广场 bundle
+    settings.js      设置表单、保存回执与统计
+    settings-token/apps/atlas.js  Token、白名单弹窗与图鉴
+    rooms.js         房间历史、收藏、原生回跳与样式
+    rooms-plaza/visibility.js  广场与成员显隐
+    inject.js        自动开箱、重试与调度
+    pet-state/actions/reminders/appearance.js  快照、动作包装、气泡与外观
 tests/               Python 与 JavaScript 回归测试
 packaging/           Inno Setup 安装脚本、PyInstaller 配置与 Windows manifest
 tools/               测试、构建与发布包验证脚本
@@ -271,7 +278,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[build]"
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe -m compileall -q src tests tools launch.py
-node --test tests/test_game_mode.js tests/test_bubble.js tests/test_panel.js tests/test_rooms.js tests/test_toast.js
+node --test tests/test_game_mode.js tests/test_bubble.js tests/test_panel.js tests/test_rooms.js tests/test_toast.js tests/test_plaza.js
 ```
 
 不安装开发依赖也可运行 `python tools/run_tests.py`。运行项目本身仅依赖 Python 标准库；构建安装包需要 PyInstaller 和 Inno Setup 6.5+（`ISCC.exe`）。可通过 `WUWA_INNO_COMPILER` 指定编译器的绝对路径；构建器也会检查 PATH 和常见安装目录。

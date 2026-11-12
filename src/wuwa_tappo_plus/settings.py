@@ -7,7 +7,7 @@ from . import __version__, accessories, cdp, fullscreen
 from .config import (CONFIG_PATH, Config, normalize_app_name,
                      save_preferences, with_preferences)
 from .diagnostics import export_logs
-from .paths import SCRIPTS_DIR
+from .script_source import read_script
 from .pages import PageBridge, connection_key, is_panel
 
 READ_JS = """JSON.stringify(window.__WUT_SETTINGS__ ? {
@@ -21,7 +21,7 @@ class SettingsBridge(PageBridge):
         super().__init__(port, host, log, select=is_panel, discovery=discovery,
                          uninstall="if(window.__WUT_SETTINGS__) window.__WUT_SETTINGS__.uninstall(); 1")
         self.config_path = CONFIG_PATH
-        self.source = (SCRIPTS_DIR / "settings.js").read_text(encoding="utf-8").replace(
+        self.source = read_script("settings.js").replace(
             "__VERSION__", json.dumps(__version__))
         self.last_error = None
         self.export_results = {}

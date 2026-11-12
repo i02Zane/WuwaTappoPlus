@@ -223,7 +223,7 @@ test('a failed acknowledgement is surfaced', () => {
   assert.match(rooms.error, /未能保存/);
 });
 
-function historyView(withPlaza = false) {
+function historyView(withPlaza = false, fresh = false) {
   let insertions = 0;
   function element() {
     let content = '';
@@ -236,6 +236,7 @@ function historyView(withPlaza = false) {
         this.children = [];
       },
       setAttribute() {},
+      addEventListener(name, handler) { this[name] = handler; },
       appendChild(child) { this.insertBefore(child, null); },
       insertBefore(child, before) {
         insertions++;
@@ -272,8 +273,17 @@ function historyView(withPlaza = false) {
     view.querySelector = selector => plazaControls[selector] || null;
     host.querySelectorAll = () => [];
   }
-  const rooms = load({}, { hosts: { 'wut-rooms': host }, createElement: element });
-  return { rooms, list, plazaList, plazaControls, insertions: () => insertions };
+  const hosts = fresh ? {} : { 'wut-rooms': host };
+  const container = { querySelector: () => null,
+    appendChild(child) { hosts[child.id] = child; } };
+  let created = false;
+  const rooms = load(fresh ? { '.room-module .panel-content': container } : {}, {
+    hosts, createElement(tag) {
+      if (fresh && tag === 'div' && !created) { created = true; return host; }
+      return element();
+    }
+  });
+  return { rooms, host, list, plazaList, plazaControls, insertions: () => insertions };
 }
 
 test('unchanged background heartbeats preserve hovered rows and their children', () => {
@@ -505,8 +515,16 @@ test('an already selected plaza loads once when native login state becomes avail
 test('switching tabs and reopening a panel respects the backend-wide refresh deadline', () => {
   const plaza = { logged: true, owner: false, items: [], nextRefreshAt: Date.now() + 30000 };
   for (let i = 0; i < 2; i++) {
-    const rooms = load(); rooms.update({ rooms: [], plaza });
-    rooms.selectTab('plaza'); rooms.selectTab('recent'); rooms.selectTab('plaza'); rooms.plazaRequest('list', 1);
+    const view = historyView(true, true);
+    const rooms = view.rooms;
+    rooms.update({ rooms: [], plaza });
+    for (const tab of ['plaza', 'recent', 'plaza']) {
+      view.host.click({ target: { closest: selector =>
+        selector === '[data-tab]' ? { dataset: { tab } } : null },
+        preventDefault() {}, stopPropagation() {} });
+      assert.equal(view.host.querySelector('.wut-plaza-view').hidden, tab !== 'plaza');
+    }
+    rooms.plazaRequest('list', 1);
     assert.equal(rooms.plazaCommands.length, 0);
   }
 });

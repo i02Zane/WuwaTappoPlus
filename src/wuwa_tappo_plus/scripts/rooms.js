@@ -3,19 +3,10 @@
   if (window.__WUT_ROOMS__ && window.__WUT_ROOMS__.version === VERSION) return 'exists';
   if (window.__WUT_ROOMS__) window.__WUT_ROOMS__.uninstall();
 
+  /* @modules */
+
   var HOST = 'wut-rooms';
-  var PLAZA_CONTROLS = 'wut-plaza-controls';
-  var activeTab = 'recent';
-  var plaza = { items: [], logged: null, owner: false, published: false };
-  var plazaPainted = '';
-  var plazaNote = '';
-  var confirming = false;
-  var confirmation = null;
   var STYLE = 'wut-rooms-style';
-  var VISIBILITY = 'wut-room-visibility';
-  var visibilityUntil = 0;
-  var visibilityTarget = false;
-  var WAIT_JOIN_MS = 12000;
 
   var R = window.__WUT_ROOMS__ = {
     version: VERSION,
@@ -29,9 +20,16 @@
   };
   var serial = 0;
   var instance = Date.now().toString(36) + Math.random().toString(36).slice(2);
-  var painted = '';
   var timeout = 0;
-  var filledInput = null;
+  function nextId() { return instance + '-' + (++serial); }
+  var visibility = createRoomVisibility(inRoom, ensureStyle);
+  var plazaView = createRoomPlaza({
+    get beat() { return R.beat; },
+    get current() { return R.current; },
+    get pending() { return R.pending; },
+    get error() { return R.error; },
+    get requests() { return R.requests.filter(function (request) { return request.action === 'plaza'; }); }
+  }, HOST, inRoom, join, nextId, function (message) { R.error = message; });
 
   // Colours, radii and type sizes are copied from the panel itself: rows use the
   // settings page's .setting-item look (#fbedd5, 5px, 40px tall) and the heading
@@ -107,8 +105,6 @@
     + '#wut-room-visibility .wut-room-eye:focus-visible{outline:2px solid #b97b51;outline-offset:2px;border-radius:6px;}'
   ].join('');
 
-  // The panel shows "房间号： 32RH4VrDT" next to a copy button; only the token
-  // matters. Anything that is not a short alphanumeric id is not a room.
   var PLAZA_CSS = '#wut-rooms [hidden]{display:none!important;}'
     + '#wut-rooms .wut-rooms-tabs{display:flex;gap:8px;margin-bottom:12px;position:relative;}'
     + '#wut-rooms .wut-rooms-tab{font:inherit;font-size:14px;color:#8e5e43;background:#fed291;'
@@ -152,6 +148,20 @@
     + '#wut-plaza-confirm .wut-confirm-buttons{display:flex;justify-content:flex-end;gap:12px;}'
     + '#wut-plaza-confirm .common-btn{min-width:90px;}';
 
+  function ensureStyle() {
+    if (!document.getElementById(STYLE)) {
+      var style = document.createElement('style');
+      style.id = STYLE;
+      style.textContent = CSS + PLAZA_CSS;
+      (document.head || document.documentElement).appendChild(style);
+    }
+  }
+
+
+  var WAIT_JOIN_MS = 12000;
+  var filledInput = null;
+  // The panel shows "房间号： 32RH4VrDT" next to a copy button; only the token
+  // matters. Anything that is not a short alphanumeric id is not a room.
   function parseRoomNumber(text) {
     var flat = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
     var labelled = flat.match(/房间号\s*[:：]?\s*([0-9A-Za-z]{4,16})/);
@@ -235,6 +245,47 @@
     return result;
   }
 
+  function detect() {
+    var module = document.querySelector('.room-module');
+    if (!module) return;                    // other tab: keep the last reading
+    var number = module.querySelector('.room-number');
+    if (!number) {
+      R.current = null;                     // the panel is out of a room
+      return;
+    }
+    var roomId = parseRoomNumber(number.textContent);
+    if (!roomId) {
+      R.current = null;
+      return;
+    }
+    var owner = module.querySelector('li.room-owner .room-member-name');
+    var name = owner ? String(owner.textContent || '').trim().slice(0, 32) : '';
+    if (!R.current || R.current.room_id !== roomId || R.current.owner !== name) {
+      R.current = { room_id: roomId, owner: name };
+    }
+  }
+
+  function progressJoin() {
+    detect();
+    if (R.pending && R.current && R.current.room_id === R.pending) {
+      R.pending = null;
+      filledInput = null;
+    }
+    if (R.pending && Date.now() - R.pendingAt > WAIT_JOIN_MS) {
+      R.pending = null;
+      filledInput = null;
+      R.error = document.querySelector('.leave-room-btn')
+        ? '离开房间超时' : '等待加入按钮超时，请检查桌宠联机连接后重试';
+      painted = '';
+    }
+    if (R.pending && document.querySelector('.join-rooms-input')) enterRoom(R.pending);
+  }
+
+  var painted = '';
+  var plazaRequest = plazaView.request;
+  var renderPlaza = plazaView.render;
+  var enterPlaza = plazaView.enter;
+  var randomJoin = plazaView.randomJoin;
   // Pinned rooms first, newest stay first inside each group. The daemon returns
   // the same order, so this only matters while a pin is still queued, and it
   // keeps the optimistic row in place instead of letting it jump back.
@@ -258,33 +309,13 @@
       if (R.rooms[i].room_id === roomId) { target = R.rooms[i]; break; }
     }
     var want = !(target && target.pinned);
-    R.requests.push({ id: instance + '-' + (++serial), action: 'pin',
+    R.requests.push({ id: nextId(), action: 'pin',
                       room_id: roomId, pinned: want });
     if (target) target.pinned = want;
     sortRooms();
     painted = '';
     render();
     return want ? 'pinned' : 'unpinned';
-  }
-
-  function detect() {
-    var module = document.querySelector('.room-module');
-    if (!module) return;                    // other tab: keep the last reading
-    var number = module.querySelector('.room-number');
-    if (!number) {
-      R.current = null;                     // the panel is out of a room
-      return;
-    }
-    var roomId = parseRoomNumber(number.textContent);
-    if (!roomId) {
-      R.current = null;
-      return;
-    }
-    var owner = module.querySelector('li.room-owner .room-member-name');
-    var name = owner ? String(owner.textContent || '').trim().slice(0, 32) : '';
-    if (!R.current || R.current.room_id !== roomId || R.current.owner !== name) {
-      R.current = { room_id: roomId, owner: name };
-    }
   }
 
   function ago(iso) {
@@ -295,15 +326,6 @@
     if (seconds < 3600) return Math.floor(seconds / 60) + ' 分钟前';
     if (seconds < 86400) return Math.floor(seconds / 3600) + ' 小时前';
     return Math.floor(seconds / 86400) + ' 天前';
-  }
-
-  function ensureStyle() {
-    if (!document.getElementById(STYLE)) {
-      var style = document.createElement('style');
-      style.id = STYLE;
-      style.textContent = CSS + PLAZA_CSS;
-      (document.head || document.documentElement).appendChild(style);
-    }
   }
 
   function build() {
@@ -349,14 +371,14 @@
       if (tab || action) {
         event.preventDefault(); event.stopPropagation();
         if (tab) {
-          activeTab = tab.dataset.tab === 'plaza' ? 'plaza' : 'recent';
-          if (activeTab === 'plaza') plazaRequest('list', 0);
+          plazaView.selectTab(tab.dataset.tab);
+          return;
         } else if (action.dataset.plaza === 'reset') {
           plazaRequest('reset', 0);
         } else if (action.dataset.plaza === 'random') {
           randomJoin();
         } else {
-          var page = plaza.page || 0;
+          var page = plazaView.page;
           plazaRequest('list', action.dataset.plaza === 'next' ? page + 1 : action.dataset.plaza === 'previous' ? page - 1 : page, action.dataset.plaza === 'refresh');
         }
         renderPlaza(); return;
@@ -372,7 +394,7 @@
         return;
       }
       if (forget) {
-        R.requests.push({ id: instance + '-' + (++serial), action: 'forget',
+        R.requests.push({ id: nextId(), action: 'forget',
                           room_id: row.dataset.room });
         painted = '';
         render();
@@ -392,303 +414,6 @@
       else join(row.dataset.room);
     });
     return host;
-  }
-
-  // While you are inside a room the panel already shows its number, its host
-  // and a leave button; a rejoin list underneath only pushes that block down
-  // and invites a pointless second join, so the history belongs to the
-  // "not in a room" view alone.
-  function inRoom() {
-    var module = document.querySelector('.room-module');
-    if (!module) return false;
-    return !!(module.querySelector('.room-number') || module.querySelector('.leave-room-btn'));
-  }
-
-  function memberButtons(container) {
-    // The native panel renders an eye only for an online, non-local member.
-    return Array.from(container.querySelectorAll('.room-members .room-visible-btn')).filter(function (button) {
-      return !button.disabled;
-    });
-  }
-
-  function nativeVisibilityIcons() {
-    var icons = {};
-    Array.from(document.styleSheets || []).forEach(function (sheet) {
-      try {
-        Array.from(sheet.cssRules || []).forEach(function (rule) {
-          var selector = rule.selectorText || '';
-          if (selector.indexOf('.room-visible-btn') < 0 || selector.indexOf(':') >= 0 || !rule.style || !rule.style.backgroundImage) return;
-          icons[selector.indexOf('.room-invisible') >= 0 ? 'hide' : 'show'] = rule.style.backgroundImage;
-        });
-      } catch (e) { /* A changed/cross-origin stylesheet uses the inline fallback. */ }
-    });
-    return icons;
-  }
-
-  function mountVisibility(container) {
-    var leave = container.querySelector('.leave-room-btn');
-    var members = container.querySelector('.room-members');
-    var control = document.getElementById(VISIBILITY);
-    if (!inRoom() || !leave || !members || !members.parentNode) {
-      if (control) control.remove();
-      visibilityUntil = 0;
-      return;
-    }
-    ensureStyle();
-    if (!control) {
-      control = document.createElement('div'); control.id = VISIBILITY;
-      var title = document.createElement('span'); title.className = 'wut-members-title'; title.textContent = '房间成员'; control.appendChild(title);
-      var icons = nativeVisibilityIcons();
-      [[true, '显示他人桌宠', 'show'], [false, '隐藏他人桌宠', 'hide']].forEach(function (definition) {
-        var button = document.createElement('button');
-        button.id = VISIBILITY + '-' + definition[2]; button.type = 'button';
-        button.className = 'room-visible-btn wut-room-eye' + (definition[0] ? '' : ' room-invisible');
-        button.title = definition[1]; button.setAttribute('aria-label', definition[1]);
-        if (icons[definition[2]]) button.style.backgroundImage = icons[definition[2]];
-        else button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>'
-          + (definition[0] ? '' : '<path d="m3 3 18 18"/>') + '</svg>';
-        button.addEventListener('click', function (event) {
-          event.preventDefault(); event.stopPropagation();
-          if (visibilityUntil > Date.now() || !inRoom()) return;
-          var current = document.querySelector('.room-module .panel-content');
-          if (!current || !current.contains(control)) return;
-          var show = definition[0];
-          // Snapshot once: IPC updates may arrive after all native clicks return.
-          var targets = memberButtons(current).filter(function (eye) {
-            return eye.classList.contains('room-invisible') === show;
-          });
-          if (!targets.length) return;
-          visibilityTarget = show;
-          visibilityUntil = Date.now() + 2000;
-          control.querySelectorAll('button').forEach(function (item) { item.disabled = true; });
-          targets.forEach(function (eye) { eye.click(); });
-          mountVisibility(current);
-        });
-        control.appendChild(button);
-      });
-      members.parentNode.insertBefore(control, members);
-    } else if (control.parentNode !== members.parentNode || control.nextElementSibling !== members) {
-      members.parentNode.insertBefore(control, members);
-    }
-    var buttons = memberButtons(container);
-    var visible = buttons.filter(function (button) { return !button.classList.contains('room-invisible'); }).length;
-    if (visibilityUntil && (visibilityTarget ? visible === buttons.length : visible === 0)) visibilityUntil = 0;
-    var pending = visibilityUntil > Date.now();
-    var disabled = pending || !buttons.length || leave.disabled;
-    control.querySelector('#' + VISIBILITY + '-show').disabled = disabled || visible === buttons.length;
-    control.querySelector('#' + VISIBILITY + '-hide').disabled = disabled || visible === 0;
-    control.setAttribute('aria-busy', pending ? 'true' : 'false');
-    control.title = buttons.length ? '仅切换当前在线的其他桌宠，不影响自己的桌宠' : '当前没有可切换的其他桌宠';
-  }
-
-  function mount() {
-    var container = document.querySelector('.room-module .panel-content');
-    if (!container) return;
-    mountVisibility(container);
-    ensureStyle();
-    mountPlazaControls(container);
-    if (container.classList) container.classList.toggle('wut-room-browser', !inRoom());
-    if (inRoom()) {
-      var stale = document.getElementById(HOST);
-      if (stale) stale.remove();
-      return;
-    }
-    if (document.getElementById(HOST)) return;
-    var host = build();
-    var anchor = container.querySelector('.join-rooms');
-    if (anchor && anchor.parentNode === container) container.insertBefore(host, anchor.nextSibling);
-    else container.appendChild(host);
-    painted = '';
-    render();
-  }
-
-  function plazaRequest(op, page, refresh) {
-    refresh = refresh !== false;
-    if (Date.now() - R.beat > 5000 || (!plaza.logged && !(op === 'withdraw' && plaza.canWithdraw)) || R.requests.some(function (r) { return r.action === 'plaza'; })) return;
-    if (op === 'list' && refresh && Date.now() < (plaza.nextRefreshAt || 0)) { renderPlaza(); return; }
-    if (plaza.busy || (op === 'list' && plaza.loading)) return;
-    var command = { id: instance + '-' + (++serial), op: op,
-                    page: Math.max(0, Math.min(49, page || 0)), refresh: refresh };
-    try {
-      if (typeof window.__wutPlazaAction !== 'function') throw new Error('binding unavailable');
-      window.__wutPlazaAction(JSON.stringify(command));
-      if (op === 'list') plaza.loading = true; else plaza.busy = true;
-    } catch (e) { R.error = 'Plus 广场连接尚未就绪，请稍后重试。'; }
-    plazaNote = '';
-    var container = document.querySelector('.room-module .panel-content');
-    if (container) mountPlazaControls(container);
-    renderPlaza();
-  }
-
-  function confirmPlaza(op) {
-    return new Promise(function (resolve) {
-      var dialog = document.createElement('dialog');
-      dialog.id = 'wut-plaza-confirm';
-      // A top-layer dialog is appended to body, outside the panel's font scope.
-      var reference = document.querySelector('.room-module .leave-room-btn');
-      if (reference && window.getComputedStyle) {
-        var font = window.getComputedStyle(reference);
-        dialog.style.fontFamily = font.fontFamily;
-        dialog.style.fontWeight = font.fontWeight;
-      }
-      dialog.setAttribute('aria-labelledby', 'wut-plaza-confirm-message');
-      dialog.innerHTML = '<p id="wut-plaza-confirm-message"></p><div class="wut-confirm-buttons">'
-        + '<button type="button" class="common-btn wut-confirm-cancel" autofocus>取消</button>'
-        + '<button type="button" class="common-btn wut-confirm-ok">确认</button></div>';
-      dialog.querySelector('p').textContent = op === 'publish'
-        ? '发布到广场的房间将可以被任何人访问，是否要发布？' : '是否要将房间从广场撤下？';
-      var done = false;
-      function finish(confirmed) {
-        if (done) return; done = true;
-        dialog.remove(); confirmation = null; resolve(confirmed);
-      }
-      confirmation = { cancel: function () { finish(false); } };
-      dialog.querySelector('.wut-confirm-cancel').addEventListener('click', function () { finish(false); });
-      dialog.querySelector('.wut-confirm-ok').addEventListener('click', function () { finish(true); });
-      dialog.addEventListener('cancel', function (event) { event.preventDefault(); finish(false); });
-      document.body.appendChild(dialog);
-      try { dialog.showModal(); }
-      catch (error) { plazaNote = '无法打开确认窗口，请重新打开联机页后重试。'; finish(false); }
-    });
-  }
-
-  function mountPlazaControls(container) {
-    var control = document.getElementById(PLAZA_CONTROLS);
-    var leave = document.querySelector('.room-module .leave-room-btn');
-    var canPublish = inRoom() && leave && plaza.owner && R.current && plaza.room === R.current.room_id;
-    var canWithdraw = plaza.canWithdraw === true;
-    var allowed = canPublish || canWithdraw;
-    var parent = leave ? leave.parentNode : container;
-    if (!allowed) { if (control) control.remove(); if (confirmation) confirmation.cancel(); return; }
-    if (!control) {
-      control = document.createElement('div'); control.id = PLAZA_CONTROLS;
-      control.innerHTML = '<button type="button" class="common-btn"></button>'
-        + '<span class="wut-plaza-action-status" role="status"></span>';
-      control.querySelector('button').addEventListener('click', async function () {
-        if (confirming || plaza.busy || Date.now() - R.beat > 5000) return;
-        var room = R.current && R.current.room_id;
-        var withdrawal = plaza.withdrawRoom;
-        var op = plaza.canWithdraw ? 'withdraw' : 'publish';
-        confirming = true; mountPlazaControls(container);
-        var confirmed = await confirmPlaza(op);
-        confirming = false;
-        if (confirmed && ((op === 'withdraw' && plaza.canWithdraw && plaza.withdrawRoom === withdrawal)
-            || (op === 'publish' && inRoom() && plaza.owner && !plaza.canWithdraw && R.current && R.current.room_id === room && plaza.room === room))) plazaRequest(op, 0);
-        mountPlazaControls(container);
-      });
-      if (leave) parent.insertBefore(control, leave);
-      else if (typeof parent.insertBefore === 'function') parent.insertBefore(control, parent.firstChild);
-      else parent.appendChild(control);
-    } else if (control.parentNode !== parent) {
-      if (leave) parent.insertBefore(control, leave);
-      else if (typeof parent.insertBefore === 'function') parent.insertBefore(control, parent.firstChild);
-      else parent.appendChild(control);
-    }
-    control.style.right = leave ? ((leave.offsetWidth || 135) + 10) + 'px' : '';
-    var pending = plaza.busy || R.requests.some(function (r) { return r.action === 'plaza' && r.op !== 'list'; });
-    var button = control.querySelector('button');
-    var buttonText = pending ? '处理中…' : plaza.withdrawing ? '撤下待确认' : canWithdraw ? '从广场撤下' : '发布到广场';
-    if (button.textContent !== buttonText) button.textContent = buttonText;
-    button.disabled = confirming || pending || !!plaza.withdrawing || (!canWithdraw && (!leave || leave.disabled)) || Date.now() - R.beat > 5000;
-    var status = control.querySelector('.wut-plaza-action-status');
-    var text = plaza.error || '';
-    if (status.textContent !== text) status.textContent = text;
-  }
-
-  function plazaItems() {
-    return plaza.logged ? (plaza.items || []).filter(function (item) {
-      return item && /^[0-9A-Za-z]{4,16}$/.test(item.room_code || '') && Date.parse(item.expires_at) > Date.now() + (plaza.serverOffset || 0);
-    }) : [];
-  }
-
-  function enterPlaza(roomId) {
-    if (!plaza.logged || Date.now() - R.beat > 5000 || inRoom()) return 'unavailable';
-    if (!plazaItems().some(function (item) { return item.room_code === roomId; })) return 'expired';
-    plazaNote = '';
-    return join(roomId);
-  }
-
-  function randomJoin() {
-    if (!plaza.logged || Date.now() - R.beat > 5000 || inRoom()) return 'unavailable';
-    if (R.pending) return 'waiting';
-    var items = plazaItems();
-    if (!items.length) {
-      plazaNote = '当前列表没有可随机进入的房间，请稍后刷新。';
-      renderPlaza();
-      return 'empty';
-    }
-    return enterPlaza(items[Math.floor(Math.random() * items.length)].room_code);
-  }
-
-  function renderPlaza() {
-    var host = document.getElementById(HOST);
-    if (!host) return;
-    var view = host.querySelector('.wut-plaza-view');
-    if (!view) return; // Older test fixtures only model the original history list.
-    var show = activeTab === 'plaza';
-    view.hidden = !show;
-    host.querySelector('.wut-rooms-list').hidden = show;
-    host.querySelector('.wut-rooms-head').hidden = show;
-    host.querySelectorAll('[data-tab]').forEach(function (tab) {
-      var selected = tab.dataset.tab === activeTab;
-      tab.setAttribute('aria-selected', selected ? 'true' : 'false'); tab.tabIndex = selected ? 0 : -1;
-    });
-    var loading = plaza.loading || R.requests.some(function (r) { return r.action === 'plaza' && r.op === 'list'; });
-    var note = view.querySelector('.wut-plaza-note');
-    var noteText = R.pending ? '正在进入 ' + R.pending + '…' : R.error || plaza.error || (plaza.logged == null ? '正在同步登录状态…' : !plaza.logged ? '登录 Wuwa Tappo 后可浏览广场。' : plazaNote ||
-      (loading ? '正在读取…' : ''));
-    if (note.textContent !== noteText) note.textContent = noteText;
-    var cooldown = Math.max(0, Math.ceil(((plaza.nextRefreshAt || 0) - Date.now()) / 1000));
-    var page = plaza.page || 0;
-    view.querySelector('.wut-plaza-page').textContent = '第 ' + (page + 1) + ' 页';
-    view.querySelector('[data-plaza="previous"]').disabled = loading || page === 0 || !plaza.logged;
-    view.querySelector('[data-plaza="next"]').disabled = loading || !plaza.hasMore || !plaza.logged;
-    var refresh = view.querySelector('[data-plaza="refresh"]');
-    refresh.disabled = loading || cooldown > 0 || !plaza.logged;
-    var refreshText = cooldown > 0 ? '刷新（' + cooldown + '秒）' : '刷新';
-    if (refresh.textContent !== refreshText) refresh.textContent = refreshText;
-    var reset = view.querySelector('[data-plaza="reset"]');
-    if (reset) { reset.hidden = !plaza.authExpired; reset.disabled = !!plaza.busy; }
-    var random = view.querySelector('[data-plaza="random"]');
-    random.disabled = !plaza.logged || !!R.pending || !plazaItems().length;
-    var items = plazaItems();
-    var key = JSON.stringify([plaza.logged, items, R.pending, Math.floor(Date.now() / 60000)]);
-    var list = view.querySelector('.wut-plaza-list');
-    if (key === plazaPainted && list.children.length) return;
-    plazaPainted = key;
-    if (!items.length) {
-      var emptyText = plaza.logged == null ? '正在同步登录状态…' : plaza.logged ? '暂时没有公开的房间。' : '请先在桌宠中登录。';
-      if (list.children.length === 1 && list.children[0].className === 'wut-rooms-empty') {
-        if (list.children[0].textContent !== emptyText) list.children[0].textContent = emptyText;
-        return;
-      }
-      list.textContent = '';
-      var empty = document.createElement('li'); empty.className = 'wut-rooms-empty';
-      empty.textContent = emptyText; list.appendChild(empty);
-      return;
-    }
-    var oldRows = new Map();
-    Array.from(list.children).forEach(function (child) {
-      if (child.dataset.room) oldRows.set(child.dataset.room, child);
-      else child.remove();
-    });
-    items.forEach(function (item, index) {
-      var row = oldRows.get(item.room_code) || document.createElement('li');
-      oldRows.delete(item.room_code);
-      row.className = 'wut-room wut-plaza-row'; row.dataset.room = item.room_code; row.dataset.source = 'plaza';
-      row.dataset.busy = R.pending === item.room_code ? 'true' : 'false';
-      row.tabIndex = 0; row.setAttribute('role', 'button'); row.setAttribute('aria-label', '进入房间 ' + item.room_code);
-      var code = row.querySelector('.wut-room-id');
-      if (!code) { code = document.createElement('span'); code.className = 'wut-room-id'; row.appendChild(code); }
-      if (code.textContent !== item.room_code) code.textContent = item.room_code;
-      var detail = row.querySelector('.wut-room-detail');
-      if (detail) detail.remove();
-      var enter = row.querySelector('.wut-plaza-enter');
-      if (!enter) { enter = document.createElement('button'); enter.type = 'button'; enter.className = 'wut-plaza-enter wut-rooms-tab'; enter.style.marginLeft = 'auto'; enter.textContent = '进入'; row.appendChild(enter); }
-      enter.disabled = !!R.pending;
-      if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
-    });
-    oldRows.forEach(function (row) { row.remove(); });
   }
 
   function note() {
@@ -793,20 +518,40 @@
     oldRows.forEach(function (row) { row.remove(); });
   }
 
+
+  // While you are inside a room the panel already shows its number, its host
+  // and a leave button; a rejoin list underneath only pushes that block down
+  // and invites a pointless second join, so the history belongs to the
+  // "not in a room" view alone.
+  function inRoom() {
+    var module = document.querySelector('.room-module');
+    if (!module) return false;
+    return !!(module.querySelector('.room-number') || module.querySelector('.leave-room-btn'));
+  }
+
+  function mount() {
+    var container = document.querySelector('.room-module .panel-content');
+    if (!container) return;
+    visibility.mount(container);
+    ensureStyle();
+    plazaView.mount(container);
+    if (container.classList) container.classList.toggle('wut-room-browser', !inRoom());
+    if (inRoom()) {
+      var stale = document.getElementById(HOST);
+      if (stale) stale.remove();
+      return;
+    }
+    if (document.getElementById(HOST)) return;
+    var host = build();
+    var anchor = container.querySelector('.join-rooms');
+    if (anchor && anchor.parentNode === container) container.insertBefore(host, anchor.nextSibling);
+    else container.appendChild(host);
+    painted = '';
+    render();
+  }
+
   function tick() {
-    detect();
-    if (R.pending && R.current && R.current.room_id === R.pending) {
-      R.pending = null;
-      filledInput = null;
-    }
-    if (R.pending && Date.now() - R.pendingAt > WAIT_JOIN_MS) {
-      R.pending = null;
-      filledInput = null;
-      R.error = document.querySelector('.leave-room-btn')
-        ? '离开房间超时' : '等待加入按钮超时，请检查桌宠联机连接后重试';
-      painted = '';
-    }
-    if (R.pending && document.querySelector('.join-rooms-input')) enterRoom(R.pending);
+    progressJoin();
     mount();
     render();
   }
@@ -814,11 +559,7 @@
   R.update = function (state) {
     R.beat = Date.now();
     if (state && Object.prototype.hasOwnProperty.call(state, 'rooms')) R.rooms = state.rooms || [];
-    if (state && state.plaza && !(state.plaza.instance && state.plaza.instance === plaza.instance && state.plaza.revision < plaza.revision)) {
-      var wasLogged = plaza.logged;
-      plaza = state.plaza;
-      if (plaza.logged && !wasLogged && activeTab === 'plaza') plazaRequest('list', 0);
-    }
+    plazaView.update(state);
     var ack = (state && state.ack) || [];
     var answered = {};
     ack.forEach(function (item) { answered[item.id] = true; });
@@ -841,11 +582,11 @@
     mount();
     render();
   };
-  R.selectTab = function (tab) { activeTab = tab === "plaza" ? "plaza" : "recent"; if (activeTab === "plaza") plazaRequest("list", 0); renderPlaza(); };
-  R.plazaRequest = plazaRequest;
+  R.selectTab = plazaView.selectTab;
+  R.plazaRequest = plazaView.request;
   R.join = join;
-  R.enterPlaza = enterPlaza;
-  R.randomJoin = randomJoin;
+  R.enterPlaza = plazaView.enter;
+  R.randomJoin = plazaView.randomJoin;
   R.togglePin = togglePin;
   R.parseRoomNumber = parseRoomNumber;
   R.tick = tick;
@@ -858,9 +599,10 @@
     observer.disconnect();
     var container = document.querySelector('.room-module .panel-content');
     if (container && container.classList) container.classList.remove('wut-room-browser');
-    if (confirmation) confirmation.cancel();
+    plazaView.dispose();
+    visibility.dispose();
     clearInterval(timeout);
-    [HOST, STYLE, VISIBILITY, PLAZA_CONTROLS].forEach(function (id) {
+    [HOST, STYLE].forEach(function (id) {
       var element = document.getElementById(id);
       if (element) element.remove();
     });

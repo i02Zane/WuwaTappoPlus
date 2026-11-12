@@ -3,8 +3,8 @@
 import json
 
 from . import accessories, cdp
-from .config import INJECT_PATH
 from .pages import connection_key
+from .script_source import read_script
 
 POLL_JS = r"""
 (function(){
@@ -36,7 +36,7 @@ def inject_source(cfg, chest_cache=None):
     values = dict(cfg.inject_cfg)
     if chest_cache is not None:
         values["chest_cache"] = chest_cache
-    return INJECT_PATH.read_text(encoding="utf-8").replace("__CFG__", json.dumps(values))
+    return read_script("inject.js").replace("__CFG__", json.dumps(values))
 
 
 class PetPage:

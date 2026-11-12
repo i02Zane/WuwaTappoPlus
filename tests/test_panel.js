@@ -344,7 +344,7 @@ test('auto game mode whitelist is managed in its own dialog', () => {
       },
       querySelectorAll() { return []; },
       querySelector(selector) {
-        if (selector === '.wut-status') return { dataset: {}, textContent: '' };
+        if (selector === '.wut-status') return this.children[0].children[1];
         return null;
       }
     };
@@ -390,14 +390,29 @@ test('auto game mode whitelist is managed in its own dialog', () => {
   assert.equal(remove.key, 'game_mode_apps');
   assert.deepEqual(remove.value, []);
 
+  f.settings.update({ preferences: { game_mode_apps: ['game.exe'] },
+    ack: [{ id: remove.id, error: true }] });
+  const feedback = nodes.get('wut-plus-settings').querySelector('.wut-status');
+  assert.match(feedback.textContent, /保存失败/);
+  assert.equal(feedback.dataset.error, 'true');
+
   const input = nodes.get('wut-apps-input');
   input.value = '  Other.EXE  ';
   nodes.get('wut-apps-manual').click();
   const manual = f.settings.requests[f.settings.requests.length - 1];
   assert.equal(manual.action, 'whitelist_add');
   assert.equal(manual.name, 'Other.EXE');
+  assert.doesNotMatch(feedback.textContent, /保存失败/);
+  assert.equal(feedback.dataset.error, 'false');
 
   nodes.get('wut-apps-close').click();
   assert.equal(nodes.get('wut-apps-modal'), undefined);
   assert.equal(f.settings.appsOpen, false);
+
+  manage.click();
+  f.settings.uninstall();
+  assert.equal(nodes.get('wut-apps-modal'), undefined);
+  assert.equal(f.context.window.__WUT_SETTINGS__, undefined);
+  assert.equal(f.context.window.__WUT_ATLAS__, undefined);
+  assert.equal(f.context.createTokenTools, undefined);
 });

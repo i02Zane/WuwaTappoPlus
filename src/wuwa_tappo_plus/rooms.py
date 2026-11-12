@@ -8,7 +8,7 @@ from pathlib import Path
 
 from . import __version__, cdp
 from .config import ROOT
-from .paths import SCRIPTS_DIR
+from .script_source import read_script
 from .pages import PageBridge, connection_key, is_panel
 
 # Room numbers are short alphanumeric tokens (seen: 8 characters, mixed case).
@@ -230,7 +230,7 @@ class RoomBridge(PageBridge):
         super().__init__(port, host, log, select=is_panel, discovery=discovery,
                          uninstall="if(window.__WUT_ROOMS__&&window.__WUT_ROOMS__.uninstall)"
                                    "window.__WUT_ROOMS__.uninstall(); 1")
-        self.source = (SCRIPTS_DIR / "rooms.js").read_text(encoding="utf-8").replace(
+        self.source = read_script("rooms.js").replace(
             "__VERSION__", json.dumps(__version__))
         self.current = None
         self.owner = ""

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from wuwa_tappo_plus import __version__, win
 from wuwa_tappo_plus.config import DEFAULT_TOML
+from wuwa_tappo_plus.script_source import script_files
 
 
 def main():
@@ -78,8 +79,9 @@ def main():
                     pid = state.get("pid")
                     assert state["plus_version"] == __version__ and state["port"] == port
                     resources = Path(state["resource_dir"])
-                    assert all((resources / name).is_file()
-                               for name in ("inject.js", "settings.js", "rooms.js", "toast.js", "game_mode.js", "plaza-client.bundle.js", "plaza-config.json"))
+                    packaged_scripts = {path.name for path in resources.iterdir()
+                                        if path.suffix in (".js", ".json")}
+                    assert packaged_scripts == set(script_files()), "script resources differ from manifest"
                     break
                 time.sleep(0.1)
             assert pid, "watchdog did not start the frozen daemon"

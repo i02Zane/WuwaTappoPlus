@@ -224,3 +224,7 @@ class EntryTests(unittest.TestCase):
             result = entry.probe()
         load.assert_not_called()
         self.assertEqual(set(result["scripts"]), {"pet", "settings", "rooms", "toast", "game_mode", "plaza"})
+        from wuwa_tappo_plus.script_source import script_files
+        inventory = {path.name for path in paths.SCRIPTS_DIR.iterdir()
+                     if path.suffix in (".js", ".json")}
+        self.assertEqual(set(script_files()), inventory)

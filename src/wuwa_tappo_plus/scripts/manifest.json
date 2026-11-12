@@ -1,0 +1,17 @@
+{
+  "settings.js": [
+    "settings-token.js",
+    "settings-apps.js",
+    "settings-atlas.js"
+  ],
+  "rooms.js": [
+    "rooms-visibility.js",
+    "rooms-plaza.js"
+  ],
+  "inject.js": [
+    "pet-actions.js",
+    "pet-state.js",
+    "pet-reminders.js",
+    "pet-appearance.js"
+  ]
+}

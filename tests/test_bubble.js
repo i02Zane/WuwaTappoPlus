@@ -1,9 +1,7 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const vm = require('node:vm');
 const { test } = require('node:test');
-const path = require('node:path');
-const { version } = require('./scripts');
+const { version, loadScript } = require('./scripts');
 
 function fixture() {
   const elements = new Map();
@@ -79,7 +77,7 @@ function fixture() {
     cancelAnimationFrame() {}
   };
   const cfg = { version, poll_ms: 1000, alert_low: 2000, alert_critical: 1000 };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/wuwa_tappo_plus/scripts/inject.js'), 'utf8')
+  vm.runInNewContext(loadScript('inject.js')
     .replace('__CFG__', JSON.stringify(cfg)), context);
   const a = window.__WUT__;
   a.updateAlert(500, { now: 1, left: 30000, right: 60000 });
@@ -94,7 +92,7 @@ test('bubble stays above the pet with no gap', () => {
 
 test('main injection uses the product version and upgrades a different script version once', () => {
   const f = fixture();
-  const source = fs.readFileSync(path.join(__dirname, '../src/wuwa_tappo_plus/scripts/inject.js'), 'utf8')
+  const source = loadScript('inject.js')
     .replace('__CFG__', JSON.stringify(f.a.cfg));
   assert.equal(f.a.v, version);
   vm.runInNewContext(source, f.context);
@@ -564,7 +562,7 @@ function cachedChests() {
   let action, stopped = false;
   f.store.$onAction = fn => { action = fn; return () => { stopped = true; }; };
   f.a.uninstall();
-  const source = fs.readFileSync(path.join(__dirname, '../src/wuwa_tappo_plus/scripts/inject.js'), 'utf8');
+  const source = loadScript('inject.js');
   function install(seed) {
     vm.runInNewContext(source.replace('__CFG__', JSON.stringify({ ...f.a.cfg,
       chest_cache: seed })), f.context);

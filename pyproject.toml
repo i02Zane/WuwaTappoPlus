@@ -33,4 +33,4 @@ namespaces = false
 version = {attr = "wuwa_tappo_plus.__version__"}
 
 [tool.setuptools.package-data]
-wuwa_tappo_plus = ["scripts/*.js"]
+wuwa_tappo_plus = ["scripts/*.js", "scripts/*.json"]

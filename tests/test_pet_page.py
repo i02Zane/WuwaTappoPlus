@@ -114,3 +114,4 @@ class InjectionVersionTests(unittest.TestCase):
             self.assertIn(json.dumps(__version__), source)
             self.assertNotIn("__VERSION__", source)
             self.assertNotIn("__CFG__", source)
+            self.assertNotIn("/* @modules */", source)
