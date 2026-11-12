@@ -1036,7 +1036,8 @@
     var live = document.getElementById('wut-atlas-modal');
     if (live && live.__wutAccessory && S.petAccessory &&
         S.petAccessory.file === live.__wutAccessory.key) {
-      live.__wutAccessory.setBase(S.petAccessory.x, S.petAccessory.y, S.petAccessory.size);
+      live.__wutAccessory.setBase(S.petAccessory.x, S.petAccessory.y,
+                                  S.petAccessory.size, S.petAccessory.layout);
     }
     mount(); render();
   };
@@ -1067,6 +1068,14 @@
       var y = Number(layer.my_offset_y || 0);
       if (!x && !y) { x = Number(layer.offset_x || 0); y = Number(layer.offset_y || 0); }
       return [x, y];
+    }
+
+    // The app stores the accessory anchor in layout units (the 200px cat
+    // canvas); on screen everything is multiplied by the pet size factor.
+    function accessoryOffset(baseX, baseY, ov, petScale) {
+      var factor = Number(petScale) > 0 ? Number(petScale) : 1;
+      return { x: (Number(baseX) + Number(ov.x || 0)) * factor,
+               y: (Number(baseY) + Number(ov.y || 0)) * factor };
     }
 
     function place(image, layer, scale) {
@@ -1308,6 +1317,8 @@
       var key = fileOf(entry.url);
       var petBase = S.petAccessory && S.petAccessory.file === key ? S.petAccessory : null;
       var size = petBase && Number(petBase.size) > 0 ? Number(petBase.size) : 200;
+      var layout = petBase && Number(petBase.layout) > 0 ? Number(petBase.layout) : 0;
+      var petScale = layout > 0 ? size / layout : 1;
       var head = null;
       var body = null;
       // Draw at the pet's own CSS size so the accessory sits at the same place
@@ -1349,8 +1360,9 @@
       accessory.style.width = size + 'px';
       accessory.style.height = size + 'px';
       function apply() {
+        var offset = accessoryOffset(baseX, baseY, ov, petScale);
         accessory.style.transform = 'translate(-50%,-50%) translate(' +
-          (baseX + ov.x) + 'px, ' + (baseY + ov.y) + 'px)' +
+          offset.x + 'px, ' + offset.y + 'px)' +
           ' scale(' + ov.scale + ') rotate(' + ov.rotation + 'deg)';
       }
       apply();
@@ -1358,8 +1370,10 @@
       noteOf().textContent = '';
       accessoryControls(key, ov, apply);
       if (modal) {
-        modal.__wutAccessory = { key: key, setBase: function (x, y, nextSize) {
+        modal.__wutAccessory = { key: key, setBase: function (x, y, nextSize, nextLayout) {
           baseX = Number(x); baseY = Number(y);
+          var wantLayout = Number(nextLayout);
+          if (wantLayout > 0 && wantLayout !== layout) layout = wantLayout;
           var want = Number(nextSize);
           if (want > 0 && want !== size) {
             size = want;
@@ -1371,6 +1385,7 @@
               image.style.height = size + 'px';
             });
           }
+          petScale = layout > 0 ? size / layout : 1;
           apply();
         } };
       }
@@ -1567,6 +1582,7 @@
       version: VERSION,
       _test: { fileOf: fileOf, findAtlas: findAtlas, actualOf: actualOf,
                currentCharacter: currentCharacter, offsetOf: offsetOf,
+               accessoryOffset: accessoryOffset,
                openPreview: openPreview, openItemPreview: openItemPreview,
                openEquippedAccessory: openEquippedAccessory },
       dispose: function () {

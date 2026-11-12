@@ -59,6 +59,27 @@ class AccessoryReconnectTests(unittest.TestCase):
         self.runner.apply_accessories()
         self.runner.session.js.reset_mock()
 
+    def test_the_rendered_scale_is_published_with_the_anchor(self):
+        runner = bare_runner()
+        runner.settings = Mock(pet_accessory=None)
+        runner.session.js.return_value = json.dumps({
+            "base": {"file": "hat.png", "x": -5, "y": 22},
+            "size": 136, "layout": 200,
+        })
+        runner.sync_accessory_base()
+        self.assertEqual(runner.settings.pet_accessory,
+                         {"file": "hat.png", "x": -5, "y": 22,
+                          "size": 136, "layout": 200})
+
+    def test_a_page_without_layout_size_still_publishes_the_anchor(self):
+        runner = bare_runner()
+        runner.settings = Mock(pet_accessory=None)
+        runner.session.js.return_value = json.dumps({
+            "base": {"file": "hat.png", "x": 1, "y": 2}, "size": 136})
+        runner.sync_accessory_base()
+        self.assertEqual(runner.settings.pet_accessory,
+                         {"file": "hat.png", "x": 1, "y": 2, "size": 136})
+
     def test_unchanged_page_does_not_resend_overrides(self):
         self.runner.session.js.return_value = json.dumps({"inject": __version__})
         self.runner.ensure_injected()

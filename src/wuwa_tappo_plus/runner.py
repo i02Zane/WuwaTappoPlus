@@ -249,11 +249,16 @@ class Runner:
             "JSON.stringify((function(){var l=document.querySelector('.cat-stack__layer');"
             "var c=document.querySelector('.cat-mainbox');"
             "return {base:window.__WUT_ACCESSORY_BASE__||null,"
-            "size:c?c.getBoundingClientRect().width:null};})())")
+            "size:c?c.getBoundingClientRect().width:null,"
+            "layout:c?c.offsetWidth:null};})())")
         data = json.loads(raw) if raw else {}
         base = data.get("base")
         if base and data.get("size"):
             base = dict(base, size=data["size"])
+            # The pet draws at a fraction of its layout size; the preview has to
+            # use the same factor or the offsets drift at any pet size but 100%.
+            if data.get("layout"):
+                base["layout"] = data["layout"]
         if base != self.settings.pet_accessory:
             self.settings.pet_accessory = base
 

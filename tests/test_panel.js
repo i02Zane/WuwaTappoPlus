@@ -63,6 +63,23 @@ test('atlas preview maps an icon file to the real appearance entry', () => {
   assert.equal(atlas._test.offsetOf({ offset_x: -2, offset_y: 16 }).join(','), '-2,16');
 });
 
+
+test('accessory preview offsets follow the pet size factor', () => {
+  const f = fixture();
+  const atlas = f.context.window.__WUT_ATLAS__;
+  // The app stores the anchor on the 200px cat canvas; a 68% pet renders it at
+  // 136px, so every offset has to shrink by the same factor.
+  const atFullSize = atlas._test.accessoryOffset(-5, 22, { x: 10, y: -4 }, 1);
+  assert.equal(atFullSize.x, 5);
+  assert.equal(atFullSize.y, 18);
+  const scaled = atlas._test.accessoryOffset(-5, 22, { x: 10, y: -4 }, 136 / 200);
+  assert.ok(Math.abs(scaled.x - 3.4) < 1e-9, String(scaled.x));
+  assert.ok(Math.abs(scaled.y - 12.24) < 1e-9, String(scaled.y));
+  // A missing or broken factor must fall back to layout units, never NaN.
+  assert.equal(atlas._test.accessoryOffset(2, 3, { x: 0, y: 0 }, 0).x, 2);
+  assert.equal(atlas._test.accessoryOffset(2, 3, { x: 0, y: 0 }, NaN).y, 3);
+});
+
 test('daily report renders zero, missing history and unavailable storage distinctly', () => {
   for (const [count, available, expected] of [[0, true, '0'], [null, true, '—'], [7, false, '—']]) {
     const f = fixture();
