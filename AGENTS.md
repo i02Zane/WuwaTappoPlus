@@ -2,12 +2,15 @@
 
 ## 项目结构与模块职责
 
-Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 JavaScript 脚本。EXE 发布包以 `WuwaTappoPlus.exe` 为用户入口，双击打开原来的数字终端面板。源码唯一启动入口为 `launch.py`。`entry.py` 统一分发源码与冻结程序，`console.py` 仅为前台操作创建或复用终端；`paths.py` 分离程序、资源和数据目录。
+Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 JavaScript 脚本。发布入口为 Inno Setup 生成的 `WuwaTappoPlus-Setup.exe`；安装后的 `WuwaTappoPlus.exe` 保留数字终端管理面板。源码唯一启动入口为 `launch.py`。`entry.py` 统一分发源码与冻结程序，`console.py` 仅为前台操作创建或复用终端；`paths.py` 分离程序、资源和数据目录。
 
 - `src/wuwa_tappo_plus/cli.py`、`src/wuwa_tappo_plus/menu.py`：命令分发与控制台面板。
+- `lifecycle.py`、`daemon_control.py`、`operations.py`：生命周期编排、后台启停与结构化进度结果。
+- `installer.py`、`installation.py`、`packaging/setup.iss`：安装器固定操作、目录/安装代次保护及标准安装与卸载；`scheduler.py` 用标准库 ctypes 调用任务计划程序 COM，禁止回退 PowerShell。
 - `src/wuwa_tappo_plus/runner.py`：守护进程生命周期、心跳与状态发布。
 - `src/wuwa_tappo_plus/cdp.py`、`src/wuwa_tappo_plus/ws.py`：WebView2 CDP 通信与 WebSocket 传输。
 - `src/wuwa_tappo_plus/win.py`：Windows 注册表策略、进程、自启动与计划任务。
+- 进程结束统一用原生 `OpenProcess` / `TerminateProcess` / `WaitForSingleObject`，显式声明 x64 句柄类型，不调用 `taskkill`。关闭桌宠前按已枚举的完整路径核验同一进程句柄，避免 PID 复用误杀；不先结束 WebView 子进程树。API 失败保留操作名、PID 与 Windows 错误码；无法访问进程不能当作已退出。
 - `src/wuwa_tappo_plus/scripts/inject.js`：页面检查、按钮点击与提醒气泡；同时读取应用持久化的 `wuwatappo-settings.gameMode` ，在游戏模式期间给 `.pet-dock` 和每个 `.room-cat-shell` 分别加内联透明度，退出后移除并恢复应用自己的 `--window-opacity`；不设置 `.room-cats-shell` 父容器，避免与子元素透明度相乘。「王总好模式」开启时按横向位置镜像用户左侧的 `.cat-friend`，不镜像昵称和表情气泡。
 - `src/wuwa_tappo_plus/fullscreen.py`：用前台窗口客户区判断窗口化/无边框全屏（2px 容差），排除桌宠、桌面/任务栏和输入体验进程。返回 `True/False/None`，`None` 表示读取失败，不代表退出全屏。
 - `src/wuwa_tappo_plus/game_mode.py`、`scripts/game_mode.js`：后台管理全屏接管、两秒防抖、原生状态确认和恢复。通过原生 `loadDesktopCatSettings/persistDesktopCatSettings/emitSettingsGameMode` 操作明确布尔值，不发送 toggle 事件；原生入口模块从页面动态发现，API 不匹配时保留恢复信息并停止操作。
@@ -34,7 +37,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 - `.\runtime\python.exe launch.py install`、`.\runtime\python.exe launch.py uninstall`：安装 / 修复或卸载，保留个人配置与功能开关。
 - `.\runtime\python.exe launch.py doctor --policy`：只读查看策略；`--clean-policy` 显式清理残留，需要管理员权限和确认。
 
-对外命令仅保留 `install`、`uninstall`、`status`、`doctor`、`logs`；`run`、`ensure`、`menu` 为内部入口。EXE 双击打开终端安装管理，安装／卸载才提权；日常功能开关放在桌宠设置中。不要添加语义重复的 `start`、`stop`、`restart` 命令。重复安装应修复后台与策略，卸载不能因进程未运行而跳过清理。菜单里触发安装/卸载需要 UAC 时，原窗口在成功移交后立即退出，只保留提升后的控制台；移交失败（未授权）或本来就在管理员权限下执行时，菜单保留以便查看结果。单个实例在任务管理器里显示为两个同名进程，是单文件打包的引导器与其子进程，不是两个后台。安装会从配置端口开始尝试最多 5 个连续端口，先停桌宠再检查，成功后把端口写回 `config.toml`；本工具自己的旧调试策略允许更新，其他策略值仍拒绝覆盖。`uninstall` 保留数据；`uninstall --purge` 经确认后完整卸载，`--yes` 用于自动化。仅在卸载成功且后台已退出后删除已知 Plus 数据文件，保留源码、EXE 和其他文件；完整卸载成功后退出面板，避免重新生成配置。
+对外命令仅保留 `install`、`uninstall`、`status`、`doctor`、`logs`；`run`、`ensure`、`menu` 为内部入口。EXE 双击打开终端安装管理，安装／卸载才提权；日常功能开关放在桌宠设置中。不要添加语义重复的 `start`、`stop`、`restart` 命令。重复安装应修复后台与策略，卸载不能因进程未运行而跳过清理。菜单里触发安装/卸载需要 UAC 时，原窗口在成功移交后立即退出，只保留提升后的控制台；移交失败（未授权）或本来就在管理员权限下执行时，菜单保留以便查看结果。目录式冻结程序不再需要单文件解包引导器。安装会从配置端口开始尝试最多 5 个连续端口，先停桌宠再检查，成功后把端口写回 `config.toml`；本工具自己的旧调试策略允许更新，其他策略值仍拒绝覆盖。`uninstall` 保留数据；`uninstall --purge` 经确认后完整卸载，`--yes` 用于自动化。仅在卸载成功且后台已退出后删除已知 Plus 数据文件，保留源码、EXE 和其他文件；完整卸载成功后退出面板，避免重新生成配置。
 
 设置页仅允许修改自动开箱、余额提醒、气泡显示、气泡动画、屏幕记忆、王总好模式、自动发表情、小黑屋模式和自动游戏模式·Plus九个布尔值，以及游戏模式透明度（0-100 的整数）和自动发表情频率（1-20 的整数，步进 1）；两项数值都用滑动条；由后台原子保存到配置，保存成功后才确认。屏幕记忆关闭时既不记录也不移动。暂停点击不停止后台，界面关闭或重建后必须能重新挂载。游戏模式透明度默认 30：注入脚本每秒读取应用持久化的 `gameMode`，进入时给 `.pet-dock` 和每个 `.room-cat-shell` 分别加内联透明度，退出时恢复各自原值；不能设置 `.room-cats-shell` 父容器，否则会与子元素已有的官方透明度相乘；不修改应用的 `windowOpacity` 或 `--window-opacity`，所以恢复的是应用当前的透明度。自动游戏模式·Plus 默认开启：进入游戏模式的条件是「前台窗口客户区铺满所在显示器」或「前台进程的可执行文件名在 `[appearance] game_mode_apps` 白名单里」；白名单从设置页维护：点「管理白名单」打开独立对话框，同时展示已添加项和当前打开的应用，点应用即可添加、× 移除，也可手动输入程序名；按钮、输入框与 × 复用官方 `.setting-btn`/`.setting-input`/`.setting-shortcut-clear` 的配色、圆角与阴影，对话框放在 body 上（官方样式选择器限定在 `.setting-item` 内），所以样式需要按同样数值复制；应用列表由后台用 EnumWindows 枚举可见、非最小化、非工具窗口的顶层窗口，排除本工具、资源管理器和输入法进程，只取程序名与窗口标题，随请求返回、不记录日志。保存时只保留文件名、转小写、去重，最多 40 项，非法项直接拒绝，不写日志、不外传。白名单里的程序不需要全屏，全屏窗口也不需要加入白名单；后台先在原生页面 localStorage 的 `wut-plus-game-mode-owner` 保存原官方自动开关、Plus 开启标记、待确认操作和手动退出状态，再关闭并确认官方自动逻辑；不依赖设置页。进入或退出全屏须连续稳定两秒，读取失败打断防抖但不改变模式。使用原生持久化函数和 `cat-settings-game-mode` 的明确 enabled 值，确认事件成功及存储状态后完成操作，每三秒最多重试一次、每轮最多三次。用户手动退出后，本次全屏期间不再自动进入；用户原本手动开启的模式不归 Plus 管理。后台重启复用恢复记录；关闭功能、后台正常退出时只退出 Plus 开启的模式并恢复官方自动开关；原生页面正常关闭时同步恢复存储，异常强制结束后的恢复依赖下次连接。设置页只反映官方当前值，不点击官方开关：官方设置组件挂载后才读回已保存的值，挂载前点击会用组件默认值覆盖任务栏图标、透明度、桌宠大小和开机自启等选项。透明度只跟随官方 `gameMode`，不使用独立全屏标记。设置页提供 Token 行（位于诊断日志上方）：显示 `kuro_lastLoginTime` 有效期；「手动续期」始终显示，临时把 `kuro_lastLoginTime` 设到 1 分钟后，调用应用导出的 `renewTokenIfNeeded` 强制续期，失败恢复原值并用官方 `showToast` 提示；「提取Token」直接复制 `kuro_infoToken` 到剪贴板并用官方 `showToast` 提示不要外泄；另提供 Token 登录行（仅在未登录时显示）：粘贴手机端或其他设备的 Token，调用应用导出的 `applyAuthTokens` 写入 `kuro_infoToken`/`kuro_lastLoginTime`（7 天），随后广播 `cat-auth-login-success` 并重载页面，让桌宠窗口重新水合、重连并恢复房间；不写日志、不落盘、不发给后台。
 
@@ -68,9 +71,9 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 
 ## 打包与发布
 
-`pyproject.toml` 定义 `src/` 包布局与 GPL-3.0-only 许可。`python tools/build_release.py` 仅生成单文件 EXE 和只包含该 EXE 哈希的 SHA-256 校验文件，不额外打包源码；`python tools/smoke_release.py` 验证冻结入口、资源、终端窗口、隔离后台拉起和校验值。Release 只上传 EXE 与校验文件，对应源码使用 GitHub 版本标签自动提供的 ZIP / TAR.GZ。发布时保持标签源码与二进制一致，保留构建文件和第三方许可证；不得打入配置、统计、日志或个人路径。
+`pyproject.toml` 定义 `src/` 包布局与 GPL-3.0-only 许可。`python tools/build_release.py` 先生成 `build/payload/WuwaTappoPlus/` 目录式载荷，再用 Inno Setup 6.5+ 生成 `dist/WuwaTappoPlus-Setup.exe` 与只含该安装包哈希的 SHA-256 校验文件，不额外打包源码；`python tools/smoke_release.py` 验证冻结入口、资源、终端窗口、隔离后台拉起和校验值。Release 只上传 EXE 与校验文件，对应源码使用 GitHub 版本标签自动提供的 ZIP / TAR.GZ。发布时保持标签源码与二进制一致，保留构建文件和第三方许可证；不得打入配置、统计、日志或个人路径。
 
-EXE 数据存放在 `%LOCALAPPDATA%\WuwaTappoPlus`，源码数据保留在仓库根目录。`WUWA_TAPPO_PLUS_DATA_DIR` 仅允许绝对路径，用于隔离测试与显式数据定位。资源从包内 `scripts/` 读取，运行命令通过 `win.command_args` 生成；冻结程序不能再启动 `pythonw.exe` 或源码脚本。不要把用户数据写入临时解包目录；启动独立后台和提权进程时设置 `PYINSTALLER_RESET_ENVIRONMENT=1`，确保前台退出后后台资源仍然可用；从冻结程序创建子进程（含 UAC、官方应用、独立后台和卸载清理进程）时，使用 `win._system_dll_search` 临时调用 `SetDllDirectoryW(NULL)`，创建后在 finally 恢复原目录，并串行化进程创建；同时从 PATH 移除解包目录并清理 `_PYI*` 变量。仅清理环境变量不能重置 Windows DLL 搜索路径；官方应用会因此加载并锁定 Plus 临时目录里的 VCRUNTIME，造成退出清理警告。系统工具和清理进程统一通过 `win.run_external/popen_external` 创建，不关闭 PyInstaller 清理警告来掩盖占用。这是首次公开发布，不引入历史入口、旧配置迁移和旧自启动名称的兼容代码。
+EXE 数据存放在 `%LOCALAPPDATA%\WuwaTappoPlus`，源码数据保留在仓库根目录。`WUWA_TAPPO_PLUS_DATA_DIR` 仅允许绝对路径，用于隔离测试与显式数据定位。资源从包内 `scripts/` 读取，运行命令通过 `win.command_args` 生成；冻结程序不能再启动 `pythonw.exe` 或源码脚本。不要把用户数据写入临时解包目录；启动独立后台和提权进程时设置 `PYINSTALLER_RESET_ENVIRONMENT=1`，确保前台退出后后台资源仍然可用；从冻结程序创建子进程（含 UAC、官方应用、独立后台和卸载清理进程）时，使用 `win._system_dll_search` 临时调用 `SetDllDirectoryW(NULL)`，创建后在 finally 恢复原目录，并串行化进程创建；同时从 PATH 移除解包目录并清理 `_PYI*` 变量。仅清理环境变量不能重置 Windows DLL 搜索路径；官方应用会因此加载并锁定 Plus 临时目录里的 VCRUNTIME，造成退出清理警告。系统工具和清理进程统一通过 `win.run_external/popen_external` 创建，不关闭 PyInstaller 清理警告来掩盖占用。只接管当前单文件版本的固定程序目录、安装代次和现有自启动/任务名称，不新增历史入口别名或旧配置迁移。
 
 ### Agent 的发布职责
 
@@ -84,7 +87,7 @@ EXE 数据存放在 `%LOCALAPPDATA%\WuwaTappoPlus`，源码数据保留在仓库
 
    ```powershell
    gh release create v<版本号> `
-     "dist/history/v<版本号>/WuwaTappoPlus.exe" `
+     "dist/history/v<版本号>/WuwaTappoPlus-Setup.exe" `
      "dist/history/v<版本号>/SHA256SUMS.txt" `
      --title "Wuwa Tappo Plus <版本号>" `
      --notes-file "dist/history/v<版本号>/release-notes.md" `
@@ -118,7 +121,7 @@ Windows 构建前检查内置 runtime/python.exe 不带 Low 完整性标签；�
 
 「王总好模式」默认关闭：只读取页面内每个 `.room-cat-shell` 的横向位置，给用户桌宠左侧的 `.cat-friend` 加内联 `scale: -1 1` 使其面向用户；昵称和表情气泡是兄弟节点，不参与镜像；镜像时把 `.cat-friend` 的 `z-index` 提到 ID 条之上，避免被底部 ID 条遮挡；桌宠移动、换房、关闭模式或卸载时恢复原 `scale` 和 `z-index`；开启且房间内有桌宠时每 50ms 复查横向位置，无桌宠或关闭后停止定时器。不修改其他玩家页面或网络数据。
 
-EXE 安装到 %LOCALAPPDATA%\Programs\WuwaTappoPlus，数据目录独立。installation.py 只管理固定 EXE 和 install.json，拒绝链接路径；临时文件原子替换、失败保留旧 EXE。安装后自启动、看门狗及后台工作目录均指向安装目录，UAC 保留原用户程序目录。两种卸载都删除程序文件，源码和下载包不删除；运行中 EXE 用隐藏 PowerShell 清理进程退出后删除，按安装代次和 SHA-256 防止误删重新安装的新程序，禁止递归删除目录。两种卸载成功后退出菜单，完整卸载还清理已知数据。
+程序由 Inno Setup 安装到 `%LOCALAPPDATA%\Programs\WuwaTappoPlus`，载荷为主 EXE 与 `_internal/`，数据目录独立。安装器以原用户运行，仅系统策略/计划任务配置通过明确路径与原用户名提权；HKCU 自启、桌宠启动和后台启动留在原用户上下文。`installation.py` 拒绝链接路径，用新的 install.json 安装代次阻止旧版延迟清理误删升级后的程序，不再自复制或调用 PowerShell 自删。用户直接运行新版 Setup 升级，无需卸载；安装器只删除自己记录的程序文件，不递归删除未知文件。普通卸载保留数据，完整卸载确认后仅清理已知数据。CLI/菜单卸载移交标准卸载器，源码维护仍复用生命周期模块。
 
 ## 联机广场开发
 

@@ -35,7 +35,7 @@ def probe():
     if frozen():
         directory = Path(sys._MEIPASS) / "licenses"
         licenses = ["WuwaTappoPlus.txt", "Python.txt", "Python-components.txt",
-                    "OpenSSL.txt", "PyInstaller.txt", "Third-party-notices.md"]
+                    "OpenSSL.txt", "PyInstaller.txt", "Third-party-notices.md", "InnoSetup.txt"]
         if not all((directory / name).is_file() for name in licenses):
             raise RuntimeError("packaged license notice is missing")
     return {"version": __version__, "frozen": frozen(), "app_dir": str(APP_DIR),
@@ -61,7 +61,7 @@ def main(argv=None):
             return 2
         destination = Path(argv[1])
         argv = argv[2:]
-    background = bool(argv and argv[0] in ("run", "ensure", "--probe"))
+    background = bool(argv and argv[0] in ("run", "ensure", "--probe", "--installer"))
     if frozen() and not background and destination is None:
         from .console import open_console
         if "--elevated" in argv:
@@ -87,6 +87,10 @@ def main(argv=None):
             stack.enter_context(contextlib.redirect_stdout(stream))
             stack.enter_context(contextlib.redirect_stderr(stream))
         try:
+            if argv[:1] == ["--installer"]:
+                from .installer import main as installer_main
+
+                return installer_main(argv[1:])
             if argv == ["--probe"]:
                 print(json.dumps(probe(), ensure_ascii=False))
                 return 0

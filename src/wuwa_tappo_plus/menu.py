@@ -13,8 +13,7 @@ import traceback
 import unicodedata
 from datetime import datetime
 
-from . import __version__, cli, win
-from .config import load
+from . import __version__, cli, daemon_control, lifecycle, win
 
 try:
     import msvcrt
@@ -139,13 +138,8 @@ def _age(updated):
 
 
 def _collect():
-    st = cli.read_state()
-    pid = st.get("pid")
-    try:
-        pid = int(pid) if pid else None
-    except (TypeError, ValueError):
-        pid = None
-    alive = bool(pid) and win.pid_alive(pid)
+    st, pid = daemon_control.status()
+    alive = bool(pid)
 
     try:
         app_running = bool(win.processes())
@@ -180,7 +174,7 @@ def _collect():
         "last_error": st.get("last_error"),
         "clicks": st.get("clicks_logged"),
         "target": st.get("target"),
-        "port": st.get("port") or load().port,
+        "port": st.get("port") or lifecycle.read_config_hints().port,
     }
 
 
@@ -307,7 +301,12 @@ class _Indent:
         return getattr(self._stream, "encoding", "utf-8")
 
 
-def _run(title, handler, close_when_elevated=False):
+def _handed_off(code):
+    result = getattr(code, "operation", None)
+    return result is not None and result.status == "handed_off"
+
+
+def _run(title, handler):
     """Run one cli handler on a clean screen, then wait for a key.
 
     When the handler hands off to UAC (it relaunches itself elevated), the
@@ -337,24 +336,21 @@ def _run(title, handler, close_when_elevated=False):
     finally:
         sys.stdout = real
 
-    if close_when_elevated and rc == 0 and not win.is_admin():
+    if _handed_off(rc):
         return rc
 
     sys.stdout.write("\n")
     if rc not in (0, None):
         sys.stdout.write("  " + _paint(YELLOW, "返回码 %s" % rc) + "\n")
     sys.stdout.flush()
-    if title in ("卸载（保留数据）", "完整卸载（清除数据）") and rc == 0 and win.frozen():
+    if title in ("卸载（保留数据）", "完整卸载（清除数据）") and rc == 0:
         return rc
-    if title == "完整卸载（清除数据）" and rc == 0:
-        _wait_key("按任意键退出面板...")
-    else:
-        _wait_key()
+    _wait_key()
     return rc
 
 
 def _install():
-    _run("安装 / 修复", cli.cmd_install, close_when_elevated=True)
+    return _run("安装 / 修复", cli.cmd_install)
 
 
 def _uninstall():
@@ -428,7 +424,7 @@ def main(argv):
             result = entry[1]()
             if key in ("2", "3") and result == 0:
                 break
-            if key == "1" and result == 0 and not win.is_admin():
+            if _handed_off(result):
                 break
             sys.stdout.write("\x1b[2J\x1b[?25l")
             sys.stdout.flush()
@@ -462,7 +458,7 @@ def _plain_menu():
             result = entry[1]()
             if choice in ("2", "3") and result == 0:
                 return 0
-            if choice == "1" and result == 0 and not win.is_admin():
+            if _handed_off(result):
                 return 0
         except Exception:
             traceback.print_exc()

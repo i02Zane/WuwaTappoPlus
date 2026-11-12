@@ -4,12 +4,14 @@ import subprocess
 import os
 import io
 import tempfile
+import tomllib
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
-from wuwa_tappo_plus import cli, menu, win
+from wuwa_tappo_plus import cli, daemon_control, lifecycle, menu, win
+from wuwa_tappo_plus.operations import OperationResult
 from wuwa_tappo_plus.config import Config
 
 
@@ -18,10 +20,11 @@ class LifecycleTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         targets = {
-            "load": Config({}),
+            "read_config_hints": Config({}),
             "installation.remove_program": "removed",
-            "out": None,
-            "_stop_daemon": 0,
+            "daemon_control.status": ({}, None),
+            "daemon_control.lock_held": False,
+            "daemon_control.stop": OperationResult(),
             "win.is_admin": True,
             "win.processes": [(42, None)] if app_running else [],
             "win.remove_policy": True,
@@ -34,19 +37,19 @@ class LifecycleTests(unittest.TestCase):
             "win.restart_app": "WuwaTappo.exe",
         }
         return {
-            name: stack.enter_context(patch("wuwa_tappo_plus.cli." + name, return_value=value))
+            name: stack.enter_context(patch("wuwa_tappo_plus.lifecycle." + name, return_value=value))
             for name, value in targets.items()
         }
 
     def test_uninstall_cleans_setup_then_restarts_app(self):
         mocks = self.cleanup_mocks()
         events = []
-        for name in ("_stop_daemon", "win.remove_policy", "win.disable_autostart",
+        for name in ("daemon_control.stop", "win.remove_policy", "win.disable_autostart",
                      "win.remove_watchdog", "win.restart_app"):
             value = mocks[name].return_value
             mocks[name].side_effect = lambda *a, n=name, v=value: events.append(n) or v
         self.assertEqual(cli.cmd_uninstall([]), 0)
-        self.assertEqual(events, ["_stop_daemon", "win.remove_policy",
+        self.assertEqual(events, ["daemon_control.stop", "win.remove_policy",
                                   "win.disable_autostart", "win.remove_watchdog",
                                   "win.restart_app"])
 
@@ -57,7 +60,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_failed_daemon_stop_aborts_cleanup(self):
         mocks = self.cleanup_mocks()
-        mocks["_stop_daemon"].return_value = 1
+        mocks["daemon_control.stop"].return_value = OperationResult("failed")
         self.assertEqual(cli.cmd_uninstall([]), 1)
         mocks["win.remove_policy"].assert_not_called()
         mocks["win.restart_app"].assert_not_called()
@@ -79,7 +82,7 @@ class LifecycleTests(unittest.TestCase):
         with patch.object(win, "relaunch_elevated", return_value=True) as elevate:
             self.assertEqual(cli.cmd_uninstall([]), 0)
         elevate.assert_called_once_with(["uninstall", "--elevated"])
-        mocks["_stop_daemon"].assert_not_called()
+        mocks["daemon_control.stop"].assert_not_called()
 
     def test_panel_uses_cli_uninstall_even_when_nothing_is_running(self):
         with patch.object(menu, "_run") as run:
@@ -88,7 +91,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_regular_uninstall_never_clears_data(self):
         self.cleanup_mocks()
-        with patch.object(cli, "_purge_data") as purge:
+        with patch.object(lifecycle, "purge_data") as purge:
             self.assertEqual(cli.cmd_uninstall([]), 0)
         purge.assert_not_called()
 
@@ -96,26 +99,27 @@ class LifecycleTests(unittest.TestCase):
         mocks = self.cleanup_mocks()
         events = []
         mocks["win.restart_app"].side_effect = lambda *a: events.append("restart") or "app"
-        with patch.object(cli, "_purge_data", side_effect=lambda: events.append("purge")):
+        with patch.object(lifecycle, "purge_data", side_effect=lambda: events.append("purge")):
             self.assertEqual(cli.cmd_uninstall(["--purge", "--yes"]), 0)
         self.assertEqual(events, ["restart", "purge"])
 
     def test_failed_uninstall_preserves_data(self):
-        for failure in ("_stop_daemon", "win.read_watchdog", "win.restart_app"):
+        for failure in ("daemon_control.stop", "win.read_watchdog", "win.restart_app"):
             with self.subTest(failure=failure):
                 mocks = self.cleanup_mocks()
-                mocks[failure].return_value = 1 if failure != "win.restart_app" else None
-                with patch.object(cli, "_purge_data") as purge:
+                mocks[failure].return_value = (OperationResult("failed") if failure == "daemon_control.stop"
+                                               else 1 if failure == "win.read_watchdog" else None)
+                with patch.object(lifecycle, "purge_data") as purge:
                     self.assertEqual(cli.cmd_uninstall(["--purge", "--yes"]), 1)
                 purge.assert_not_called()
 
     def test_purge_confirmation_precedes_any_changes(self):
         mocks = self.cleanup_mocks()
         with patch.object(cli.sys, "stdin", new=io.StringIO()), \
-                patch.object(cli, "_purge_data") as purge:
+                patch.object(lifecycle, "purge_data") as purge:
             self.assertEqual(cli.cmd_uninstall(["--purge"]), 1)
-        mocks["load"].assert_not_called()
-        mocks["_stop_daemon"].assert_not_called()
+        mocks["read_config_hints"].assert_not_called()
+        mocks["daemon_control.stop"].assert_not_called()
         purge.assert_not_called()
 
     def test_cancelled_purge_does_not_uninstall(self):
@@ -123,7 +127,7 @@ class LifecycleTests(unittest.TestCase):
         with patch.object(cli.sys.stdin, "isatty", return_value=True), \
                 patch("builtins.input", return_value="no"):
             self.assertEqual(cli.cmd_uninstall(["--purge"]), 1)
-        mocks["_stop_daemon"].assert_not_called()
+        mocks["daemon_control.stop"].assert_not_called()
 
     def test_confirmed_purge_is_forwarded_through_elevation(self):
         mocks = self.cleanup_mocks()
@@ -136,13 +140,13 @@ class LifecycleTests(unittest.TestCase):
 
     def test_data_cleanup_error_is_not_reported_as_success(self):
         self.cleanup_mocks()
-        with patch.object(cli, "_purge_data", side_effect=PermissionError("locked")):
+        with patch.object(lifecycle, "purge_data", side_effect=PermissionError("locked")):
             self.assertEqual(cli.cmd_uninstall(["--purge", "--yes"]), 1)
 
     def test_both_uninstall_modes_remove_installed_program_files(self):
         mocks = self.cleanup_mocks()
         for args in ([], ["--purge", "--yes"]):
-            with patch.object(cli, "_purge_data"):
+            with patch.object(lifecycle, "purge_data"):
                 self.assertEqual(cli.cmd_uninstall(args), 0)
         self.assertEqual(mocks["installation.remove_program"].call_count, 2)
 
@@ -169,41 +173,11 @@ class LifecycleTests(unittest.TestCase):
                 patch.object(menu, "_frame", return_value=["menu"]):
             self.assertEqual(menu.main(["--once"]), 0)
 
-    def test_a_vanished_process_counts_as_stopped(self):
-        # taskkill exits 128 when the app closed itself between enumeration and
-        # the kill request; the installer used to abort on that.
-        with patch.object(win.subprocess, "run", return_value=
-                          subprocess.CompletedProcess([], 128)), \
-                patch.object(win, "_wait_gone", return_value=True) as wait:
-            self.assertTrue(win.kill_pid(42))
-        wait.assert_called_once_with(42, 1.0)
-
-    def test_kill_fails_only_when_the_process_survives_the_attempt(self):
-        for returncode in (0, 1, 5):
-            with self.subTest(returncode=returncode), \
-                    patch.object(win.subprocess, "run", return_value=
-                                 subprocess.CompletedProcess([], returncode)), \
-                    patch.object(win, "_wait_gone", return_value=False):
-                self.assertFalse(win.kill_pid(42))
-
-    def test_kill_keeps_waiting_when_taskkill_reported_success(self):
-        seen = []
-
-        def wait(_pid, seconds):
-            seen.append(seconds)
-            return len(seen) > 1
-
-        with patch.object(win.subprocess, "run", return_value=
-                          subprocess.CompletedProcess([], 0)), \
-                patch.object(win, "_wait_gone", side_effect=wait):
-            self.assertTrue(win.kill_pid(42))
-        self.assertEqual(seen, [1.0, 5.0])
-
     def test_stop_app_retries_a_transient_kill_failure(self):
         results = [False, True]
         with patch.object(win, "find_exe", return_value="WuwaTappo.exe"), \
-                patch.object(win, "running_pids", side_effect=[[42]] + [[]] * 10), \
-                patch.object(win, "kill_pid", side_effect=lambda _pid: results.pop(0)), \
+                patch.object(win, "processes", side_effect=[[(42, "WuwaTappo.exe")]] + [[]] * 10), \
+                patch.object(win, "kill_pid", side_effect=lambda _pid, **kwargs: results.pop(0)), \
                 patch.object(win, "pid_alive", return_value=True), \
                 patch.object(win.time, "sleep"):
             self.assertEqual(win.stop_app(), "WuwaTappo.exe")
@@ -211,7 +185,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_stop_app_reports_when_the_app_survives_every_attempt(self):
         with patch.object(win, "find_exe", return_value="WuwaTappo.exe"), \
-                patch.object(win, "running_pids", side_effect=[[42]] + [[]] * 10), \
+                patch.object(win, "processes", side_effect=[[(42, "WuwaTappo.exe")]] + [[]] * 10), \
                 patch.object(win, "kill_pid", return_value=False) as kill, \
                 patch.object(win, "pid_alive", return_value=True), \
                 patch.object(win.time, "sleep"):
@@ -221,7 +195,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_stop_app_ignores_a_pid_that_vanished_before_the_kill(self):
         with patch.object(win, "find_exe", return_value="WuwaTappo.exe"), \
-                patch.object(win, "running_pids", side_effect=[[42]] + [[]] * 10), \
+                patch.object(win, "processes", side_effect=[[(42, "WuwaTappo.exe")]] + [[]] * 10), \
                 patch.object(win, "kill_pid", return_value=False), \
                 patch.object(win, "pid_alive", return_value=False), \
                 patch.object(win.time, "sleep"):
@@ -229,12 +203,149 @@ class LifecycleTests(unittest.TestCase):
 
     def test_app_restart_does_not_launch_after_failed_kill(self):
         with patch.object(win, "find_exe", return_value="WuwaTappo.exe"), \
-                patch.object(win, "running_pids", return_value=[42]), \
+                patch.object(win, "processes", return_value=[(42, "WuwaTappo.exe")]), \
                 patch.object(win, "kill_pid", return_value=False), \
                 patch.object(win, "launch_app") as launch:
             with self.assertRaises(OSError):
                 win.restart_app()
         launch.assert_not_called()
+
+
+class ReadonlyUninstallTests(unittest.TestCase):
+    def setUp(self):
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        self.root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        self.path = self.root / "config.toml"
+        stack.enter_context(patch.object(lifecycle, "CONFIG_PATH", self.path))
+        stack.enter_context(patch.object(lifecycle, "DATA_DIR", self.root))
+        stack.enter_context(patch.object(cli, "out"))
+        self.load = stack.enter_context(patch.object(cli, "load", side_effect=AssertionError("must not load")))
+        values = {
+            "daemon_control.stop": OperationResult(),
+            "daemon_control.status": ({}, None),
+            "daemon_control.lock_held": False,
+            "win.is_admin": True,
+            "win.processes": [],
+            "win.remove_policy": True,
+            "win.stray_policy_values": [],
+            "win.disable_autostart": True,
+            "win.remove_watchdog": True,
+            "win.read_policy": {},
+            "win.read_autostart": None,
+            "win.read_watchdog": None,
+            "win.restart_app": "app",
+            "installation.remove_program": "removed",
+        }
+        self.mocks = {name: stack.enter_context(patch("wuwa_tappo_plus.lifecycle." + name,
+                                                    return_value=value))
+                      for name, value in values.items()}
+
+    def test_missing_config_does_not_prevent_uninstall_or_create_files(self):
+        result = cli.cmd_uninstall([]).operation
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.steps[0].status, "warning")
+        self.assertEqual(list(self.root.iterdir()), [])
+        self.load.assert_not_called()
+
+    def test_menu_remains_accessible_with_missing_or_broken_config(self):
+        for content in (None, "[broken"):
+            with self.subTest(content=content):
+                if content is not None:
+                    self.path.write_text(content, encoding="utf-8")
+                panel = menu._collect()
+                self.assertEqual(panel["port"], 9222)
+                self.assertTrue(menu._frame(panel))
+                if content is None:
+                    self.assertFalse(self.path.exists())
+                else:
+                    self.assertEqual(self.path.read_text(), content)
+        self.load.assert_not_called()
+
+    def test_broken_config_is_preserved_in_regular_uninstall(self):
+        for content in (b"[broken", b"\xff", b"app = 1", b"[app]\nport = 'bad'",
+                        b"[app]\nexe = false", b"[app]\nport = true"):
+            with self.subTest(content=content):
+                self.path.write_bytes(content)
+                result = cli.cmd_uninstall([]).operation
+                self.assertEqual(result.status, "completed")
+                self.assertEqual(result.steps[0].status, "warning")
+                self.assertEqual(self.path.read_bytes(), content)
+        self.load.assert_not_called()
+
+    def test_purge_can_remove_broken_config_after_cleanup(self):
+        self.path.write_text("[broken", encoding="utf-8")
+        self.assertEqual(cli.cmd_uninstall(["--purge", "--yes"]), 0)
+        self.assertFalse(self.root.exists())
+        self.load.assert_not_called()
+
+    def test_valid_config_is_not_reconciled_and_supplies_restart_hint(self):
+        content = b'\xef\xbb\xbf[app]\nexe = "D:/pet/WuwaTappo.exe"\nport = 9333\n[retired]\nx = 1\n'
+        self.path.write_bytes(content)
+        self.mocks["win.processes"].return_value = [(42, None)]
+        self.assertEqual(cli.cmd_uninstall([]), 0)
+        self.mocks["win.restart_app"].assert_called_once_with("D:/pet/WuwaTappo.exe")
+        self.mocks["win.stray_policy_values"].assert_called_once_with(9333)
+        self.assertEqual(self.path.read_bytes(), content)
+
+    def test_unlocatable_running_pet_preserves_data_and_program(self):
+        self.path.write_text("[broken", encoding="utf-8")
+        self.mocks["win.processes"].return_value = [(42, None)]
+        self.mocks["win.restart_app"].return_value = None
+        result = cli.cmd_uninstall(["--purge", "--yes"]).operation
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.steps[-1].step, "restart_app")
+        self.assertTrue(self.path.exists())
+        self.mocks["installation.remove_program"].assert_not_called()
+
+    def test_lock_reappearing_after_cleanup_prevents_program_and_data_deletion(self):
+        self.path.write_text("keep", encoding="utf-8")
+        self.mocks["daemon_control.lock_held"].return_value = True
+        result = cli.cmd_uninstall(["--purge", "--yes"]).operation
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.steps[-1].step, "verify_daemon_exit")
+        self.assertTrue(self.path.exists())
+        self.mocks["installation.remove_program"].assert_not_called()
+
+    def test_deferred_removal_reports_only_future_deletion(self):
+        self.mocks["installation.remove_program"].return_value = "deferred"
+        result = lifecycle.uninstall()
+        self.assertEqual(result.status, "completed")
+        self.assertIn("退出窗口后", result.steps[-1].message)
+        self.assertNotIn("已删除", result.steps[-1].message)
+
+
+class AppConfigWriteTests(unittest.TestCase):
+    def setUp(self):
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        self.root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        self.path = self.root / "config.toml"
+        stack.enter_context(patch.object(lifecycle, "CONFIG_PATH", self.path))
+
+    def test_only_app_section_is_updated_and_bom_is_removed(self):
+        self.path.write_text("[app]\nport = 9222\n# keep\n[other]\nport = 1234\n", encoding="utf-8-sig")
+        lifecycle.write_config_port(9333)
+        data = tomllib.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(data["app"]["port"], 9333)
+        self.assertEqual(data["other"]["port"], 1234)
+        self.assertIn("# keep", self.path.read_text())
+        self.assertFalse(self.path.read_bytes().startswith(b"\xef\xbb\xbf"))
+
+    def test_windows_path_with_quotes_roundtrips(self):
+        self.path.write_text("[app]\nexe = ''\n", encoding="utf-8")
+        value = "D:\\User's pets\\WuwaTappo.exe"
+        lifecycle.write_config_exe(value)
+        self.assertEqual(tomllib.loads(self.path.read_text())["app"]["exe"], value)
+
+    def test_failed_atomic_replace_preserves_config_and_removes_temp(self):
+        self.path.write_text("[app]\nport = 9222\n", encoding="utf-8")
+        original = self.path.read_bytes()
+        with patch.object(lifecycle.os, "replace", side_effect=PermissionError("locked")):
+            with self.assertRaises(OSError):
+                lifecycle.write_config_port(9333)
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(list(self.root.iterdir()), [self.path])
 
 
 class PurgeDataTests(unittest.TestCase):
@@ -252,10 +363,10 @@ class PurgeDataTests(unittest.TestCase):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("test", encoding="utf-8")
-            with patch.object(cli, "DATA_DIR", root), \
-                    patch.object(cli, "daemon_status", return_value=({}, None)), \
-                    patch.object(cli, "_lock_held", return_value=False):
-                cli._purge_data()
+            with patch.object(lifecycle, "DATA_DIR", root), \
+                    patch.object(daemon_control, "status", return_value=({}, None)), \
+                    patch.object(daemon_control, "lock_held", return_value=False):
+                lifecycle.purge_data()
             self.assertTrue(all(not (root / name).exists() for name in removed))
             self.assertTrue(all((root / name).is_file() for name in kept))
 
@@ -265,11 +376,11 @@ class PurgeDataTests(unittest.TestCase):
             root.mkdir()
             (root / "config.toml").write_text("test", encoding="utf-8")
             (root / "accessory_overrides.json").write_text("{}", encoding="utf-8")
-            with patch.object(cli, "DATA_DIR", root), \
-                    patch.object(cli, "daemon_status", return_value=({}, None)), \
-                    patch.object(cli, "_lock_held", return_value=False):
-                cli._purge_data()
-                cli._purge_data()
+            with patch.object(lifecycle, "DATA_DIR", root), \
+                    patch.object(daemon_control, "status", return_value=({}, None)), \
+                    patch.object(daemon_control, "lock_held", return_value=False):
+                lifecycle.purge_data()
+                lifecycle.purge_data()
             self.assertFalse(root.exists())
 
     def test_active_lock_prevents_any_data_deletion(self):
@@ -277,11 +388,11 @@ class PurgeDataTests(unittest.TestCase):
             root = Path(folder)
             config = root / "config.toml"
             config.write_text("keep", encoding="utf-8")
-            with patch.object(cli, "DATA_DIR", root), \
-                    patch.object(cli, "daemon_status", return_value=({}, None)), \
-                    patch.object(cli, "_lock_held", return_value=True):
+            with patch.object(lifecycle, "DATA_DIR", root), \
+                    patch.object(daemon_control, "status", return_value=({}, None)), \
+                    patch.object(daemon_control, "lock_held", return_value=True):
                 with self.assertRaises(OSError):
-                    cli._purge_data()
+                    lifecycle.purge_data()
             self.assertEqual(config.read_text(), "keep")
 
     def test_invalid_target_aborts_before_deleting_any_files(self):
@@ -289,11 +400,11 @@ class PurgeDataTests(unittest.TestCase):
             root = Path(folder)
             (root / "config.toml").write_text("keep", encoding="utf-8")
             (root / ".state.json").mkdir()
-            with patch.object(cli, "DATA_DIR", root), \
-                    patch.object(cli, "daemon_status", return_value=({}, None)), \
-                    patch.object(cli, "_lock_held", return_value=False):
+            with patch.object(lifecycle, "DATA_DIR", root), \
+                    patch.object(daemon_control, "status", return_value=({}, None)), \
+                    patch.object(daemon_control, "lock_held", return_value=False):
                 with self.assertRaises(OSError):
-                    cli._purge_data()
+                    lifecycle.purge_data()
             self.assertTrue((root / "config.toml").exists())
 
     def test_linked_data_directory_is_rejected_before_any_deletion(self):
@@ -301,13 +412,13 @@ class PurgeDataTests(unittest.TestCase):
             # Match the canonical paths used by _purge_data, including CI temp aliases.
             root = Path(folder).resolve()
             (root / "config.toml").write_text("keep", encoding="utf-8")
-            with patch.object(cli, "DATA_DIR", root), \
-                    patch.object(cli, "daemon_status", return_value=({}, None)), \
-                    patch.object(cli, "_lock_held", return_value=False), \
+            with patch.object(lifecycle, "DATA_DIR", root), \
+                    patch.object(daemon_control, "status", return_value=({}, None)), \
+                    patch.object(daemon_control, "lock_held", return_value=False), \
                     patch.object(Path, "is_symlink", autospec=True,
                                  side_effect=lambda path: path == root / "reports"):
                 with self.assertRaises(OSError):
-                    cli._purge_data()
+                    lifecycle.purge_data()
             self.assertTrue((root / "config.toml").exists())
 
 
@@ -316,13 +427,13 @@ class PurgeDataTests(unittest.TestCase):
             root = Path(folder).resolve()
             config = root / "config.toml"
             config.write_text("keep", encoding="utf-8")
-            with patch.object(cli, "DATA_DIR", root), \
-                    patch.object(cli, "daemon_status", return_value=({}, None)), \
-                    patch.object(cli, "_lock_held", return_value=False), \
+            with patch.object(lifecycle, "DATA_DIR", root), \
+                    patch.object(daemon_control, "status", return_value=({}, None)), \
+                    patch.object(daemon_control, "lock_held", return_value=False), \
                     patch.object(Path, "is_symlink", autospec=True,
                                  side_effect=lambda path: path == root / "accessory_overrides.json"):
                 with self.assertRaises(OSError):
-                    cli._purge_data()
+                    lifecycle.purge_data()
             self.assertEqual(config.read_text(encoding="utf-8"), "keep")
 
     def test_real_junction_cannot_delete_external_data(self):
@@ -338,20 +449,15 @@ class PurgeDataTests(unittest.TestCase):
             database.write_text("external data", encoding="utf-8")
             link = root / "reports"
             try:
-                result = subprocess.run(
-                    ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-                     "New-Item -ItemType Junction -Path $env:WTP_TEST_LINK "
-                     "-Target $env:WTP_TEST_TARGET -ErrorAction Stop | Out-Null"],
-                    env={**os.environ, "WTP_TEST_LINK": str(link),
-                         "WTP_TEST_TARGET": str(outside)},
-                    capture_output=True, timeout=15,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                with patch.object(cli, "DATA_DIR", root), \
-                        patch.object(cli, "daemon_status", return_value=({}, None)), \
-                        patch.object(cli, "_lock_held", return_value=False):
+                try:
+                    link.symlink_to(outside, target_is_directory=True)
+                except OSError:
+                    self.skipTest("directory link permission unavailable")
+                with patch.object(lifecycle, "DATA_DIR", root), \
+                        patch.object(daemon_control, "status", return_value=({}, None)), \
+                        patch.object(daemon_control, "lock_held", return_value=False):
                     with self.assertRaises(OSError):
-                        cli._purge_data()
+                        lifecycle.purge_data()
                 self.assertEqual(config.read_text(encoding="utf-8"), "keep")
                 self.assertEqual(database.read_text(encoding="utf-8"), "external data")
             finally:

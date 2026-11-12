@@ -18,7 +18,8 @@ from wuwa_tappo_plus.config import DEFAULT_TOML
 
 
 def main():
-    executable = ROOT / "dist/WuwaTappoPlus.exe"
+    installer = ROOT / "dist/WuwaTappoPlus-Setup.exe"
+    payload = ROOT / "build/payload/WuwaTappoPlus"
     base = ROOT / ".smoke-data"
     base.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="release-", dir=base) as folder, \
@@ -30,12 +31,22 @@ def main():
         config = config.replace("max_runtime = 0", "max_runtime = 2").replace("watchdog_min = 1", "watchdog_min = 0")
         (data / "config.toml").write_text(config, encoding="utf-8")
         env = {**os.environ, "WUWA_TAPPO_PLUS_DATA_DIR": str(data)}
-        # A renamed EXE copied alone into a separate directory must still work.
-        copied = data / "Wuwa Tappo Plus.exe"
-        shutil.copy2(executable, copied)
+        # Copy the entire directory payload; daily startup never self-extracts.
+        application = data / "Application"
+        shutil.copytree(payload, application)
+        copied = application / "Wuwa Tappo Plus.exe"
+        (application / "WuwaTappoPlus.exe").rename(copied)
         subprocess.run(["icacls", str(copied), "/setintegritylevel", "M"],
                        check=True, capture_output=True)
         executable = copied
+        setup_report = data / "installer-probe.json"
+        subprocess.run([str(installer), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+                        "/VALIDATEONLY=" + str(setup_report)], cwd=data, env=env, timeout=45)
+        extracted = json.loads(setup_report.read_text(encoding="utf-8"))
+        assert extracted["frozen"] and extracted["version"] == __version__
+        assert extracted["scripts"] == dict.fromkeys(
+            ("pet", "settings", "rooms", "toast", "game_mode", "plaza"), __version__)
+        print("Inno installer extraction and payload probe passed without installation.", flush=True)
 
         def run(*args, timeout=15):
             return subprocess.run([str(executable), *map(str, args)], cwd=data, env=env,
@@ -47,7 +58,7 @@ def main():
         assert Path(probe["data_dir"]) == data
         assert set(probe["scripts"]) == {"pet", "settings", "rooms", "toast", "game_mode", "plaza"}
         assert all(version == __version__ for version in probe["scripts"].values())
-        assert len(probe["licenses"]) == 6
+        assert len(probe["licenses"]) == 7
         run("--output", data / "help.txt", "help")
         assert "v" + __version__ in (data / "help.txt").read_text(encoding="utf-8")
         run("--console-smoke", data / "console.json")
@@ -83,8 +94,8 @@ def main():
                 deadline = time.monotonic() + 5
                 while win.pid_alive(pid) and time.monotonic() < deadline:
                     time.sleep(0.1)
-        # The Python daemon exits before the onefile bootloader finishes its
-        # extraction cleanup. Wait for that parent to release the copied EXE.
+        # The Python daemon exits before the frozen process finishes its
+        # shutdown cleanup. Wait for that parent to release the copied EXE.
         deadline = time.monotonic() + 8
         while copied.exists():
             try:
@@ -94,10 +105,10 @@ def main():
                     raise
                 time.sleep(0.1)
 
-    released = ROOT / "dist/WuwaTappoPlus.exe"
+    released = installer
     expected = "%s  %s\n" % (hashlib.sha256(released.read_bytes()).hexdigest(), released.name)
     assert (ROOT / "dist/SHA256SUMS.txt").read_text(encoding="utf-8") == expected
-    print("Release checksum matches the EXE; no separate source archive is required.")
+    print("Release checksum matches the EXE; installer checksum verified.")
 
 
 if __name__ == "__main__":

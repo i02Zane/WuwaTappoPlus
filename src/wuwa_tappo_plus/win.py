@@ -536,140 +536,37 @@ def disable_autostart():
 # directory, so a task running as somebody else would start a second daemon
 # against a different profile.
 TASK_FOLDER = "\\WuwaTappo"
-# The ScheduledTasks cmdlets only match a folder when the path ends in a
-# backslash; schtasks wants the joined form instead.
-TASK_FOLDER_PS = TASK_FOLDER + "\\"
 WATCHDOG_TASK = "KeepAlive"
 WATCHDOG_PATH = TASK_FOLDER + "\\" + WATCHDOG_TASK
-SCHTASKS = 0x08000000  # CREATE_NO_WINDOW
 
 
 def watchdog_command():
-    """What the scheduled task runs: a no-op unless the daemon is missing."""
     return subprocess.list2cmdline(command_args("ensure", background=True))
 
 
-def _schtasks(*args, timeout=25.0):
+def register_watchdog(minutes=1, user=None):
+    from . import scheduler
+
+    command = command_args("ensure", background=True)
+    cwd = Path(command[0]).resolve().parent if frozen() else APP_DIR
     try:
-        return run_external(
-            ["schtasks"] + [str(a) for a in args],
-            capture_output=True,
-            timeout=timeout,
-            creationflags=SCHTASKS,
-        )
-    except Exception:
-        return None
-
-
-def _powershell(script, timeout=45.0):
-    try:
-        return run_external(
-            [
-                "powershell", "-NoProfile", "-NonInteractive",
-                "-ExecutionPolicy", "Bypass", "-Command", script,
-            ],
-            capture_output=True,
-            timeout=timeout,
-            creationflags=SCHTASKS,
-        )
-    except Exception:
-        return None
-
-
-def _ps(value):
-    """Single-quote a value for PowerShell; paths never contain quotes, but be safe."""
-    return "'" + str(value).replace("'", "''") + "'"
-
-
-def _register_watchdog_ps(minutes):
-    """Fallback used when schtasks.exe is missing or blocked by policy."""
-    script = (
-        "$ErrorActionPreference='Stop';"
-        "$a=New-ScheduledTaskAction -Execute %s -Argument %s -WorkingDirectory %s;"
-        "$t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(%d) "
-        "-RepetitionInterval (New-TimeSpan -Minutes %d) "
-        # [TimeSpan]::MaxValue is rejected by the task schema (out of range), so
-        # use ten years: long enough to read as "forever" for this purpose.
-        "-RepetitionDuration ([TimeSpan]::FromDays(3650));"
-        "$p=New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\\$env:USERNAME\" "
-        "-LogonType Interactive -RunLevel Highest;"
-        "Register-ScheduledTask -TaskName %s -TaskPath %s -Action $a -Trigger $t "
-        "-Principal $p -Force | Out-Null"
-    ) % (
-        _ps(command_args("ensure", background=True)[0]),
-        _ps(subprocess.list2cmdline(command_args("ensure", background=True)[1:])),
-        _ps(Path(command_args("ensure", background=True)[0]).resolve().parent if frozen() else APP_DIR),
-        minutes,
-        minutes,
-        _ps(WATCHDOG_TASK),
-        _ps(TASK_FOLDER_PS),
-    )
-    res = _powershell(script)
-    return bool(res) and res.returncode == 0
-
-
-def register_watchdog(minutes=1):
-    """(Re)create the keep-alive task. Needs an elevated caller for /RL HIGHEST."""
-    minutes = max(1, int(minutes or 1))
-    res = _schtasks(
-        "/Create",
-        "/TN", WATCHDOG_PATH,
-        "/SC", "MINUTE",
-        "/MO", str(minutes),
-        "/RL", "HIGHEST",
-        "/F",
-        "/TR", watchdog_command(),
-    )
-    if res is not None and res.returncode == 0:
-        return True
-    return _register_watchdog_ps(minutes)
+        return scheduler.register(TASK_FOLDER, WATCHDOG_TASK, command[0],
+                                  subprocess.list2cmdline(command[1:]), cwd,
+                                  max(1, int(minutes or 1)), user)
+    except OSError:
+        return False
 
 
 def remove_watchdog():
-    """Delete the keep-alive task. True when it is gone afterwards."""
-    if read_watchdog() is None:
-        return True
-    res = _schtasks("/Delete", "/TN", WATCHDOG_PATH, "/F")
-    if res is not None and res.returncode == 0:
-        return True
-    script = (
-        "$ErrorActionPreference='Stop';"
-        "Unregister-ScheduledTask -TaskName %s -TaskPath %s -Confirm:$false"
-    ) % (_ps(WATCHDOG_TASK), _ps(TASK_FOLDER_PS))
-    res = _powershell(script)
-    return bool(res) and res.returncode == 0
+    from . import scheduler
+
+    return scheduler.remove(TASK_FOLDER, WATCHDOG_TASK)
 
 
 def read_watchdog():
-    """Raw `schtasks /query` fields, or None when the task is not registered."""
-    res = _schtasks("/Query", "/TN", WATCHDOG_PATH, "/FO", "LIST")
-    if res is not None and res.returncode == 0:
-        fields = {}
-        for line in res.stdout.decode("mbcs", "replace").splitlines():
-            if ":" in line:
-                key, value = line.split(":", 1)
-                fields[key.strip()] = value.strip()
-        if fields:
-            return fields
+    from . import scheduler
 
-    script = (
-        "$t=Get-ScheduledTask -TaskName %s -TaskPath %s "
-        "-ErrorAction SilentlyContinue;"
-        "if ($t) { [Console]::Out.Write([string]$t.State) }"
-    ) % (_ps(WATCHDOG_TASK), _ps(TASK_FOLDER_PS))
-    # The task store lags a second or two behind a fresh registration, so ask
-    # twice before reporting the task as missing.
-    for attempt in range(2):
-        res = _powershell(script)
-        if res is not None and res.returncode == 0:
-            label = res.stdout.decode("mbcs", "replace").strip()
-            if label:
-                return {"state": label}
-        if attempt == 0:
-            import time as _time
-
-            _time.sleep(1.5)
-    return None
+    return scheduler.read(TASK_FOLDER, WATCHDOG_TASK)
 
 
 # ---------------------------------------------------------------- processes
@@ -769,11 +666,11 @@ def stop_app(hint=""):
     if exe is None:
         return None
 
-    for pid in running_pids():
-        # A busy or closing app can refuse the first taskkill; give it a couple
-        # of attempts before telling the user to close it by hand.
+    for pid, image in processes():
+        # Keep the enumerated image path, so a reused PID cannot target another app.
+        # A terminating process can take a moment to release pending I/O.
         for attempt in range(3):
-            if kill_pid(pid):
+            if kill_pid(pid, expected_exe=image):
                 break
             if not pid_alive(pid):
                 # It exited on its own between enumeration and the kill
@@ -786,8 +683,8 @@ def stop_app(hint=""):
                 "无法停止 WuwaTappo.exe，进程号 %d。请手动关闭桌宠后重试，"
                 "或以管理员身份运行本程序。" % pid)
 
-    deadline = time.time() + 8.0
-    while time.time() < deadline and running_pids():
+    deadline = time.monotonic() + 8.0
+    while time.monotonic() < deadline and running_pids():
         time.sleep(0.25)
 
     if running_pids():
@@ -839,57 +736,84 @@ def launch_detached(argv):
     )
 
 
-def kill_pid(pid, timeout=5.0):
-    """Terminate a pid; success means "gone", not "taskkill said so".
+def _process_api():
+    """Bind pointer-sized process handles explicitly on Windows x64."""
+    api = ctypes.WinDLL("kernel32", use_last_error=True)
+    api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    api.OpenProcess.restype = wintypes.HANDLE
+    api.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    api.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    api.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    api.TerminateProcess.restype = wintypes.BOOL
+    api.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    api.WaitForSingleObject.restype = wintypes.DWORD
+    api.CloseHandle.argtypes = [wintypes.HANDLE]
+    api.CloseHandle.restype = wintypes.BOOL
+    return api
 
-    taskkill exits with 128 when the process already disappeared, and that is a
-    success for every caller here. Only a process that is still alive after the
-    attempt is a failure, which is also the only case that needs the caller's
-    attention (usually an elevation mismatch).
+
+def _process_error(operation, pid, code):
+    return OSError("%s(pid=%d) 失败：%s" % (operation, pid, ctypes.WinError(code)))
+
+
+def _process_exited(api, handle, milliseconds, pid):
+    result = api.WaitForSingleObject(handle, milliseconds)
+    if result == 0xFFFFFFFF:
+        raise _process_error("WaitForSingleObject", pid, ctypes.get_last_error())
+    return result == 0
+
+
+def kill_pid(pid, timeout=5.0, *, expected_exe=None):
+    """Terminate one verified process and wait on the same handle for its exit.
+
+    Never kill the WebView process tree first: a surviving transparent host can
+    otherwise cover the desktop with its renderer's error page.
     """
-    result = None
-    try:
-        result = run_external(
-            ["taskkill", "/PID", str(pid), "/T", "/F"],
-            capture_output=True,
-            creationflags=0x08000000,
-            timeout=timeout,
-        )
-    except Exception:
-        result = None
-    if _wait_gone(pid, 1.0):
-        return True
-    # taskkill failed and the process survived it: no point waiting longer.
-    if result is not None and result.returncode != 0:
-        return False
-    return _wait_gone(pid, timeout)
-
-
-def _wait_gone(pid, seconds):
-    deadline = time.monotonic() + seconds
-    while True:
-        if not pid_alive(pid):
+    if type(pid) is not int or not 0 < pid <= 0xFFFFFFFF or pid == os.getpid():
+        raise ValueError("拒绝结束无效 PID 或当前进程。")
+    api = _process_api()
+    rights = 0x0001 | 0x00100000  # PROCESS_TERMINATE | SYNCHRONIZE
+    if expected_exe is not None:
+        rights |= 0x1000  # PROCESS_QUERY_LIMITED_INFORMATION
+    handle = api.OpenProcess(rights, False, pid)
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == 87:  # The process vanished between enumeration and open.
             return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.05)
+        raise _process_error("OpenProcess", pid, error)
+    try:
+        if _process_exited(api, handle, 0, pid):
+            return True
+        if expected_exe is not None:
+            image = ctypes.create_unicode_buffer(32768)
+            size = wintypes.DWORD(len(image))
+            if not api.QueryFullProcessImageNameW(handle, 0, image, ctypes.byref(size)):
+                raise _process_error("QueryFullProcessImageNameW", pid, ctypes.get_last_error())
+            actual = os.path.normcase(os.path.normpath(image.value))
+            expected = os.path.normcase(os.path.normpath(str(expected_exe)))
+            if actual != expected:
+                raise OSError("进程 %d 的程序路径已变化，已中止关闭操作。" % pid)
+        if not api.TerminateProcess(handle, 0):
+            error = ctypes.get_last_error()
+            if _process_exited(api, handle, 0, pid):
+                return True
+            raise _process_error("TerminateProcess", pid, error)
+        milliseconds = max(0, min(int(timeout * 1000), 0xFFFFFFFE))
+        return _process_exited(api, handle, milliseconds, pid)
+    finally:
+        api.CloseHandle(handle)
 
 
 def pid_alive(pid):
-    """True if the pid exists and has not exited."""
-    if not pid:
+    """Failed access is unknown/alive; only confirmed exit means gone."""
+    if type(pid) is not int or not 0 < pid <= 0xFFFFFFFF:
         return False
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.OpenProcess.restype = wintypes.HANDLE
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    STILL_ACTIVE = 259
-    handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    api = _process_api()
+    handle = api.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
     if not handle:
-        return False
+        return ctypes.get_last_error() != 87
     try:
-        code = wintypes.DWORD()
-        if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
-            return False
-        return code.value == STILL_ACTIVE
+        return api.WaitForSingleObject(handle, 0) != 0
     finally:
-        k32.CloseHandle(handle)
+        api.CloseHandle(handle)

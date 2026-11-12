@@ -2,7 +2,7 @@
 
 Wuwa Tappo 的第三方本地增强工具，提供自动开箱、余额提醒、每日点击数统计和房间历史。由独立项目维护，与原版桌宠分别安装和管理。
 
-**普通用户下载 Windows Release 中的单文件 EXE，双击 `WuwaTappoPlus.exe`。日常功能在桌宠的「设置 → Wuwa Tappo Plus」中调整。**
+**普通用户下载 Windows Release 中的 `WuwaTappoPlus-Setup.exe`，按安装向导安装。已有用户直接运行新版安装包更新，无需先卸载。日常功能在桌宠的「设置 → Wuwa Tappo Plus」中调整。**
 
 ## 功能
 
@@ -28,19 +28,23 @@ Wuwa Tappo 的第三方本地增强工具，提供自动开箱、余额提醒、
 
 - Windows 10 / 11 x64，已安装并登录 Wuwa Tappo。
 - 允许通过 UAC 授予安装／卸载所需的管理员权限。
-- 单文件 EXE 已内嵌运行环境和注入资源，无需安装 Python，也无需额外的 `_internal/` 文件夹。
+- 安装包包含 Python 运行环境和注入资源，无需另装 Python。安装目录中的主程序与 `_internal/` 必须一起保留。
 - 源码用户需要 Python 3.11+；本地已有 `runtime/` 时可以继续使用，运行时不纳入 Git。
 
 本项目使用 Python 标准库，无需安装第三方 Python 依赖。Node.js 仅用于开发时运行 JavaScript 测试。
 
 ## 快速开始
 
-1. 下载 `WuwaTappoPlus.exe`，放到固定目录，双击 **`WuwaTappoPlus.exe`**。
-2. 在终端管理面板按 `1` 安装 / 修复，按提示授予管理员权限。
-3. 等待安装完成。过程中会配置 WebView2 调试策略、自启和看门狗，并启动或重启桌宠。
+1. 下载并双击 **`WuwaTappoPlus-Setup.exe`**，按向导安装。
+2. 系统配置阶段按提示授予管理员权限；程序与数据仍属于原来的 Windows 用户。
+3. 安装过程会配置 WebView2 调试策略、自启和看门狗，并启动或重启桌宠。
 4. 打开桌宠的 **设置 → Wuwa Tappo Plus**，调整功能开关。
 
-安装完成后可以关闭终端面板，后台会无控制台运行。单文件启动时会把必要组件释放到临时目录，进程退出后清理；个人数据不放在临时目录。打开终端面板和只读检查无需提权；安装／卸载时再请求权限。移动程序目录后，请重新安装／修复，以更新自启和计划任务路径。
+程序安装到 `%LOCALAPPDATA%\Programs\WuwaTappoPlus`，个人数据保存在 `%LOCALAPPDATA%\WuwaTappoPlus`。运行时从安装目录加载依赖，无需每次解包。开始菜单提供 Plus 管理面板入口，后台无控制台运行。
+
+**更新直接运行新版安装包**：安装器停止旧后台，接管原有安装并保留配置、统计和房间历史；不要先运行旧版卸载程序。Windows“已安装的应用”提供标准卸载入口，默认保留个人数据；只有明确确认才清除。安装、卸载和诊断均不调用 PowerShell；计划任务通过 Windows COM 接口管理。故障修复可重新运行安装包。
+
+关闭桌宠使用 Windows 原生进程接口，核验主进程路径后结束并等待退出，不调用 `taskkill` 或先结束 WebView 进程树。无法打开或结束进程时显示具体 Windows 错误；未确认退出时不继续替换程序或清理数据。
 
 终端面板沿用原来的数字菜单。运行状态和诊断检查可使用命令行。源码用户可以运行 `python launch.py help`。
 
@@ -237,14 +241,19 @@ src/wuwa_tappo_plus/  Python 包
   entry.py / console.py 入口分发与按需终端窗口
   paths.py           程序、资源与用户数据路径
   cli.py / menu.py   命令与源码版控制台面板
+  lifecycle.py       安装、修复、卸载编排与已知数据清理
+  daemon_control.py  后台启停、实例检查与看门狗拉起
+  operations.py      生命周期步骤进度与操作结果
+  installation.py    安装目录中的 EXE 部署与延迟清理
   runner.py          后台生命周期与状态发布
   cdp.py / ws.py     本机 CDP 与 WebSocket
-  win.py             策略、自启动、计划任务和进程管理
+  win.py / scheduler.py  策略、自启动、原生 COM 计划任务和进程管理
+  installer.py       安装器固定操作与原用户/提权职责分离
   config.py          配置加载和原子保存
   settings.py / rooms.py / reports.py / toasts.py  设置桥接、房间历史、点击数统计、气泡日志
-  scripts/           四个注入的 JavaScript 模板
+  scripts/           注入脚本模板与生成的广场 bundle
 tests/               Python 与 JavaScript 回归测试
-packaging/           PyInstaller 配置与 Windows manifest
+packaging/           Inno Setup 安装脚本、PyInstaller 配置与 Windows manifest
 tools/               测试、构建与发布包验证脚本
 launch.py            当前启动器
 ```
@@ -259,7 +268,7 @@ python -m venv .venv
 node --test tests/test_game_mode.js tests/test_bubble.js tests/test_panel.js tests/test_rooms.js tests/test_toast.js
 ```
 
-不安装开发依赖也可运行 `python tools/run_tests.py`。运行项目本身仅依赖 Python 标准库；构建 EXE 才需要 PyInstaller。
+不安装开发依赖也可运行 `python tools/run_tests.py`。运行项目本身仅依赖 Python 标准库；构建安装包需要 PyInstaller 和 Inno Setup 6.5+（`ISCC.exe`）。可通过 `WUWA_INNO_COMPILER` 指定编译器的绝对路径；构建器也会检查 PATH 和常见安装目录。
 
 在 Windows x64、官方 CPython 环境构建：
 
@@ -268,7 +277,7 @@ node --test tests/test_game_mode.js tests/test_bubble.js tests/test_panel.js tes
 .\.venv\Scripts\python.exe tools/smoke_release.py
 ```
 
-构建会检查解释器架构，并自动验证生成的 EXE 能启动、资源和版本完整，再生成校验文件。`dist/` 仅输出单文件 `WuwaTappoPlus.exe` 和只包含该 EXE 哈希的 `SHA256SUMS.txt`，不再额外生成源码包。Release 上传这两个文件，对应源码使用 GitHub 根据版本标签自动提供的 ZIP / TAR.GZ；发布时确保标签源码与 EXE 对应，并保留构建文件和许可证。不要上传个人配置、数据库、日志或开发运行时。Python、PyInstaller 和项目的许可证均内嵌在 EXE 中。GitHub Actions 支持测试和手动构建。
+构建会检查解释器架构，并验证目录式主程序的启动、资源和版本，再通过 Inno Setup 生成 `dist/WuwaTappoPlus-Setup.exe` 和只包含该安装包哈希的 `SHA256SUMS.txt`。运行文件放在忽略的 `build/payload/WuwaTappoPlus/`；不额外发布裸主程序或源码包。冒烟测试会解包安装器并探测载荷、终端面板及隔离后台，不改真实系统配置。Release 上传安装包和校验文件，源码使用版本标签自动归档；发布时确保标签源码与安装包对应，并保留第三方许可证。不要上传配置、数据库、日志或开发运行时。GitHub Actions 支持测试和手动构建。
 
 每次打标签发布时，使用 `python tools/build_release.py --notes <发布说明.md>` 构建并归档。EXE、校验文件和发布说明会保存到 `dist/history/v<版本号>/`，同时生成供网盘分享的 `WuwaTappoPlus-<版本号>-windows-x64.zip`，其中仅含 EXE、校验文件与发布说明。ZIP 仅保留本地，GitHub Release 仍只上传 EXE 和校验文件。同版本归档不会覆盖；普通构建不生成历史副本。`dist/` 已整体被 Git 忽略，无需额外的归档忽略规则。
 

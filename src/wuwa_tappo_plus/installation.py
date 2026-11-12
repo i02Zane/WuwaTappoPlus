@@ -1,15 +1,11 @@
-"""Own only the per-user program EXE; downloaded installers and data stay separate."""
+"""Installer ownership, safe upgrade receipts and native uninstaller handoff."""
 
-import base64
 import hashlib
 import json
 import os
-import shutil
 import stat
 import subprocess
 import sys
-import tempfile
-import time
 import uuid
 from pathlib import Path
 
@@ -18,6 +14,7 @@ from .paths import frozen
 
 EXE_NAME = "WuwaTappoPlus.exe"
 RECEIPT_NAME = "install.json"
+UNINSTALLER_NAME = "unins000.exe"
 
 
 def directory():
@@ -44,117 +41,92 @@ def _validate(root):
             raise OSError("Plus 程序文件路径被目录占用：%s" % path)
 
 
-def _digest(path):
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
-def deploy():
-    """Copy before registering startup; never overwrite a mapped EXE in place."""
-    if not frozen():
-        return None
+def validate():
     root = directory()
     _validate(root)
+    # Existing payload folders must not redirect an upgrade outside the app.
+    if root.exists():
+        for current, dirs, files in os.walk(root, followlinks=False):
+            for name in dirs + files:
+                path = Path(current) / name
+                if path.is_symlink() or path.lstat().st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                    raise OSError("程序目录包含链接，已中止操作：%s" % path)
+    return root
+
+
+def managed():
+    if not frozen():
+        return False
+    root = validate()
+    try:
+        receipt = json.loads((root / RECEIPT_NAME).read_text(encoding="utf-8"))
+        return receipt.get("manager") == "inno-setup" and not receipt.get("pending")
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def record_installation(pending=False, setup_source=None):
+    root = validate()
     root.mkdir(parents=True, exist_ok=True)
-    target = root / EXE_NAME
-    source = Path(sys.executable).resolve()
-    if source != target.resolve():
-        fd, temporary = tempfile.mkstemp(prefix=".plus-install-", suffix=".exe", dir=root)
-        os.close(fd)
-        staged = Path(temporary)
-        try:
-            shutil.copyfile(source, staged)
-            win.run_external(["icacls", str(staged), "/setintegritylevel", "M"],
-                           check=True, capture_output=True)
-            deadline = time.monotonic() + 8
-            while True:
-                _validate(root)
-                try:
-                    staged.replace(target)
-                    break
-                except PermissionError:
-                    if time.monotonic() >= deadline:
-                        raise OSError("请关闭已打开的 Plus 安装管理窗口后重试；原程序文件未被覆盖。")
-                    time.sleep(0.2)
-        finally:
-            staged.unlink(missing_ok=True)
-    receipt = {"generation": uuid.uuid4().hex, "version": __version__, "sha256": _digest(target)}
-    # A new generation also cancels a delayed cleanup from an earlier uninstall.
-    receipt_path = root / RECEIPT_NAME
+    exe = root / EXE_NAME
+    receipt = {"manager": "inno-setup", "generation": uuid.uuid4().hex,
+               "version": __version__, "pending": pending}
+    if setup_source:
+        source = Path(setup_source)
+        if not source.is_absolute():
+            raise ValueError("安装包来源必须是绝对路径。")
+        receipt["setup_source"] = str(source)
+    if exe.is_file():
+        with exe.open("rb") as stream:
+            receipt["sha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
+    # Changing the generation cancels an old version's delayed cleanup helper.
     temporary = root / (".plus-install-" + uuid.uuid4().hex + ".json")
     try:
         temporary.write_text(json.dumps(receipt), encoding="utf-8")
-        temporary.replace(receipt_path)
+        temporary.replace(root / RECEIPT_NAME)
     finally:
         temporary.unlink(missing_ok=True)
+    return exe
+
+
+def deploy():
+    """File deployment belongs to Setup; CLI install only repairs its own app."""
+    if not frozen():
+        return None
+    target = validate() / EXE_NAME
+    if Path(sys.executable).resolve() != target.resolve() or not managed():
+        raise OSError("请运行 WuwaTappoPlus-Setup.exe 安装或更新 Plus。")
     return target
 
 
-def _cleanup_script(root, digest, receipt):
-    config = json.dumps({"root": str(root), "exe": str(root / EXE_NAME),
-                         "receipt": str(root / RECEIPT_NAME), "digest": digest, "generation": receipt})
-    # Single-quote PowerShell literals, then encode the entire script. Never build
-    # shell delete commands from a path or recursively remove the program folder.
-    literal = "'" + config.replace("'", "''") + "'"
-    return "$cfg = " + literal + " | ConvertFrom-Json;" + r"""
-$ErrorActionPreference = 'Stop'
-function Check-Paths {
-    $dir = [IO.DirectoryInfo]::new($cfg.root)
-    while ($null -ne $dir) {
-        if ($dir.Exists -and (($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw 'Linked directory' }
-        $dir = $dir.Parent
-    }
-    foreach ($path in @($cfg.exe, $cfg.receipt)) {
-        if (Test-Path -LiteralPath $path) {
-            $item = Get-Item -LiteralPath $path -Force
-            if ($item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw 'Linked file' }
-        }
-    }
-}
-$deadline = [DateTime]::UtcNow.AddMinutes(2)
-while ([DateTime]::UtcNow -lt $deadline) {
-    Check-Paths
-    $record = if ([IO.File]::Exists($cfg.receipt)) { [IO.File]::ReadAllText($cfg.receipt) } else { '' }
-    if ($record -cne $cfg.generation) { exit 0 }
-    if (-not [IO.File]::Exists($cfg.exe)) { break }
-    $stream = [IO.File]::OpenRead($cfg.exe)
-    $algorithm = [Security.Cryptography.SHA256]::Create()
-    try { $digest = [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
-    finally { $stream.Dispose(); $algorithm.Dispose() }
-    if ($digest -ne $cfg.digest) { exit 0 }
-    try { [IO.File]::Delete($cfg.exe); break } catch [IO.IOException] {} catch [UnauthorizedAccessException] {}
-    Start-Sleep -Milliseconds 250
-}
-if ([IO.File]::Exists($cfg.exe)) { exit 1 }
-Check-Paths
-$record = if ([IO.File]::Exists($cfg.receipt)) { [IO.File]::ReadAllText($cfg.receipt) } else { '' }
-if ($record -cne $cfg.generation) { exit 0 }
-if ($cfg.generation) { [IO.File]::Delete($cfg.receipt) }
-try { [IO.Directory]::Delete($cfg.root, $false) } catch [IO.IOException] {}
-"""
+def launch_uninstaller(purge=False, silent=False):
+    root = validate()
+    uninstaller = root / UNINSTALLER_NAME
+    if not managed() or not uninstaller.is_file():
+        raise OSError("未找到安装器的卸载程序，请重新运行安装包修复。")
+    command = [str(uninstaller)]
+    if purge:
+        command.append("/PURGEDATA=yes")
+    if silent:
+        command.extend(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
+    win.popen_external(command, cwd=str(root), creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+
+
+def launch_setup():
+    root = validate()
+    try:
+        receipt = json.loads((root / RECEIPT_NAME).read_text(encoding="utf-8"))
+        source = Path(receipt.get("setup_source", ""))
+    except (OSError, ValueError, TypeError) as exc:
+        raise OSError("请重新下载并运行 WuwaTappoPlus-Setup.exe 修复安装。") from exc
+    if not source.is_absolute() or not source.is_file() or source.suffix.lower() != ".exe":
+        raise OSError("原安装包已移动，请重新下载并运行 WuwaTappoPlus-Setup.exe 修复安装。")
+    win.popen_external([str(source)], cwd=str(source.parent),
+                       creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
 
 
 def remove_program():
-    """Return 'removed', 'deferred', or None for a source run."""
     if not frozen():
         return None
-    root = directory()
-    _validate(root)
-    target, receipt_path = root / EXE_NAME, root / RECEIPT_NAME
-    receipt = receipt_path.read_text(encoding="utf-8") if receipt_path.exists() else ""
-    digest = _digest(target) if target.exists() else ""
-    try:
-        target.unlink(missing_ok=True)
-    except PermissionError:
-        script = _cleanup_script(root, digest, receipt)
-        encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
-        shell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
-        win.popen_external([str(shell), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded],
-                         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
-                         cwd=str(root.parent), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, close_fds=True)
-        return "deferred"
-    receipt_path.unlink(missing_ok=True)
-    if root.exists() and not any(root.iterdir()):
-        root.rmdir()
-    return "removed"
+    validate()
+    raise OSError("程序文件由安装器管理，请从 Windows 已安装的应用中卸载 Plus。")

@@ -8,6 +8,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,24 @@ spec.loader.exec_module(builder)
 
 
 class ReleaseBuildTests(unittest.TestCase):
+    def test_installer_zero_file_or_product_version_is_rejected(self):
+        major, minor, patch_version = map(int, builder.__version__.split('.'))
+        valid = (major << 16 | minor, patch_version << 16)
+        for file_version, product_version in (((0, 0), valid), (valid, (0, 0))):
+            with self.subTest(file=file_version, product=product_version):
+                resource = SimpleNamespace(ffi=SimpleNamespace(
+                    fileVersionMS=file_version[0], fileVersionLS=file_version[1],
+                    productVersionMS=product_version[0], productVersionLS=product_version[1]))
+                with self.assertRaises(RuntimeError):
+                    builder.validate_installer_version('setup.exe', lambda _: resource)
+
+    def test_installer_matching_file_and_product_versions_are_accepted(self):
+        major, minor, patch_version = map(int, builder.__version__.split('.'))
+        resource = SimpleNamespace(ffi=SimpleNamespace(
+            fileVersionMS=major << 16 | minor, fileVersionLS=patch_version << 16,
+            productVersionMS=major << 16 | minor, productVersionLS=patch_version << 16))
+        builder.validate_installer_version('setup.exe', lambda _: resource)
+
     def test_32_bit_python_on_a_64_bit_host_cannot_emit_an_x64_release(self):
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(builder, "ROOT", Path(directory)), \
@@ -59,10 +78,10 @@ class ReleaseArchiveTests(unittest.TestCase):
     def prepare(self, root):
         dist = root / "dist"
         dist.mkdir()
-        executable = dist / "WuwaTappoPlus.exe"
+        executable = dist / "WuwaTappoPlus-Setup.exe"
         executable.write_bytes(b"release fixture")
         digest = hashlib.sha256(executable.read_bytes()).hexdigest()
-        (dist / "SHA256SUMS.txt").write_text(digest + "  WuwaTappoPlus.exe\n", encoding="utf-8")
+        (dist / "SHA256SUMS.txt").write_text(digest + "  WuwaTappoPlus-Setup.exe\n", encoding="utf-8")
         notes = root / "notes.md"
         notes.write_text("# Release notes\n", encoding="utf-8")
         return notes
@@ -75,9 +94,9 @@ class ReleaseArchiveTests(unittest.TestCase):
                 archived = builder.archive_release(notes)
             self.assertEqual(archived, root / "dist/history" / ("v" + builder.__version__))
             self.assertEqual({p.name for p in archived.iterdir()},
-                             {"WuwaTappoPlus.exe", "SHA256SUMS.txt", "release-notes.md",
+                             {"WuwaTappoPlus-Setup.exe", "SHA256SUMS.txt", "release-notes.md",
                               "WuwaTappoPlus-%s-windows-x64.zip" % builder.__version__})
-            self.assertEqual((archived / "WuwaTappoPlus.exe").read_bytes(), b"release fixture")
+            self.assertEqual((archived / "WuwaTappoPlus-Setup.exe").read_bytes(), b"release fixture")
             self.assertEqual((archived / "release-notes.md").read_text(encoding="utf-8"),
                              notes.read_text(encoding="utf-8"))
             self.assertEqual(list((root / "dist/history").iterdir()), [archived])
@@ -85,7 +104,7 @@ class ReleaseArchiveTests(unittest.TestCase):
             with zipfile.ZipFile(share_zip) as archive:
                 self.assertIsNone(archive.testzip())
                 self.assertEqual(set(archive.namelist()),
-                                 {"WuwaTappoPlus.exe", "SHA256SUMS.txt", "release-notes.md"})
+                                 {"WuwaTappoPlus-Setup.exe", "SHA256SUMS.txt", "release-notes.md"})
                 for name in archive.namelist():
                     self.assertEqual(archive.read(name), (archived / name).read_bytes())
             before = share_zip.read_bytes()
@@ -109,7 +128,7 @@ class ReleaseArchiveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             notes = self.prepare(root)
-            (root / "dist/WuwaTappoPlus.exe").write_bytes(b"tampered")
+            (root / "dist/WuwaTappoPlus-Setup.exe").write_bytes(b"tampered")
             with patch.object(builder, "ROOT", root):
                 with self.assertRaises(ValueError):
                     builder.archive_release(notes)

@@ -1,9 +1,9 @@
 # Third-party notices
 
 Wuwa Tappo Plus source code is licensed under GPL-3.0-only; see LICENSE.
-The matching source ZIP is distributed separately alongside each Windows EXE.
+Matching source is available through the release tag archives.
 
-The single-file Windows executable embeds these notices under `licenses/` in its runtime extraction directory:
+The installed application retains these notices under `_internal/licenses/`:
 
 - CPython and its standard-library/runtime components. Their license and
   incorporated-software notices are in `licenses/Python.txt`.
@@ -26,3 +26,9 @@ artwork and game assets are not included in this project or the release executab
 ## JavaScript build tooling
 
 esbuild is used only during development to bundle project-owned scripts. No CloudBase SDK or other third-party JavaScript runtime is shipped.
+
+## Windows installer
+
+Inno Setup builds the installer and uninstaller. Copyright (C) 1997-2026 Jordan Russell; portions Copyright (C) 2000-2026 Martijn Laan. See `licenses/InnoSetup.txt` and https://jrsoftware.org/.
+
+The Simplified Chinese translation retains its upstream notices in `packaging/ChineseSimplified.isl`, from Inno Setup tag `is-6_7_4`, `Files/Languages/Unofficial/ChineseSimplified.isl`, maintained by Zhenghan Yang.
