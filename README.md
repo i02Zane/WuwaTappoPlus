@@ -247,6 +247,8 @@ src/wuwa_tappo_plus/  Python 包
   installation.py    安装目录中的 EXE 部署与延迟清理
   runner.py          后台生命周期与状态发布
   cdp.py / ws.py     本机 CDP 与 WebSocket
+  pages.py           三秒共享页面发现、独立连接与注入挂载生命周期
+  cdp_events.py      独立读线程的事件通道与页面代次校验
   win.py / scheduler.py  策略、自启动、原生 COM 计划任务和进程管理
   installer.py       安装器固定操作与原用户/提权职责分离
   config.py          配置加载和原子保存

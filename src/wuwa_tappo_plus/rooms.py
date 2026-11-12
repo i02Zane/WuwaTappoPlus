@@ -9,6 +9,7 @@ from pathlib import Path
 from . import __version__, cdp
 from .config import ROOT
 from .paths import SCRIPTS_DIR
+from .pages import PageBridge, connection_key, is_panel
 
 # Room numbers are short alphanumeric tokens (seen: 8 characters, mixed case).
 # Anything else in the DOM is not an id and must not reach the database.
@@ -216,7 +217,7 @@ READ_JS = """JSON.stringify(window.__WUT_ROOMS__ ? {
 } : null)"""
 
 
-class RoomBridge:
+class RoomBridge(PageBridge):
     """Keep the room panel's history list in step with the local database.
 
     The panel decides everything it can see on its own: it parses the room
@@ -225,12 +226,10 @@ class RoomBridge:
     and hands the list back, so a stale daemon cannot block a join.
     """
 
-    def __init__(self, port, host, log):
-        self.port = port
-        self.host = host
-        self.log = log
-        self.session = None
-        self.last_scan = -10.0
+    def __init__(self, port, host, log, *, discovery=None):
+        super().__init__(port, host, log, select=is_panel, discovery=discovery,
+                         uninstall="if(window.__WUT_ROOMS__&&window.__WUT_ROOMS__.uninstall)"
+                                   "window.__WUT_ROOMS__.uninstall(); 1")
         self.source = (SCRIPTS_DIR / "rooms.js").read_text(encoding="utf-8").replace(
             "__VERSION__", json.dumps(__version__))
         self.current = None
@@ -242,23 +241,10 @@ class RoomBridge:
     def sync(self, history, clock=None, plaza=None):
         clock = clock or (lambda: datetime.now().timestamp())
         try:
-            if clock() - self.last_scan >= 3:
-                self.last_scan = clock()
-                target = self._find_panel()
-                current = self.session.target.get("id") if self.session else None
-                if target is None or target.get("id") != current:
-                    self.close()
-                    if target:
-                        session = cdp.Session(self.port, self.host, timeout=2)
-                        try:
-                            session.connect_target(target)
-                        except Exception:
-                            session.close()
-                            raise
-                        self.session = session
-            if self.session is None:
+            if self.ensure_connected() is None:
                 return
-            state = self._inject_if_needed()
+            state = self.read_injected(READ_JS, self.source, __version__, label="rooms")
+            identity = connection_key(self.session)
             if not state:
                 return
             if plaza is not None:
@@ -268,28 +254,13 @@ class RoomBridge:
             payload = json.dumps({"rooms": history.recent(), "ack": ack}, ensure_ascii=False)
             if plaza is not None:
                 payload = json.dumps({"rooms": history.recent(), "ack": ack, "plaza": plaza.state}, ensure_ascii=False)
+            self.require_current(identity)
             self.session.js("window.__WUT_ROOMS__.update(%s); 1" % payload)
+        except cdp.StaleResponse:
+            pass
         except (cdp.CDPError, OSError, ValueError, TypeError) as exc:
             self._warn(exc)
             self.close()
-
-    def _find_panel(self):
-        for target in cdp.list_targets(self.port, self.host, timeout=2):
-            url = target.get("url", "")
-            if url.startswith("http://tauri.localhost/index.html") and url.endswith("#/panel"):
-                return target
-        return None
-
-    def _inject_if_needed(self):
-        raw = self.session.js(READ_JS)
-        state = json.loads(raw) if raw else None
-        if state and state.get("version") == __version__:
-            return state
-        if state is not None:
-            self.session.js("if(window.__WUT_ROOMS__&&window.__WUT_ROOMS__.uninstall)"
-                            "window.__WUT_ROOMS__.uninstall(); 1")
-        self.log.info("rooms -> %s" % self.session.js(self.source))
-        return json.loads(self.session.js(READ_JS) or "null")
 
     @staticmethod
     def _apply_requests(history, requests, plaza=None):
@@ -351,15 +322,7 @@ class RoomBridge:
             self.last_error = message
 
     def close(self):
-        if self.session:
-            try:
-                self.session.js(
-                    "if(window.__WUT_ROOMS__&&window.__WUT_ROOMS__.uninstall)"
-                    "window.__WUT_ROOMS__.uninstall(); 1")
-            except (cdp.CDPError, OSError):
-                pass
-            self.session.close()
-            self.session = None
+        super().close()
         # current/owner survive a reconnect on purpose: coming back to the same
         # room must not look like a new stay.
         self.owner = ""

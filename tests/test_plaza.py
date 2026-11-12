@@ -119,6 +119,104 @@ class ClientTests(unittest.TestCase):
 
 
 class BridgeTests(unittest.TestCase):
+    def test_http_result_from_previous_document_is_dropped_even_on_the_same_channel(self):
+        bridge = PlazaBridge(Mock()); self.addCleanup(bridge.close)
+        native = Mock()
+        native.alive.return_value = True
+        native.document_epoch = 0
+        bridge.native = native
+        bridge.instance = 'instance'
+        started, release, completed = threading.Event(), threading.Event(), threading.Event()
+
+        def send(_):
+            started.set()
+            release.wait(2)
+            return {'item': None}
+
+        original_finish = bridge._finish
+
+        def finish(*args):
+            try:
+                original_finish(*args)
+            finally:
+                completed.set()
+
+        bridge.client.send = send
+        bridge._finish = finish
+        bridge._request(native, {'id': 'request', 'op': 'own'})
+        self.assertTrue(started.wait(2))
+        native.document_epoch = 1
+        release.set()
+        self.assertTrue(completed.wait(2))
+        native.js.assert_not_called()
+
+    def test_old_queued_binding_cannot_update_state_after_context_reset(self):
+        from wuwa_tappo_plus.plaza import STATE_BINDING
+
+        bridge = PlazaBridge(Mock()); self.addCleanup(bridge.close)
+        native = Mock(document_epoch=1)
+        native.alive.return_value = True
+        bridge.native = native
+        bridge.instance = 'instance'
+        before = dict(bridge.state)
+        bridge._binding(native, STATE_BINDING,
+                        json.dumps({'instance': 'instance', 'state': {'old': True}}), 0)
+        self.assertEqual(bridge.state, before)
+
+    def test_closed_panel_binding_cannot_queue_an_action(self):
+        from wuwa_tappo_plus.plaza import ACTION_BINDING
+
+        bridge = PlazaBridge(Mock()); self.addCleanup(bridge.close)
+        panel = Mock(document_epoch=0)
+        panel.alive.return_value = False
+        bridge.panel = panel
+        bridge.queue = Mock()
+        bridge._binding(panel, ACTION_BINDING, '{"id":"old","op":"publish"}', 0)
+        bridge.queue.assert_not_called()
+
+    def test_same_target_reconnect_and_reload_recreate_event_channels(self):
+        from types import SimpleNamespace
+
+        class Channel:
+            def __init__(self, target, callback):
+                self.target = dict(target)
+                self.document_epoch = 0
+                self.closed = False
+
+            def alive(self):
+                return not self.closed
+
+            def call(self, *args):
+                pass
+
+            def bind(self, *args):
+                pass
+
+            def js(self, *args):
+                return 'instance'
+
+            def close(self):
+                self.closed = True
+
+        for change in ('generation', 'document_epoch', 'event_context'):
+            with self.subTest(change=change):
+                bridge = PlazaBridge(Mock()); self.addCleanup(bridge.close)
+                bridge.source = 'script'
+                source = SimpleNamespace(target={'id': 'same', 'webSocketDebuggerUrl': 'ws://test'},
+                                         generation=0, document_epoch=0)
+                with patch('wuwa_tappo_plus.plaza.EventSession', Channel):
+                    bridge.sync(source)
+                    first = bridge.native
+                    bridge.sync(source)
+                    self.assertIs(bridge.native, first)
+                    if change == 'event_context':
+                        first.document_epoch += 1
+                    else:
+                        setattr(source, change, 1)
+                    bridge.sync(source)
+                    self.assertIsNot(bridge.native, first)
+                    self.assertTrue(first.closed)
+
     def test_http_completion_is_delivered_by_callback_without_another_sync(self):
         bridge = PlazaBridge(Mock()); self.addCleanup(bridge.close)
         native = Mock()

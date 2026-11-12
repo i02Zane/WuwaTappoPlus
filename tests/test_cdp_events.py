@@ -73,3 +73,66 @@ class EventChannelTests(unittest.TestCase):
         self.assertTrue(received.wait(2))
         thread.join(timeout=2)
         self.assertEqual(errors, ['CDPError'])
+
+    def test_context_reset_wakes_pending_evaluation_and_discards_late_reply(self):
+        channel = self.connect(lambda *_: None)
+        channel.ws.drop = True
+        sent, finished = threading.Event(), threading.Event()
+        original_send = channel.ws.send
+
+        def send(raw):
+            original_send(raw)
+            sent.set()
+
+        channel.ws.send = send
+        errors = []
+
+        def evaluate():
+            try:
+                channel.js('old document')
+            except Exception as exc:
+                errors.append(type(exc).__name__)
+            finally:
+                finished.set()
+
+        worker = threading.Thread(target=evaluate)
+        worker.start()
+        self.assertTrue(sent.wait(2))
+        channel.ws.emit({'method': 'Runtime.executionContextsCleared'})
+        self.assertTrue(finished.wait(2))
+        worker.join(timeout=2)
+        self.assertEqual(errors, ['CDPError'])
+        self.assertEqual(channel.document_epoch, 1)
+        channel.ws.emit({'id': 1, 'result': {'result': {'value': 'late old reply'}}})
+        channel.ws.drop = False
+        self.assertEqual(channel.js('new document'), 'new document')
+
+    def test_binding_events_capture_document_epoch_before_entering_work_queue(self):
+        channel = self.connect(lambda *_: None)
+        got = threading.Event()
+        epochs = []
+        channel.on_event = lambda _, params: (epochs.append(params['_document_epoch']), got.set())
+        channel.ws.emit({'method': 'Runtime.executionContextsCleared'})
+        channel.ws.emit({'method': 'Runtime.bindingCalled', 'params': {'name': 'test'}})
+        self.assertTrue(got.wait(2))
+        self.assertEqual(epochs, [1])
+
+    def test_initial_context_reset_does_not_cancel_runtime_subscription(self):
+        channel = self.connect(lambda *_: None)
+        original_send = channel.ws.send
+
+        def send(raw):
+            channel.ws.emit({'method': 'Runtime.executionContextsCleared'})
+            original_send(raw)
+
+        channel.ws.send = send
+        channel.call('Runtime.enable')
+        self.assertEqual(channel.document_epoch, 1)
+        self.assertTrue(channel.alive())
+
+    def test_close_is_idempotent_and_new_calls_fail_immediately(self):
+        channel = self.connect(lambda *_: None)
+        channel.close()
+        channel.close()
+        with self.assertRaisesRegex(Exception, 'closed'):
+            channel.js('after close')

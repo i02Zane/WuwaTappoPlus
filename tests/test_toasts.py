@@ -19,12 +19,16 @@ class FakeSession:
         self.replies = list(replies)
         self.sent = []
         self.closed = False
+        self.document_epoch = 0
 
     def js(self, expression, await_promise=True):
         self.sent.append(expression)
         if not self.replies:
             raise AssertionError("unexpected evaluation: " + expression[:80])
         return self.replies.pop(0)
+
+    def invalidate_document(self):
+        self.document_epoch += 1
 
     def close(self):
         self.closed = True

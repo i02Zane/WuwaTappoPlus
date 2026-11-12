@@ -8,11 +8,11 @@ local timestamp is enough to line the two up.
 """
 
 import json
-import time
 from collections import deque
 
 from . import __version__, cdp
 from .paths import SCRIPTS_DIR
+from .pages import PageBridge, is_toast
 
 READ_JS = """JSON.stringify(window.__WUT_TOAST__ ? {
   version: window.__WUT_TOAST__.version,
@@ -20,19 +20,17 @@ READ_JS = """JSON.stringify(window.__WUT_TOAST__ ? {
 } : null)"""
 
 
-class ToastBridge:
+class ToastBridge(PageBridge):
     """Keep one session on the toast WebView and hand back new messages.
 
     The page-side script owns the buffer; this class only notices new entries
     and returns them, the same split the room history bridge uses.
     """
 
-    def __init__(self, port, host, log):
-        self.port = port
-        self.host = host
-        self.log = log
-        self.session = None
-        self.last_scan = -10.0
+    def __init__(self, port, host, log, *, discovery=None):
+        super().__init__(port, host, log, select=is_toast, discovery=discovery,
+                         uninstall="if(window.__WUT_TOAST__&&window.__WUT_TOAST__.uninstall)"
+                                   "window.__WUT_TOAST__.uninstall(); 1")
         self.seen = deque(maxlen=400)
         self.last_error = None
         self.source = (SCRIPTS_DIR / "toast.js").read_text(encoding="utf-8").replace(
@@ -44,26 +42,13 @@ class ToastBridge:
         ``since_ms`` drops entries the page buffered before this daemon started:
         a restart must not replay yesterday's toasts into the log.
         """
-        clock = clock or time.monotonic
         try:
-            if clock() - self.last_scan >= 3:
-                self.last_scan = clock()
-                target = self._find()
-                current = self.session.target.get("id") if self.session else None
-                if target is None or target.get("id") != current:
-                    self.close()
-                    if target:
-                        session = cdp.Session(self.port, self.host, timeout=2)
-                        try:
-                            session.connect_target(target)
-                        except Exception:
-                            session.close()
-                            raise
-                        self.session = session
-            if self.session is None:
+            if self.ensure_connected(clock) is None:
                 return []
-            state = self._inject_if_needed()
+            state = self.read_injected(READ_JS, self.source, __version__, label="toast")
             return self._fresh(state.get("entries") if state else None, since_ms)
+        except cdp.StaleResponse:
+            return []
         except (cdp.CDPError, OSError, ValueError, TypeError) as exc:
             self._warn(exc)
             self.close()
@@ -86,35 +71,8 @@ class ToastBridge:
             fresh.append((when, entry["m"]))
         return fresh
 
-    def _find(self):
-        for target in cdp.list_targets(self.port, self.host, timeout=2):
-            if (target.get("url") or "").endswith("#/toast"):
-                return target
-        return None
-
-    def _inject_if_needed(self):
-        raw = self.session.js(READ_JS)
-        state = json.loads(raw) if raw else None
-        if state and state.get("version") == __version__:
-            return state
-        if state is not None:
-            self.session.js("if(window.__WUT_TOAST__&&window.__WUT_TOAST__.uninstall)"
-                            "window.__WUT_TOAST__.uninstall(); 1")
-        self.log.info("toast -> %s" % self.session.js(self.source))
-        return json.loads(self.session.js(READ_JS) or "null")
-
     def _warn(self, exc):
         message = str(exc)
         if message != self.last_error:
             self.log.warn("toast: " + message[:200])
             self.last_error = message
-
-    def close(self):
-        if self.session:
-            try:
-                self.session.js("if(window.__WUT_TOAST__&&window.__WUT_TOAST__.uninstall)"
-                                "window.__WUT_TOAST__.uninstall(); 1")
-            except (cdp.CDPError, OSError):
-                pass
-            self.session.close()
-            self.session = None

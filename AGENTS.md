@@ -9,6 +9,7 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 - `installer.py`、`installation.py`、`packaging/setup.iss`：安装器固定操作、目录/安装代次保护及标准安装与卸载；`scheduler.py` 用标准库 ctypes 调用任务计划程序 COM，禁止回退 PowerShell。
 - `src/wuwa_tappo_plus/runner.py`：守护进程生命周期、心跳与状态发布。
 - `src/wuwa_tappo_plus/cdp.py`、`src/wuwa_tappo_plus/ws.py`：WebView2 CDP 通信与 WebSocket 传输。
+- `pages.py`：每个后台实例共享三秒一次的页面发现（失败扫描也共享），设置/房间/toast 复用挂载与卸载流程、各自保留独立连接；主窗口仍须探测确认。连接标识同时包含目标 ID、WebSocket 地址、页面 URL、连接与文档代次。同步和事件通道启用 Runtime 上下文通知，刷新或替换后丢弃旧结果；关闭辅助连接后禁止自动改连主窗口。不得通过提高扫描/轮询频率或改页面业务协议来实现恢复。
 - `src/wuwa_tappo_plus/win.py`：Windows 注册表策略、进程、自启动与计划任务。
 - 进程结束统一用原生 `OpenProcess` / `TerminateProcess` / `WaitForSingleObject`，显式声明 x64 句柄类型，不调用 `taskkill`。关闭桌宠前按已枚举的完整路径核验同一进程句柄，避免 PID 复用误杀；不先结束 WebView 子进程树。API 失败保留操作名、PID 与 Windows 错误码；无法访问进程不能当作已退出。
 - `src/wuwa_tappo_plus/scripts/inject.js`：页面检查、按钮点击与提醒气泡；同时读取应用持久化的 `wuwatappo-settings.gameMode` ，在游戏模式期间给 `.pet-dock` 和每个 `.room-cat-shell` 分别加内联透明度，退出后移除并恢复应用自己的 `--window-opacity`；不设置 `.room-cats-shell` 父容器，避免与子元素透明度相乘。「王总好模式」开启时按横向位置镜像用户左侧的 `.cat-friend`，不镜像昵称和表情气泡。

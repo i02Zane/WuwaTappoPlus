@@ -10,6 +10,7 @@ from . import __version__
 from .cdp_events import EventSession
 from .paths import SCRIPTS_DIR
 from .plaza_client import PlazaClient, PlazaError
+from .pages import connection_key
 
 REQUEST_BINDING = "__wutPlazaRequest"
 STATE_BINDING = "__wutPlazaState"
@@ -33,6 +34,10 @@ class PlazaBridge:
         self.native = None
         self.panel = None
         self.instance = None
+        self._native_source_key = None
+        self._panel_source_key = None
+        self._native_document_epoch = None
+        self._panel_document_epoch = None
         self.last_error = None
         self.closed = False
         self.lock = threading.RLock()
@@ -71,9 +76,12 @@ class PlazaBridge:
             return
         if not isinstance(payload, str) or len(payload) > 32768:
             return
-        self._enqueue(self._binding, channel, params["name"], payload)
+        epoch = params.get("_document_epoch", channel.document_epoch)
+        self._enqueue(self._binding, channel, params["name"], payload, epoch)
 
-    def _binding(self, channel, name, raw):
+    def _binding(self, channel, name, raw, epoch):
+        if not channel.alive() or channel.document_epoch != epoch:
+            return
         data = json.loads(raw)
         if not isinstance(data, dict):
             return
@@ -119,7 +127,7 @@ class PlazaBridge:
         now = time.monotonic()
         while self.sent_times and now - self.sent_times[0] >= 60:
             self.sent_times.popleft()
-        identity = (channel, self.instance, key)
+        identity = (channel, channel.document_epoch, self.instance, key)
         if identity in self.futures:
             return
         if len(self.futures) >= 4 or len(self.sent_times) >= 30:
@@ -133,12 +141,13 @@ class PlazaBridge:
 
     def _finish(self, identity, future):
         self.futures.pop(identity, None)
-        channel, instance, _ = identity
-        self._reply(channel, instance, future.result())
+        channel, epoch, instance, _ = identity
+        self._reply(channel, instance, future.result(), epoch=epoch)
 
-    def _reply(self, channel, instance, result):
+    def _reply(self, channel, instance, result, *, epoch=None):
         # A result from a disposed page cannot reach its replacement.
-        if channel is self.native and instance == self.instance and channel.alive():
+        if (channel is self.native and instance == self.instance and channel.alive()
+                and (epoch is None or epoch == channel.document_epoch)):
             channel.js("if(window.__WUT_PLAZA__&&window.__WUT_PLAZA__.instance===%s)"
                        "window.__WUT_PLAZA__.complete([%s]);1" % (json.dumps(instance), json.dumps(result)))
 
@@ -151,8 +160,11 @@ class PlazaBridge:
         target = session.target
         if not target or not target.get("webSocketDebuggerUrl"):
             return
+        identity = connection_key(session)
         with self.lock:
-            if self.panel is not None and self.panel.target.get("id") == target.get("id") and self.panel.alive():
+            if (self.panel is not None and self._panel_source_key == identity
+                    and self.panel.alive()
+                    and self.panel.document_epoch == self._panel_document_epoch):
                 return
             if self.panel is not None:
                 self.panel.close()
@@ -160,6 +172,8 @@ class PlazaBridge:
             try:
                 self.panel.call("Runtime.enable")
                 self.panel.bind(ACTION_BINDING)
+                self._panel_source_key = identity
+                self._panel_document_epoch = self.panel.document_epoch
                 self._push()
             except Exception:
                 self.panel.close()
@@ -175,9 +189,12 @@ class PlazaBridge:
         target = session.target
         if not target or not target.get("webSocketDebuggerUrl"):
             return
+        identity = connection_key(session)
         try:
             with self.lock:
-                if self.native is None or self.native.target.get("id") != target.get("id") or not self.native.alive():
+                if (self.native is None or self._native_source_key != identity
+                        or not self.native.alive()
+                        or self.native.document_epoch != self._native_document_epoch):
                     if self.native is not None:
                         self.native.close()
                     self.native = EventSession(target, self._event)
@@ -185,6 +202,8 @@ class PlazaBridge:
                     self.native.bind(REQUEST_BINDING)
                     self.native.bind(STATE_BINDING)
                     self.instance = None
+                    self._native_source_key = identity
+                    self._native_document_epoch = self.native.document_epoch
                 current = self.native.js("window.__WUT_PLAZA__&&window.__WUT_PLAZA__.protocol===3"
                                          "&&window.__WUT_PLAZA__.version===%s?window.__WUT_PLAZA__.instance:null" % json.dumps(__version__))
                 if current is None or self.instance is None:

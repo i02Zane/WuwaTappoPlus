@@ -58,6 +58,10 @@ class CDPError(Exception):
     pass
 
 
+class StaleResponse(CDPError):
+    """A replaced connection/document must not supply data to its successor."""
+
+
 def _rank(url):
     """Higher is better. The pet window is the only one without `index.html`."""
     if not url:
@@ -104,17 +108,23 @@ def probe_port(port, host="127.0.0.1", timeout=3.0):
 class Session:
     """One CDP connection bound to the pet window."""
 
-    def __init__(self, port, host="127.0.0.1", timeout=20.0):
+    def __init__(self, port, host="127.0.0.1", timeout=20.0, *, discovery=None):
         self.port = port
         self.host = host
         self.timeout = timeout
         self.ws = None
         self.target = None
         self.seq = 0
+        self.discovery = discovery
+        self.generation = 0
+        self.document_epoch = 0
+        self._explicit_target = False
 
     def connect(self):
         self.close()
-        candidates = list_targets(self.port, self.host)
+        self._explicit_target = False
+        candidates = (self.discovery.targets() if self.discovery is not None
+                      else list_targets(self.port, self.host))
         if not candidates:
             raise CDPError("no page target found")
 
@@ -128,8 +138,9 @@ class Session:
             self.ws = ws
             self.target = t
             try:
+                self._call("Runtime.enable", {})
                 verdict = self.js(PROBE_JS)
-            except CDPError as exc:
+            except (CDPError, WSError, OSError) as exc:
                 last_err = exc
                 self.close()
                 continue
@@ -141,47 +152,69 @@ class Session:
         raise CDPError("no usable target: %s" % last_err)
 
     def js(self, expr, await_promise=True):
+        identity = (self.ws, self.generation, self.document_epoch)
         try:
             return self._js(expr, await_promise)
-        except WSError as exc:
-            raise CDPError("WebSocket disconnected: %s" % exc) from exc
+        except (WSError, OSError) as exc:
+            if identity[0] is not None and identity != (self.ws, self.generation, self.document_epoch):
+                raise StaleResponse("discarded failure from a replaced connection") from exc
+            if isinstance(exc, WSError):
+                raise CDPError("WebSocket disconnected: %s" % exc) from exc
+            raise
 
     def connect_target(self, target):
         """Connect to an explicitly selected auxiliary window, without probing the pet."""
         self.close()
+        self._explicit_target = True
         try:
             self.ws = WebSocket(target["webSocketDebuggerUrl"], timeout=self.timeout)
-        except (WSError, OSError) as exc:
+            self.target = target
+            self._call("Runtime.enable", {})
+        except (WSError, OSError, CDPError) as exc:
+            self.close()
             raise CDPError("cannot connect auxiliary window: %s" % exc) from exc
-        self.target = target
 
     def _js(self, expr, await_promise=True):
+        result = self._call("Runtime.evaluate", {
+            "expression": expr, "returnByValue": True, "awaitPromise": await_promise})
+        if "exceptionDetails" in result:
+            detail = json.dumps(result["exceptionDetails"], ensure_ascii=False)
+            raise CDPError("JS exception: " + detail[:300])
+        return result.get("result", {}).get("value")
+
+    def _call(self, method, params):
+        if self.ws is None and self._explicit_target:
+            raise CDPError("auxiliary page is not connected")
         if self.ws is None and not self.connect():
             raise CDPError("not connected")
+        ws, generation, document_epoch = self.ws, self.generation, self.document_epoch
         self.seq += 1
         mid = self.seq
-        self.ws.send(json.dumps({
+        ws.send(json.dumps({
             "id": mid,
-            "method": "Runtime.evaluate",
-            "params": {
-                "expression": expr,
-                "returnByValue": True,
-                "awaitPromise": await_promise,
-            },
+            "method": method,
+            "params": params,
         }))
         while True:
-            raw = self.ws.recv()
+            raw = ws.recv()
+            if (self.ws is not ws or self.generation != generation
+                    or self.document_epoch != document_epoch):
+                raise StaleResponse("discarded response from a replaced connection")
             try:
                 msg = json.loads(raw)
             except ValueError:
                 continue
+            if msg.get("method") == "Runtime.executionContextsCleared":
+                self.invalidate_document()
+                if method == "Runtime.enable":
+                    document_epoch = self.document_epoch
+                    continue
+                raise StaleResponse("page context was cleared during evaluation")
             if msg.get("id") != mid:
                 continue
-            result = msg.get("result", {})
-            if "exceptionDetails" in result:
-                detail = json.dumps(result["exceptionDetails"], ensure_ascii=False)
-                raise CDPError("JS exception: " + detail[:300])
-            return result.get("result", {}).get("value")
+            if "error" in msg:
+                raise CDPError("CDP command failed: %s" % method)
+            return msg.get("result", {})
 
     def state(self):
         raw = self.js(STATE_JS)
@@ -192,11 +225,16 @@ class Session:
             raise CDPError("state read failed: %s" % data.get("err"))
         return data
 
+    def invalidate_document(self):
+        self.document_epoch += 1
+
     def close(self):
-        if self.ws is not None:
+        ws, self.ws = self.ws, None
+        self.target = None
+        self.generation += 1
+        self.invalidate_document()
+        if ws is not None:
             try:
-                self.ws.close()
+                ws.close()
             except Exception:
                 pass
-        self.ws = None
-        self.target = None

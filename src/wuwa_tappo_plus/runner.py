@@ -18,6 +18,7 @@ from .screens import ScreenKeeper
 from .toasts import ToastBridge
 from .chests import ChestCache
 from .plaza import PlazaBridge
+from .pages import TargetDiscovery
 
 POLL_JS = r"""
 (function(){
@@ -77,13 +78,17 @@ class Runner:
     def __init__(self, cfg=None, log=None):
         self.cfg = cfg or load()
         self.log = log or Log(self.cfg.log_max_bytes, self.cfg.log_keep)
-        self.session = cdp.Session(self.cfg.port, self.cfg.host)
-        self.settings = SettingsBridge(self.cfg.port, self.cfg.host, self.log)
+        self.discovery = TargetDiscovery(self.cfg.port, self.cfg.host)
+        self.session = cdp.Session(self.cfg.port, self.cfg.host, discovery=self.discovery)
+        self.settings = SettingsBridge(self.cfg.port, self.cfg.host, self.log,
+                                       discovery=self.discovery)
         self.reports = DailyReport(self.log)
-        self.rooms = RoomBridge(self.cfg.port, self.cfg.host, self.log)
+        self.rooms = RoomBridge(self.cfg.port, self.cfg.host, self.log,
+                               discovery=self.discovery)
         self.plaza = PlazaBridge(self.log)
         self.history = RoomHistory(self.log, limit=self.cfg.room_history)
-        self.toasts = ToastBridge(self.cfg.port, self.cfg.host, self.log)
+        self.toasts = ToastBridge(self.cfg.port, self.cfg.host, self.log,
+                                 discovery=self.discovery)
         self.screens = ScreenKeeper(self.log)
         self.chests = ChestCache(self.log)
         self.pending = deque(maxlen=400)
@@ -211,6 +216,7 @@ class Runner:
         want = self.cfg.inject_cfg["version"]
         if payload.get("inject") == want:
             return payload
+        self.session.invalidate_document()
         # A new page can reuse the same CDP Session object. Its globals need
         # restoring even when the saved accessory file has not changed.
         self._accessory_session = None

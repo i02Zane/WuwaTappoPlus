@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 from wuwa_tappo_plus import __version__, cdp
 from wuwa_tappo_plus.config import (BUILTIN, DEFAULT_TOML, Config, save_preferences,
                                     sync_config, with_preferences)
+from wuwa_tappo_plus.pages import is_panel
 from wuwa_tappo_plus.settings import SettingsBridge
 from wuwa_tappo_plus.ws import WSError
 
@@ -313,7 +314,7 @@ class BridgeTests(unittest.TestCase):
     def test_only_exact_local_panel_route_is_selected(self):
         for url in ("http://example.com/index.html#/panel",
                     "http://tauri.localhost/#/", "http://tauri.localhost/index.html#/login"):
-            self.assertFalse(self.bridge._is_panel(url))
+            self.assertFalse(is_panel(url))
 
     def test_websocket_close_is_a_retryable_cdp_error(self):
         session = cdp.Session(9222)
