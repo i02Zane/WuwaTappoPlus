@@ -1,5 +1,4 @@
 """Wuwa Tappo Plus - third-party enhancements for the Windows desktop pet."""
 
-# The sole project and injected-script version. Bump it for every release that
-# changes a page script, so all WebViews replace their previous copy together.
-__version__ = "1.5.2"
+# The sole project and injected-script version; bump only when publishing.
+__version__ = "1.5.3"

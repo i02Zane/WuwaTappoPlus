@@ -13,6 +13,9 @@ Wuwa Tappo Plus 是 Windows 工具，使用 Python 标准库和注入页面的 J
 - `pages.py`：每个后台实例共享三秒一次的页面发现（失败扫描也共享），设置/房间/toast 复用挂载与卸载流程、各自保留独立连接；主窗口仍须探测确认。连接标识同时包含目标 ID、WebSocket 地址、页面 URL、连接与文档代次。同步和事件通道启用 Runtime 上下文通知，刷新或替换后丢弃旧结果；关闭辅助连接后禁止自动改连主窗口。不得通过提高扫描/轮询频率或改页面业务协议来实现恢复。
 - `src/wuwa_tappo_plus/win.py`：Windows 注册表策略、进程、自启动与计划任务。
 - 进程结束统一用原生 `OpenProcess` / `TerminateProcess` / `WaitForSingleObject`，显式声明 x64 句柄类型，不调用 `taskkill`。关闭桌宠前按已枚举的完整路径核验同一进程句柄，避免 PID 复用误杀；不先结束 WebView 子进程树。API 失败保留操作名、PID 与 Windows 错误码；无法访问进程不能当作已退出。
+- 安装准备阶段先只读检查实际桌宠进程令牌的提升状态、完整性级别与当前进程的关闭权限；无法读取或无权关闭时，在停止后台或桌宠前中止。进程枚举失败不能当作未运行，权限预检失败也不能触发安装取消后的恢复启动。
+- 桌宠启动优先使用普通进程创建；仅遇到 WinError 740 时，从原用户上下文通过 `ShellExecuteExW('open')` 让 Windows 处理目标程序自身的权限要求，不强制 `runas`，不连带提升 Plus 后台。Shell 回退仍须清理并恢复冻结环境与 DLL 搜索目录，释放进程句柄并平衡 COM 初始化。用户取消权限确认须明确失败，不能提交安装成功；文件复制后的安装失败不再自动调用 `resume` 重复拉起。
+- 安装/修复保留桌宠原先的运行状态：准备阶段在停止后台和桌宠前记录是否运行；原本运行才在收尾或取消恢复时重新打开，原本未运行则保持关闭、不等待调试端口。Plus 后台仍须确认启动成功，再提交安装完成，等待用户手动打开桌宠后连接。标准安装器在同一安装会话内保留首次成功准备的状态，通过内部 `--restart-app` 参数传给收尾/恢复 helper；该标记不写入用户配置，不增加公开命令。
 - 页面脚本按功能归属组织，共 12 个文件（含三个入口）：`settings.js` 管理表单、保存回执和统计，独立保留 `settings-token.js`、`settings-apps.js`、`settings-atlas.js`；`rooms.js` 管理历史、收藏、原生回跳和相关样式，独立保留 `rooms-plaza.js`、`rooms-visibility.js`；`inject.js` 管理自动开箱、重试和唤醒调度，独立保留 `pet-state.js`、`pet-actions.js`、`pet-reminders.js`、`pet-appearance.js`。紧密配合的流程放在一起，入口不要求保持几十行。功能模块管理自身状态和清理，通过必要的数据读取与明确操作协作，不传整个桥接状态对象供任意修改；原有公开桥接字段、轮询节奏和请求协议保持不变。
 - `script_source.py` 依照 `scripts/manifest.json` 将本地模块展开到入口的 `/* @modules */`，再由现有 Python 桥接替换版本/配置；一次 CDP 注入完整脚本，源码运行不需要 Node.js。测试装配使用同一清单；新增或删除模块须更新清单，`tools/smoke_release.py` 据此检查冻结资源，安装包和 wheel 均须包含 JS 与清单 JSON。
 - `src/wuwa_tappo_plus/scripts/inject.js`：页面检查、按钮点击与提醒气泡；同时读取应用持久化的 `wuwatappo-settings.gameMode` ，在游戏模式期间给 `.pet-dock` 和每个 `.room-cat-shell` 分别加内联透明度，退出后移除并恢复应用自己的 `--window-opacity`；不设置 `.room-cats-shell` 父容器，避免与子元素透明度相乘。「王总好模式」开启时按横向位置镜像用户左侧的 `.cat-friend`，不镜像昵称和表情气泡。

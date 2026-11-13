@@ -13,6 +13,7 @@ import sys
 import threading
 from contextlib import contextmanager
 from ctypes import wintypes
+from dataclasses import dataclass
 from pathlib import Path
 
 from .config import ROOT
@@ -195,15 +196,14 @@ def _from_uninstall():
 
 def processes():
     """[(pid, Path)] for every running WuwaTappo.exe."""
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.OpenProcess.restype = wintypes.HANDLE
+    k32 = _process_api()
 
     class PROCESSENTRY32W(ctypes.Structure):
         _fields_ = [
             ("dwSize", wintypes.DWORD),
             ("cntUsage", wintypes.DWORD),
             ("th32ProcessID", wintypes.DWORD),
-            ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+            ("th32DefaultHeapID", ctypes.c_size_t),
             ("th32ModuleID", wintypes.DWORD),
             ("cntThreads", wintypes.DWORD),
             ("th32ParentProcessID", wintypes.DWORD),
@@ -215,11 +215,17 @@ def processes():
     TH32CS_SNAPPROCESS = 0x00000002
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     INVALID = ctypes.c_void_p(-1).value
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    for name in ("Process32FirstW", "Process32NextW"):
+        function = getattr(k32, name)
+        function.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+        function.restype = wintypes.BOOL
 
     found = []
     snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if not snap or snap == INVALID:
-        return found
+        raise _process_error("CreateToolhelp32Snapshot", 0, ctypes.get_last_error())
     try:
         entry = PROCESSENTRY32W()
         entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
@@ -227,8 +233,10 @@ def processes():
         while ok:
             if entry.szExeFile.lower() == TARGET_EXE.lower():
                 handle = k32.OpenProcess(
-                    PROCESS_QUERY_LIMITED_INFORMATION, False, entry.th32ProcessID
+                    PROCESS_QUERY_LIMITED_INFORMATION | 0x00100000, False, entry.th32ProcessID
                 )
+                if not handle and ctypes.get_last_error() != 87:
+                    raise _process_error("OpenProcess", entry.th32ProcessID, ctypes.get_last_error())
                 if handle:
                     try:
                         buf = ctypes.create_unicode_buffer(32768)
@@ -237,12 +245,116 @@ def processes():
                             handle, 0, buf, ctypes.byref(size)
                         ):
                             found.append((entry.th32ProcessID, Path(buf.value)))
+                        else:
+                            error = ctypes.get_last_error()
+                            if not _process_exited(k32, handle, 0, entry.th32ProcessID):
+                                raise _process_error("QueryFullProcessImageNameW", entry.th32ProcessID, error)
                     finally:
                         k32.CloseHandle(handle)
             ok = k32.Process32NextW(snap, ctypes.byref(entry))
+        if ctypes.get_last_error() != 18:  # ERROR_NO_MORE_FILES
+            raise _process_error("Process32FirstW/Process32NextW", 0, ctypes.get_last_error())
     finally:
         k32.CloseHandle(snap)
     return found
+
+
+class _SidAndAttributes(ctypes.Structure):
+    _fields_ = [("sid", ctypes.c_void_p), ("attributes", wintypes.DWORD)]
+
+
+def _token_api():
+    api = ctypes.WinDLL("advapi32", use_last_error=True)
+    api.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    api.OpenProcessToken.restype = wintypes.BOOL
+    api.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                       wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    api.GetTokenInformation.restype = wintypes.BOOL
+    api.GetSidSubAuthorityCount.argtypes = [ctypes.c_void_p]
+    api.GetSidSubAuthorityCount.restype = ctypes.POINTER(ctypes.c_ubyte)
+    api.GetSidSubAuthority.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    api.GetSidSubAuthority.restype = ctypes.POINTER(wintypes.DWORD)
+    return api
+
+
+@dataclass(frozen=True)
+class ProcessPermissions:
+    pid: int
+    elevated: bool
+    integrity: int
+    stop_error: int = 0
+
+
+def process_permissions(pid, expected_exe):
+    """Inspect the actual token and request stop rights without stopping anything."""
+    api = _process_api()
+    rights = 0x1000 | 0x00100000  # QUERY_LIMITED_INFORMATION | SYNCHRONIZE
+    handle = api.OpenProcess(rights | 1, False, pid)
+    stop_error = 0
+    if not handle:
+        stop_error = ctypes.get_last_error()
+        if stop_error == 87:
+            return None
+        handle = api.OpenProcess(rights, False, pid)
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == 87:
+            return None
+        raise _process_error("OpenProcess", pid, error)
+    token = wintypes.HANDLE()
+    try:
+        if _process_exited(api, handle, 0, pid):
+            return None
+        image = ctypes.create_unicode_buffer(32768)
+        size = wintypes.DWORD(len(image))
+        if not api.QueryFullProcessImageNameW(handle, 0, image, ctypes.byref(size)):
+            raise _process_error("QueryFullProcessImageNameW", pid, ctypes.get_last_error())
+        if os.path.normcase(os.path.normpath(image.value)) != os.path.normcase(os.path.normpath(str(expected_exe))):
+            raise OSError("进程 %d 的程序路径已变化，已中止权限检查。" % pid)
+        security = _token_api()
+        if not security.OpenProcessToken(handle, 8, ctypes.byref(token)):  # TOKEN_QUERY
+            raise _process_error("OpenProcessToken", pid, ctypes.get_last_error())
+        elevated = wintypes.DWORD()
+        length = wintypes.DWORD()
+        if not security.GetTokenInformation(token, 20, ctypes.byref(elevated), ctypes.sizeof(elevated), ctypes.byref(length)):
+            raise _process_error("GetTokenInformation(TokenElevation)", pid, ctypes.get_last_error())
+        security.GetTokenInformation(token, 25, None, 0, ctypes.byref(length))
+        if ctypes.get_last_error() != 122 or length.value < ctypes.sizeof(_SidAndAttributes):
+            raise _process_error("GetTokenInformation(TokenIntegrityLevel)", pid, ctypes.get_last_error())
+        label = ctypes.create_string_buffer(length.value)
+        if not security.GetTokenInformation(token, 25, label, len(label), ctypes.byref(length)):
+            raise _process_error("GetTokenInformation(TokenIntegrityLevel)", pid, ctypes.get_last_error())
+        sid = ctypes.cast(label, ctypes.POINTER(_SidAndAttributes)).contents.sid
+        count = security.GetSidSubAuthorityCount(sid) if sid else None
+        if not count or not count[0]:
+            raise OSError("进程 %d 的完整性级别 SID 无效。" % pid)
+        rid = security.GetSidSubAuthority(sid, count[0] - 1)
+        if not rid:
+            raise OSError("进程 %d 的完整性级别无法读取。" % pid)
+        return ProcessPermissions(pid, bool(elevated.value), rid[0], stop_error)
+    finally:
+        if token.value:
+            api.CloseHandle(token)
+        api.CloseHandle(handle)
+
+
+def check_app_permissions(callback=None):
+    running = False
+    for pid, path in processes():
+        permissions = process_permissions(pid, path)
+        if permissions is None:
+            continue
+        running = True
+        level = {0: "不受信任", 0x1000: "低", 0x2000: "中", 0x2100: "中高",
+                 0x3000: "高", 0x4000: "系统"}.get(permissions.integrity, "0x%X" % permissions.integrity)
+        if callback:
+            callback("桌宠 PID %d：%s，完整性级别：%s，%s。" % (
+                pid, "已提升" if permissions.elevated else "未提升", level,
+                "当前安装进程无权关闭" if permissions.stop_error else "当前安装进程可关闭"))
+        if permissions.stop_error:
+            raise OSError("%s；请先退出桌宠，再重新运行安装包。" %
+                          _process_error("OpenProcess(PROCESS_TERMINATE)", pid, permissions.stop_error))
+    return running
 
 
 def find_exe(hint=""):
@@ -646,18 +758,101 @@ def _child_environment(reset=False):
     return environment
 
 
+class _ShellExecuteInfo(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD), ("fMask", wintypes.ULONG),
+        ("hwnd", wintypes.HWND), ("lpVerb", wintypes.LPCWSTR),
+        ("lpFile", wintypes.LPCWSTR), ("lpParameters", wintypes.LPCWSTR),
+        ("lpDirectory", wintypes.LPCWSTR), ("nShow", ctypes.c_int),
+        ("hInstApp", wintypes.HINSTANCE), ("lpIDList", ctypes.c_void_p),
+        ("lpClass", wintypes.LPCWSTR), ("hkeyClass", wintypes.HKEY),
+        ("dwHotKey", wintypes.DWORD), ("hIcon", wintypes.HANDLE),
+        ("hProcess", wintypes.HANDLE),
+    ]
+
+
+def _shell_open_app(exe_path):
+    """Honor the native app's requested execution level after CreateProcess 740."""
+    shell = ctypes.WinDLL("shell32", use_last_error=True)
+    shell.ShellExecuteExW.argtypes = [ctypes.POINTER(_ShellExecuteInfo)]
+    shell.ShellExecuteExW.restype = wintypes.BOOL
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    ole = ctypes.WinDLL("ole32", use_last_error=True)
+    ole.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    ole.CoInitializeEx.restype = ctypes.c_long
+    ole.CoUninitialize.argtypes = []
+    ole.CoUninitialize.restype = None
+
+    info = _ShellExecuteInfo()
+    info.cbSize = ctypes.sizeof(info)
+    # Keep the operation synchronous through launch, not through app exit.
+    # Error UI is handled by our caller; Windows security prompts remain enabled.
+    info.fMask = 0x40 | 0x100 | 0x400
+    info.lpVerb = "open"
+    info.lpFile = str(exe_path)
+    info.lpDirectory = str(Path(exe_path).parent)
+    info.nShow = 1
+
+    with _spawn_lock, _system_dll_search():
+        # ShellExecuteEx has no env argument. Temporarily apply the same cleanup
+        # as popen_external, including private PyInstaller variables, then restore.
+        environment = _child_environment()
+        previous = {name: os.environ.get(name)
+                    for name in os.environ.keys() | environment.keys()
+                    if os.environ.get(name) != environment.get(name)}
+        initialized = False
+        try:
+            for name in previous:
+                if name in environment:
+                    os.environ[name] = environment[name]
+                else:
+                    os.environ.pop(name, None)
+            hr = ole.CoInitializeEx(None, 0x2 | 0x4)
+            if hr < 0 and hr != -2147417850:  # RPC_E_CHANGED_MODE: already initialized.
+                raise OSError("Windows Shell COM 初始化失败：0x%08X" % (hr & 0xffffffff))
+            initialized = hr >= 0
+            if not shell.ShellExecuteExW(ctypes.byref(info)):
+                code = ctypes.get_last_error() or 31
+                message = ("已取消桌宠的启动权限确认，请重新运行安装包修复。" if code == 1223 else
+                           "Windows Shell 无法启动桌宠 %s：%s" % (exe_path, ctypes.FormatError(code)))
+                raise ctypes.WinError(code, message)
+        finally:
+            try:
+                if info.hProcess:
+                    kernel.CloseHandle(info.hProcess)
+            finally:
+                try:
+                    if initialized:
+                        ole.CoUninitialize()
+                finally:
+                    for name, value in previous.items():
+                        if value is None:
+                            os.environ.pop(name, None)
+                        else:
+                            os.environ[name] = value
+
+
 def launch_app(exe_path):
-    """Start the app detached from this process."""
+    """Start normally; let Windows Shell handle only a required-elevation error."""
     DETACHED_PROCESS = 0x00000008
     CREATE_NEW_PROCESS_GROUP = 0x00000200
     flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-    return popen_external(
-        [str(exe_path)],
-        creationflags=flags,
-        close_fds=True,
-        cwd=str(Path(exe_path).parent),
-        env=_child_environment(),
-    )
+    try:
+        return popen_external(
+            [str(exe_path)],
+            creationflags=flags,
+            close_fds=True,
+            cwd=str(Path(exe_path).parent),
+            env=_child_environment(),
+        )
+    except OSError as exc:
+        if getattr(exc, "winerror", None) != 740:
+            raise
+    # 'open' respects the executable/compatibility settings. Do not force runas
+    # on ordinary launches, the Plus daemon or the installation itself.
+    return _shell_open_app(exe_path)
 
 
 def stop_app(hint=""):

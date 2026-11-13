@@ -14,6 +14,10 @@ analysis = Analysis(
     excludes=["tkinter"],
     noarchive=False,
 )
+# Windows 10/11 supply UCRT as an OS component. Do not redistribute a copy
+# discovered in a build machine's third-party tool directories.
+analysis.binaries = [entry for entry in analysis.binaries
+                     if Path(entry[0]).name.lower() != "ucrtbase.dll"]
 archive = PYZ(analysis.pure)
 executable = EXE(
     archive, analysis.scripts, [], exclude_binaries=True,

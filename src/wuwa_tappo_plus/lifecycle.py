@@ -96,6 +96,8 @@ def install(cfg, callback=None):
     """Repair an installation, stopping at the first failed dependency."""
     progress = Progress(callback)
     try:
+        progress.stage = "check_app_permissions"
+        app_running = win.check_app_permissions(lambda message: progress.add("completed", message))
         progress.stage = "find_app"
         exe = win.find_exe(cfg.exe)
         if not exe:
@@ -115,7 +117,6 @@ def install(cfg, callback=None):
             return progress.result
 
         progress.stage = "stop_app"
-        app_running = bool(win.processes())
         if app_running:
             if win.stop_app(exe) is None:
                 return progress.add("failed", "未找到 WuwaTappo.exe，无法重启桌宠。")
@@ -148,20 +149,23 @@ def install(cfg, callback=None):
         args = win.write_policy(port)
         progress.add("completed", "调试策略：%s = %s" % (win.TARGET_EXE, args))
         progress.stage = "launch_app"
-        win.launch_app(exe)
-        progress.add("completed", "桌宠程序已启动。")
+        if app_running:
+            win.launch_app(exe)
+            progress.add("completed", "桌宠程序已启动。")
 
-        progress.stage = "wait_debug_port"
-        deadline = time.monotonic() + 25
-        version = None
-        while time.monotonic() < deadline:
-            version = cdp.probe_port(port)
-            if version:
-                break
-            time.sleep(1.0)
-        if not version:
-            return progress.add("failed", "等待调试端口 %d 超时，请重新执行安装 / 修复。" % port)
-        progress.add("completed", "调试端口已就绪：%d（%s）" % (port, version.get("Browser")))
+            progress.stage = "wait_debug_port"
+            deadline = time.monotonic() + 25
+            version = None
+            while time.monotonic() < deadline:
+                version = cdp.probe_port(port)
+                if version:
+                    break
+                time.sleep(1.0)
+            if not version:
+                return progress.add("failed", "等待调试端口 %d 超时，请重新执行安装 / 修复。" % port)
+            progress.add("completed", "调试端口已就绪：%d（%s）" % (port, version.get("Browser")))
+        else:
+            progress.add("skipped", "桌宠原本未运行，保持关闭；手动打开后 Plus 后台会自动连接。")
 
         progress.stage = "register_autostart"
         command = win.enable_autostart()

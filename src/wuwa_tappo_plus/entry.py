@@ -10,6 +10,8 @@ from pathlib import Path
 
 def probe():
     """Read-only packaging smoke check; never modifies the installed desktop pet."""
+    import sqlite3
+    import ssl
     from . import __version__, game_mode
     from .config import Config
     from .paths import APP_DIR, DATA_DIR, SCRIPTS_DIR, frozen
@@ -32,10 +34,26 @@ def probe():
     licenses = []
     if frozen():
         directory = Path(sys._MEIPASS) / "licenses"
+        if (Path(sys._MEIPASS) / "ucrtbase.dll").exists():
+            raise RuntimeError("UCRT must come from Windows, not the application bundle")
         licenses = ["WuwaTappoPlus.txt", "Python.txt", "Python-components.txt",
                     "OpenSSL.txt", "PyInstaller.txt", "Third-party-notices.md", "InnoSetup.txt"]
         if not all((directory / name).is_file() for name in licenses):
             raise RuntimeError("packaged license notice is missing")
+    # Exercise the native libraries without opening databases on disk or
+    # connecting to the network, including the first TLS handshake operation.
+    with contextlib.closing(sqlite3.connect(":memory:")) as database:
+        if database.execute("select 1 + 1").fetchone() != (2,):
+            raise RuntimeError("SQLite startup check failed")
+    incoming, outgoing = ssl.MemoryBIO(), ssl.MemoryBIO()
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).wrap_bio(
+        incoming, outgoing, server_side=False, server_hostname="localhost")
+    try:
+        tls.do_handshake()
+    except ssl.SSLWantReadError:
+        pass  # A ClientHello was generated; no network peer is needed here.
+    if not outgoing.pending:
+        raise RuntimeError("TLS startup check failed")
     return {"version": __version__, "frozen": frozen(), "app_dir": str(APP_DIR),
             "data_dir": str(DATA_DIR), "scripts_dir": str(SCRIPTS_DIR),
             "scripts": {name: __version__ for name in sources}, "licenses": licenses}

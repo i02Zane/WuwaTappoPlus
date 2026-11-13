@@ -33,6 +33,7 @@ def _stop():
 
 
 def prepare():
+    running = win.check_app_permissions(print)
     cfg = load()
     exe = win.find_exe(cfg.exe)
     if exe is None:
@@ -40,8 +41,9 @@ def prepare():
     candidates, conflicts = lifecycle._choose_policy_ports(cfg.port)
     if conflicts or not candidates:
         raise OSError("WebView2 调试策略冲突，请先运行 doctor --policy 检查。")
+    # Emitted only after read-only checks; Setup may resume after this point.
+    print("installer: app_was_running=%d" % running)
     _stop()
-    running = bool(win.processes())
     if running and win.stop_app(exe) is None:
         raise OSError("无法停止桌宠，请关闭桌宠后重试。")
     try:
@@ -56,6 +58,7 @@ def prepare():
         if running:
             win.launch_app(exe)
         raise
+    return running
 
 
 def configure(user):
@@ -79,20 +82,23 @@ def configure(user):
         win.remove_watchdog()
 
 
-def start(setup_source=None):
+def start(setup_source=None, *, restart_app=False):
     cfg = lifecycle.read_config_hints()
-    if not win.processes():
-        exe = win.find_exe(cfg.exe)
-        if exe is None:
-            raise OSError("未找到桌宠，请重新运行安装包修复。")
-        win.launch_app(exe)
-    deadline = time.monotonic() + 25
-    while time.monotonic() < deadline:
-        if cdp.probe_port(cfg.port):
-            break
-        time.sleep(1)
+    if restart_app:
+        if not win.processes():
+            exe = win.find_exe(cfg.exe)
+            if exe is None:
+                raise OSError("未找到桌宠，请重新运行安装包修复。")
+            win.launch_app(exe)
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            if cdp.probe_port(cfg.port):
+                break
+            time.sleep(1)
+        else:
+            raise OSError("桌宠调试端口未就绪，请重新运行安装包修复。")
     else:
-        raise OSError("桌宠调试端口未就绪，请重新运行安装包修复。")
+        print("桌宠原本未运行，保持关闭；手动打开桌宠后 Plus 后台会自动连接。")
     result = daemon_control.start()
     if result.exit_code:
         raise OSError(result.steps[-1].message)
@@ -113,11 +119,11 @@ def detach():
         raise OSError("无法重启桌宠，未清除数据或程序文件。")
 
 
-def resume():
+def resume(*, restart_app=False):
     """Best-effort recovery when an upgrade was cancelled before file copying."""
     if (installation.directory() / installation.EXE_NAME).is_file():
-        cfg = lifecycle.read_config_hints()
-        if not win.processes():
+        if restart_app and not win.processes():
+            cfg = lifecycle.read_config_hints()
             exe = win.find_exe(cfg.exe)
             if exe:
                 win.launch_app(exe)
@@ -130,6 +136,7 @@ def main(argv):
                                           "remove-system", "detach", "purge", "resume"))
     parser.add_argument("--user")
     parser.add_argument("--setup-source")
+    parser.add_argument("--restart-app", action="store_true")
     args = parser.parse_args(argv)
     try:
         validate_paths()
@@ -137,11 +144,15 @@ def main(argv):
         if args.action == "configure":
             configure(args.user)
         elif args.action == "start":
-            start(args.setup_source)
+            start(args.setup_source, restart_app=args.restart_app)
+        elif args.action == "prepare":
+            prepare()
+        elif args.action == "resume":
+            resume(restart_app=args.restart_app)
         else:
-            actions = {"prepare": prepare, "stop": _stop,
+            actions = {"stop": _stop,
                        "remove-system": remove_system, "detach": detach,
-                       "purge": lifecycle.purge_data, "resume": resume}
+                       "purge": lifecycle.purge_data}
             actions[args.action]()
         print("installer: %s completed" % args.action)
         return 0

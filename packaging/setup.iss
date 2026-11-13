@@ -49,6 +49,9 @@ Type: files; Name: "{app}\install.json"
 [Code]
 var
   Prepared: Boolean;
+  HaveAppState: Boolean;
+  AppWasRunning: Boolean;
+  FilesInstalled: Boolean;
   Installed: Boolean;
   PurgeData: Boolean;
 
@@ -77,16 +80,34 @@ begin
     Params := Params + ' --user ' + Quote(GetEnv('USERDOMAIN') + '\' + GetUserNameString);
   if Action = 'start' then
     Params := Params + ' --setup-source ' + Quote(ExpandConstant('{srcexe}'));
+  if AppWasRunning and ((Action = 'start') or (Action = 'resume')) then
+    Params := Params + ' --restart-app';
+  DeleteFile(LogFile);
   if Elevated then
     Started := ShellExec('runas', Executable, Params, '', SW_HIDE, ewWaitUntilTerminated, ExitCode)
   else
     Started := Exec(Executable, Params, '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
-  if (not Started) or (ExitCode <> 0) then
+  Details := '';
+  LoadStringFromFile(LogFile, Details);
+  if Started and (Action = 'prepare') and (not HaveAppState) then
   begin
-    Details := '';
-    LoadStringFromFile(LogFile, Details);
+    if Pos('installer: app_was_running=1', Details) > 0 then
+    begin
+      AppWasRunning := True;
+      HaveAppState := True;
+    end
+    else if Pos('installer: app_was_running=0', Details) > 0 then
+    begin
+      AppWasRunning := False;
+      HaveAppState := True;
+    end;
+  end;
+  if (not Started) or (ExitCode <> 0) then
     RaiseException('Plus 操作未完成：' + Action + #13#10 + UTF8Decode(Details) + #13#10 +
       '个人数据会保留。请重新运行安装包修复。错误码：' + IntToStr(ExitCode));
+  if (Action = 'prepare') and (not HaveAppState) then
+  begin
+    RaiseException('无法确认桌宠原先的运行状态，已中止安装，请重试。');
   end;
 end;
 
@@ -123,6 +144,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
+    FilesInstalled := True;
     RunHelper(ExpandConstant('{app}\WuwaTappoPlus.exe'), 'configure', True);
     RunHelper(ExpandConstant('{app}\WuwaTappoPlus.exe'), 'start', False);
     Installed := True;
@@ -131,7 +153,7 @@ end;
 
 procedure DeinitializeSetup;
 begin
-  if Prepared and (not Installed) then
+  if Prepared and HaveAppState and (not Installed) and (not FilesInstalled) then
   begin
     try
       RunHelper(TemporaryHelper, 'resume', False);
@@ -139,6 +161,13 @@ begin
       Log('无法自动恢复后台，请重新运行安装包修复。');
     end;
   end;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpFinished) and Installed and (not AppWasRunning) then
+    WizardForm.FinishedLabel.Caption := 'Plus 安装完成。桌宠原本未运行，已保持关闭。' + #13#10 +
+      '请手动打开 Wuwa Tappo，Plus 后台会自动连接。';
 end;
 
 function InitializeUninstall: Boolean;

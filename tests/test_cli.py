@@ -191,6 +191,7 @@ class InstallTests(unittest.TestCase):
             "write_config_port": None,
             "win.write_policy": "args",
             "win.processes": [(42, None)] if running else [],
+            "win.check_app_permissions": running,
             "win.stop_app": Path("WuwaTappo.exe"),
             "win.launch_app": None,
             "win.port_available": True,
@@ -220,11 +221,15 @@ class InstallTests(unittest.TestCase):
         mocks["win.enable_autostart"].assert_called_once()
         mocks["win.register_watchdog"].assert_called_once()
 
-    def test_install_launches_closed_app(self):
+    def test_install_keeps_closed_app_closed_and_sets_up_background(self):
         mocks = self.startup_mocks(running=False)
         self.assertEqual(cli.cmd_install([]), 0)
-        mocks["win.launch_app"].assert_called_once()
+        mocks["win.launch_app"].assert_not_called()
         mocks["win.stop_app"].assert_not_called()
+        mocks["cdp.probe_port"].assert_not_called()
+        mocks["win.enable_autostart"].assert_called_once()
+        mocks["win.register_watchdog"].assert_called_once()
+        mocks["daemon_control.start"].assert_called_once()
 
     def test_reinstall_repairs_even_when_daemon_is_running(self):
         mocks = self.startup_mocks()

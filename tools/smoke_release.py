@@ -21,6 +21,8 @@ from wuwa_tappo_plus.script_source import script_files
 def main():
     installer = ROOT / "dist/WuwaTappoPlus-Setup.exe"
     payload = ROOT / "build/payload/WuwaTappoPlus"
+    assert not any(path.name.lower() == "ucrtbase.dll" for path in payload.rglob("*")), \
+        "The payload must use the Windows UCRT instead of bundling ucrtbase.dll"
     base = ROOT / ".smoke-data"
     base.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="release-", dir=base) as folder, \
@@ -33,12 +35,14 @@ def main():
         (data / "config.toml").write_text(config, encoding="utf-8")
         env = {**os.environ, "WUWA_TAPPO_PLUS_DATA_DIR": str(data)}
         # Copy the entire directory payload; daily startup never self-extracts.
-        application = data / "Application"
+        application = data / "WuwaTappoPlus"
         shutil.copytree(payload, application)
         copied = application / "Wuwa Tappo Plus.exe"
-        (application / "WuwaTappoPlus.exe").rename(copied)
-        subprocess.run(["icacls", str(copied), "/setintegritylevel", "M"],
-                       check=True, capture_output=True)
+        installed_exe = application / "WuwaTappoPlus.exe"
+        shutil.copy2(installed_exe, copied)
+        for path in (copied, installed_exe):
+            subprocess.run(["icacls", str(path), "/setintegritylevel", "M"],
+                           check=True, capture_output=True)
         executable = copied
         setup_report = data / "installer-probe.json"
         subprocess.run([str(installer), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
@@ -90,6 +94,21 @@ def main():
                 time.sleep(0.1)
             assert not win.pid_alive(pid), "isolated daemon did not honor max_runtime"
             print("Windowless watchdog -> frozen daemon -> timed exit passed.", flush=True)
+
+            # No --restart-app: setup must complete without opening the real pet
+            # or waiting for the deliberately unavailable debugging port.
+            run("--program-dir", application, "--output", data / "setup-start.txt",
+                "--installer", "start", "--setup-source", installer)
+            receipt = json.loads((application / "install.json").read_text(encoding="utf-8"))
+            assert receipt["manager"] == "inno-setup" and receipt["pending"] is False
+            assert "桌宠原本未运行" in (data / "setup-start.txt").read_text(encoding="utf-8")
+            pid = json.loads(state_file.read_text(encoding="utf-8")).get("pid")
+            assert pid, "setup did not confirm the background daemon"
+            deadline = time.monotonic() + 12
+            while win.pid_alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            assert not win.pid_alive(pid), "setup daemon did not honor max_runtime"
+            print("Setup completes with pet closed; isolated background startup passed.", flush=True)
         finally:
             if pid and win.pid_alive(pid):
                 (data / ".stop").write_text("smoke-test cleanup", encoding="utf-8")
@@ -98,14 +117,15 @@ def main():
                     time.sleep(0.1)
         # The Python daemon exits before the frozen process finishes its
         # shutdown cleanup. Wait for that parent to release the copied EXE.
-        deadline = time.monotonic() + 8
-        while copied.exists():
-            try:
-                copied.unlink()
-            except PermissionError:
-                if time.monotonic() >= deadline:
-                    raise
-                time.sleep(0.1)
+        for path in (copied, installed_exe):
+            deadline = time.monotonic() + 8
+            while path.exists():
+                try:
+                    path.unlink()
+                except PermissionError:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.1)
 
     released = installer
     expected = "%s  %s\n" % (hashlib.sha256(released.read_bytes()).hexdigest(), released.name)
