@@ -227,4 +227,8 @@ class EntryTests(unittest.TestCase):
         from wuwa_tappo_plus.script_source import script_files
         inventory = {path.name for path in paths.SCRIPTS_DIR.iterdir()
                      if path.suffix in (".js", ".json")}
-        self.assertEqual(set(script_files()), inventory)
+        # A source checkout needs no Node build. These two generated resources
+        # are mandatory in the release inventory, checked by smoke_release.py.
+        generated = {"plaza-client.bundle.js", "plaza-config.json"}
+        self.assertLessEqual(generated, set(script_files()))
+        self.assertEqual(set(script_files()), inventory | generated)

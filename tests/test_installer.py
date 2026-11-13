@@ -18,6 +18,9 @@ class InstallerTests(unittest.TestCase):
     def setUp(self):
         stack = ExitStack()
         self.addCleanup(stack.close)
+        # Match an English Windows CI pipe; output must not change outcomes.
+        output = stack.enter_context(io.TextIOWrapper(io.BytesIO(), encoding='cp1252'))
+        stack.enter_context(redirect_stdout(output))
         self.root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
         self.data = self.root / 'data'
         self.data.mkdir()

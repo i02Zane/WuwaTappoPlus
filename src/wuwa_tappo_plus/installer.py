@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import cdp, daemon_control, installation, lifecycle, win
 from .config import Config, load
+from .console import write_line
 from .paths import DATA_DIR
 
 
@@ -33,7 +34,7 @@ def _stop():
 
 
 def prepare():
-    running = win.check_app_permissions(print)
+    running = win.check_app_permissions(write_line)
     cfg = load()
     exe = win.find_exe(cfg.exe)
     if exe is None:
@@ -42,7 +43,7 @@ def prepare():
     if conflicts or not candidates:
         raise OSError("WebView2 调试策略冲突，请先运行 doctor --policy 检查。")
     # Emitted only after read-only checks; Setup may resume after this point.
-    print("installer: app_was_running=%d" % running)
+    write_line("installer: app_was_running=%d" % running)
     _stop()
     if running and win.stop_app(exe) is None:
         raise OSError("无法停止桌宠，请关闭桌宠后重试。")
@@ -98,7 +99,7 @@ def start(setup_source=None, *, restart_app=False):
         else:
             raise OSError("桌宠调试端口未就绪，请重新运行安装包修复。")
     else:
-        print("桌宠原本未运行，保持关闭；手动打开桌宠后 Plus 后台会自动连接。")
+        write_line("桌宠原本未运行，保持关闭；手动打开桌宠后 Plus 后台会自动连接。")
     result = daemon_control.start()
     if result.exit_code:
         raise OSError(result.steps[-1].message)
@@ -154,8 +155,8 @@ def main(argv):
                        "remove-system": remove_system, "detach": detach,
                        "purge": lifecycle.purge_data}
             actions[args.action]()
-        print("installer: %s completed" % args.action)
+        write_line("installer: %s completed" % args.action)
         return 0
     except (OSError, ValueError) as exc:
-        print("installer: %s failed: %s" % (args.action, exc))
+        write_line("installer: %s failed: %s" % (args.action, exc))
         return 1
